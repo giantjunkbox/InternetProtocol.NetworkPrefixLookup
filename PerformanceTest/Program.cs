@@ -1,136 +1,103 @@
 ﻿/*
    Bitvantage.InternetProtocol.NetworkPrefixLookup
    Copyright (C) 2024 Michael Crino
-   
+
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU Affero General Public License as published by
    the Free Software Foundation, either version 3 of the License, or
    (at your option) any later version.
-   
+
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU Affero General Public License for more details.
-   
+
    You should have received a copy of the GNU Affero General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-using System.IO.Compression;
+using System.Diagnostics;
 using System.Net;
-using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Running;
 using Bitvantage.InternetProtocol;
 
 namespace PerformanceTest;
 
-public class Program
+public static class Program
 {
-    [MemoryDiagnoser]
-    public class MyTests
+    public static void Main(string[] args)
     {
-        private static readonly NetworkPrefixLookup<string> NetworkPrefixLookup = new();
-        private static readonly Dictionary<IPAddress, object> NetworkDictionary = new();
-        private static readonly List<NetworkPrefix> IPNetworks = GetRandomIpv4Prefixes(11).Take(100_000).Distinct().ToList();
-        private static readonly List<IPAddress> IPAddresses = GetRandomIpv4Addresses(12).Take(1_000_000).ToList();
-
-        static MyTests()
+        if (args.Length > 0 && args[0] == "--memory")
         {
-            foreach (var ipNetwork in IPNetworks)
-                NetworkPrefixLookup.TryAdd(ipNetwork, string.Empty);
-
-            foreach (var ipAddress in IPAddresses)
-                NetworkDictionary.TryAdd(ipAddress, new object());
-
-            using (var r = IPAddresses.GetEnumerator())
-                while (NetworkDictionary.Count < 100_000)
-                {
-                    NetworkDictionary.TryAdd(r.Current, new object());
-                    r.MoveNext();
-                }
+            Memory();
+            return;
         }
 
-        [IterationCount(30)]
-        [Benchmark]
-        public void IpNetworkLookupX1M()
-        {
-            foreach (var ipAddress in IPAddresses)
-                if (NetworkPrefixLookup.GetMatch(ipAddress).Value != String.Empty)
-                    throw new Exception();
-        }
-
-        [IterationCount(30)]
-        [Benchmark]
-        public void AddX100K()
-        {
-            var networkLookup = new NetworkPrefixLookup<string?>();
-            foreach (var network in IPNetworks)
-                networkLookup.TryAdd(network, default);
-        }
-
-        [IterationCount(30)]
-        [Benchmark]
-        public void ConcurrenceAddX100K()
-        {
-            var networkLookup = new ConcurrenceNetworkPrefixLookup<string?>();
-            foreach (var network in IPNetworks)
-                networkLookup.TryAdd(network, default);
-        }
-
-        [IterationCount(30)]
-        [Benchmark]
-        public void HashTableLookup()
-        {
-            foreach (var ipAddress in IPAddresses)
-                _ = NetworkDictionary[ipAddress];
-        }
+        // pass the command line through so BenchmarkDotNet options such as --filter work; with no filter, run
+        // everything, leaving out the real tables when ROUTEVIEWS_DIR is not set
+        var types = RouteViews.Available
+            ? new[] { typeof(RandomTableBenchmarks), typeof(MaxMindBenchmarks), typeof(RealTableBenchmarks), typeof(RealBuildBenchmarks) }
+            : new[] { typeof(RandomTableBenchmarks), typeof(MaxMindBenchmarks) };
+        if (args.Length == 0)
+            args = new[] { "--filter", "*" };
+        BenchmarkSwitcher.FromTypes(types).Run(args);
     }
 
-    static void Compress(string inputFileName, string outputFileName)
+    /// <summary>Memory held by each form on the real tables, and bytes allocated per lookup.</summary>
+    private static void Memory()
     {
-        using (var input = File.OpenRead(inputFileName))
-        using (var output = File.Create(outputFileName))
-        using (var compressor = new BrotliStream(output, CompressionLevel.SmallestSize))
+        long Heap()
         {
-            input.CopyTo(compressor);
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            return GC.GetTotalMemory(true);
         }
-    }
 
-    static void Main(string[] args)
-    {
-        // pass the command line through so BenchmarkDotNet options such as --filter and --runtimes work
-        var summary = BenchmarkRunner.Run<MyTests>(args: args);
-        Console.WriteLine(summary);
-    }
-
-    public static IEnumerable<NetworkPrefix> GetRandomIpv4Prefixes(int? seed = null)
-    {
-        var random = seed.HasValue ? new Random(seed.Value) : new Random();
-
-        do
+        void Report(string name, Func<object> build)
         {
-            var addressBits = random.NextInt64(0, 0xff_ff_ff_ffL + 1);
-            var addressBytes = BitConverter.GetBytes(addressBits).Take(4).ToArray();
-            var randomIpAddress = new IPAddress(addressBytes);
-            var randomPrefix = (ushort)Math.Cbrt(random.Next(0, 33 * 33 * 33));
-            var randomNetwork = new NetworkPrefix(randomIpAddress, randomPrefix);
+            var before = Heap();
+            var sw = Stopwatch.StartNew();
+            var built = build();
+            var seconds = sw.Elapsed.TotalSeconds;
+            var after = Heap();
+            Console.WriteLine($"{name,-44} {(after - before) / 1048576.0,8:F1} MB {seconds,8:F2} s");
+            GC.KeepAlive(built);
+        }
 
-            yield return randomNetwork;
-        } while (true);
-    }
-
-    public static IEnumerable<IPAddress> GetRandomIpv4Addresses(int? seed = null)
-    {
-        var random = seed.HasValue ? new Random(seed.Value) : new Random();
-
-        do
+        var random = RandomTableBenchmarks.CreateNetworks();
+        var addresses = RandomTableBenchmarks.CreateAddresses();
+        var randomLookup = new NetworkPrefixLookup<string>(random.Select(n => KeyValuePair.Create(n, string.Empty)));
+        var frozenRandom = randomLookup.Freeze();
+        Console.WriteLine($"random table, {randomLookup.Count:N0} prefixes: read-write {randomLookup.GetStatistics().IPv4.Bytes / 1048576.0:F1} MB, " +
+                          $"frozen leaf-pushed {frozenRandom.Bytes / 1048576.0:F1} MB, frozen compressed {randomLookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }).Bytes / 1048576.0:F1} MB");
+        foreach (var (name, lookup) in new (string, IReadOnlyIPPrefixLookup<NetworkPrefix, string>)[] { ("read-write", randomLookup), ("frozen", frozenRandom) })
         {
-            var addressBits = random.NextInt64(0, 0xff_ff_ff_ffL + 1);
-            var addressBytes = BitConverter.GetBytes(addressBits).Take(4).ToArray();
-            var randomIpAddress = new IPAddress(addressBytes);
+            lookup.TryGetMatch(addresses[0], out _, out _);
+            var allocated = GC.GetAllocatedBytesForCurrentThread();
+            foreach (var address in addresses)
+                lookup.TryGetMatch(address, out _, out _);
+            Console.WriteLine($"bytes allocated per TryGetMatch(IPAddress), {name}: {(GC.GetAllocatedBytesForCurrentThread() - allocated) / (double)addresses.Count:F1}");
+        }
 
-            yield return randomIpAddress;
+        if (!RouteViews.Available)
+        {
+            Console.WriteLine("Set ROUTEVIEWS_DIR for the real tables.");
+            return;
+        }
 
-        } while (true);
+        var v4 = RouteViews.IPv4;
+        var v6 = RouteViews.IPv6;
+        IPNetworkLookup<int>? lookupV4 = null, lookupV6 = null;
+        Report("IPv4 read-write, built as one batch", () => lookupV4 = RouteViews.Build(v4));
+        Report("IPv4 frozen, leaf-pushed 16/8", () => lookupV4!.Freeze());
+        Report("IPv4 frozen, compressed 18", () => lookupV4!.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }));
+        Report("IPv6 read-write, built as one batch", () => lookupV6 = RouteViews.Build(v6));
+        Report("IPv6 frozen, leaf-pushed 16/8", () => lookupV6!.Freeze(ipv6: new FrozenBitTrieOptions()));
+        Report("IPv6 frozen, compressed 18", () => lookupV6!.Freeze(ipv6: new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }));
+        Console.WriteLine($"IPv4 statistics: {lookupV4!.GetStatistics().IPv4}");
+        Console.WriteLine($"IPv6 statistics: {lookupV6!.GetStatistics().IPv6}");
+        Console.WriteLine($"IPv4 frozen bytes: leaf-pushed {lookupV4.Freeze().Bytes / 1048576.0:F1} MB, compressed {lookupV4.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }).Bytes / 1048576.0:F1} MB");
+        Console.WriteLine($"IPv6 frozen bytes: leaf-pushed {lookupV6.Freeze().Bytes / 1048576.0:F1} MB, compressed {lookupV6.Freeze(ipv6: new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }).Bytes / 1048576.0:F1} MB");
     }
 }

@@ -163,6 +163,18 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
         var builder = new Builder(bits, _lengths, _tableBits);
         _root = new uint[1 << _rootBits];
         builder.FillAnswers(0, count, 0, _rootBits, _root);
+        if (!_compressed)
+        {
+            // count the child tables first, so that they go into one array of the exact size
+            long tables = 0;
+            var counting = new Runs(0, count, 0, _rootBits, bits, _lengths);
+            while (counting.Next(out _, out var lo, out var hi))
+                tables += builder.CountTables(lo, hi, _rootBits);
+            if (tables << _tableBits > int.MaxValue)
+                throw new InvalidOperationException("The leaf-pushed tables would exceed 2^31 entries; use the compressed layout or other table sizes.");
+            _tables = builder.Tables = new uint[tables << _tableBits];
+        }
+
         var runs = new Runs(0, count, 0, _rootBits, bits, _lengths);
         while (runs.Next(out var slot, out var lo, out var hi))
         {
@@ -184,10 +196,6 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
         {
             _nodes = builder.Nodes.ToArray();
             _answers = builder.Answers.ToArray();
-        }
-        else
-        {
-            _tables = builder.Tables.ToArray();
         }
     }
 
@@ -420,7 +428,8 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
 
     private sealed class Builder(TKey[] keys, ushort[] lengths, int tableBits)
     {
-        public readonly List<uint> Tables = new();
+        public uint[] Tables = Array.Empty<uint>();
+        private int _nextTable;
         public readonly List<CompressedNode> Nodes = new();
         public readonly List<int> Answers = new();
 
@@ -445,11 +454,9 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
         // returns its start
         public int BuildTable(int lo, int hi, int best, int decided)
         {
-            var start = Tables.Count;
-            if (start > int.MaxValue - (1 << tableBits))
-                throw new InvalidOperationException("The leaf-pushed tables would exceed 2^31 entries; use a wider TableBits or the compressed layout.");
-            CollectionsMarshal.SetCount(Tables, start + (1 << tableBits));
-            var slots = CollectionsMarshal.AsSpan(Tables).Slice(start, 1 << tableBits);
+            var start = _nextTable;
+            _nextTable += 1 << tableBits;
+            var slots = Tables.AsSpan(start, 1 << tableBits);
             slots.Fill((uint)(best + 1));
             FillAnswers(lo, hi, decided, tableBits, slots);
 
@@ -461,6 +468,16 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
             }
 
             return start;
+        }
+
+        // the number of leaf-pushed tables BuildTable makes for the same arguments
+        public long CountTables(int lo, int hi, int decided)
+        {
+            long count = 1;
+            var runs = new Runs(lo, hi, decided, tableBits, keys, lengths);
+            while (runs.Next(out _, out var runLo, out var runHi))
+                count += CountTables(runLo, runHi, decided + tableBits);
+            return count;
         }
 
         // fills Nodes[at] for the entries [lo, hi) inside the block of keys that share the first `decided` bits
