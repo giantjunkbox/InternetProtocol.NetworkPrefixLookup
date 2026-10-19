@@ -26,7 +26,8 @@ using GenericTrie;
 if (args.Length > 0 && args[0] == "verify") { Verify.Run(); return; }
 if (args.Length > 0 && args[0] == "verify-width") { WidthData.Verify(); return; }
 if (args.Length > 1 && args[0] == "isolate") { WidthData.Isolate(args[1]); return; }
-BenchmarkSwitcher.FromTypes(new[] { typeof(Comparison), typeof(WidthComparison), typeof(CachedWidthComparison), typeof(Width192Comparison) }).Run(args);
+if (args.Length > 0 && args[0] == "verify-shapes") { ResultShapeComparison.Verify(); return; }
+BenchmarkSwitcher.FromTypes(new[] { typeof(Comparison), typeof(WidthComparison), typeof(CachedWidthComparison), typeof(Width192Comparison), typeof(ResultShapeComparison) }).Run(args);
 
 public static class Data
 {
@@ -378,4 +379,104 @@ public class Width192Comparison
 
     [Benchmark, IterationCount(30)]
     public void Cached256Back_Lookup() { var keys = WidthData.Key256Back; for (var i = 0; i < keys.Length; i++) if (!C256Back.TryGetMatch(in keys[i], out _, out var v) || v != string.Empty) throw new Exception(); }
+}
+
+/// <summary>
+///     Result shapes: the same lookup returning its result four ways. Prefixes are IPNetwork values and values are strings,
+///     so results contain object references, as real ones would. The large table is the usual 97,000 prefixes. The small
+///     table is the first 1,000 prefixes plus 0.0.0.0/0, so every key matches and the walk is short enough for the cost of
+///     returning the result to show.
+/// </summary>
+[MemoryDiagnoser, GroupBenchmarksBy(BenchmarkLogicalGroupRule.ByCategory), CategoriesColumn]
+public class ResultShapeComparison
+{
+    private static readonly ResultShapeTrie<Bits32, IPNetwork, string> Large = Build(Data.Prefixes.Count);
+    private static readonly ResultShapeTrie<Bits32, IPNetwork, string> Small = Build(1_000, addDefault: true);
+
+    private static ResultShapeTrie<Bits32, IPNetwork, string> Build(int count, bool addDefault = false)
+    {
+        var t = new ResultShapeTrie<Bits32, IPNetwork, string>();
+        for (var i = 0; i < count; i++)
+            t.TryAdd(in WidthData.Prefix32[i], WidthData.PrefixLengths[i], Data.IPNetworks[i], string.Empty);
+        if (addDefault)
+            t.TryAdd(new Bits32(0), 0, IPNetwork.Parse("0.0.0.0/0"), string.Empty);
+        return t;
+    }
+
+    public static void Verify()
+    {
+        var reference = WidthData.BuildRef();
+        int mismatches = 0;
+        for (var i = 0; i < WidthData.KeyRef.Length; i++)
+        {
+            reference.TryGetMatch(WidthData.KeyRef[i], out var index, out _);
+            var expected = Data.IPNetworks[index];
+            Large.TryGetMatch(in WidthData.Key32[i], out var a, out _);
+            Large.TryGetMatch(in WidthData.Key32[i], out PrefixMatch<IPNetwork, string> b);
+            var c = Large.GetMatch(in WidthData.Key32[i]);
+            var d = Large.FindEntry(in WidthData.Key32[i]);
+            if (a != expected || b.Prefix != expected || c.Prefix != expected || d?.Prefix != expected)
+                if (mismatches++ < 5) Console.WriteLine($"  MISMATCH key {i}: expected={expected} a={a} b={b.Prefix} c={c.Prefix} d={d?.Prefix}");
+        }
+        Console.WriteLine($"result shapes: lookups compared: {WidthData.KeyRef.Length:N0}, mismatches: {mismatches}");
+    }
+
+    [Benchmark(Baseline = true), BenchmarkCategory("Large table"), IterationCount(30)]
+    public void A_OutParameters_Large() => A(Large);
+
+    [Benchmark, BenchmarkCategory("Large table"), IterationCount(30)]
+    public void B_OutStruct_Large() => B(Large);
+
+    [Benchmark, BenchmarkCategory("Large table"), IterationCount(30)]
+    public void C_ReturnedStruct_Large() => C(Large);
+
+    [Benchmark, BenchmarkCategory("Large table"), IterationCount(30)]
+    public void D_ReturnedEntry_Large() => D(Large);
+
+    [Benchmark(Baseline = true), BenchmarkCategory("Small table"), IterationCount(30)]
+    public void A_OutParameters_Small() => A(Small);
+
+    [Benchmark, BenchmarkCategory("Small table"), IterationCount(30)]
+    public void B_OutStruct_Small() => B(Small);
+
+    [Benchmark, BenchmarkCategory("Small table"), IterationCount(30)]
+    public void C_ReturnedStruct_Small() => C(Small);
+
+    [Benchmark, BenchmarkCategory("Small table"), IterationCount(30)]
+    public void D_ReturnedEntry_Small() => D(Small);
+
+    // each consumer reads both the prefix and the value of every result
+    private static void A(ResultShapeTrie<Bits32, IPNetwork, string> trie)
+    {
+        var keys = WidthData.Key32;
+        for (var i = 0; i < keys.Length; i++)
+            if (!trie.TryGetMatch(in keys[i], out var prefix, out var value) || value != string.Empty || prefix.PrefixLength < 0) throw new Exception();
+    }
+
+    private static void B(ResultShapeTrie<Bits32, IPNetwork, string> trie)
+    {
+        var keys = WidthData.Key32;
+        for (var i = 0; i < keys.Length; i++)
+            if (!trie.TryGetMatch(in keys[i], out PrefixMatch<IPNetwork, string> match) || match.Value != string.Empty || match.Prefix.PrefixLength < 0) throw new Exception();
+    }
+
+    private static void C(ResultShapeTrie<Bits32, IPNetwork, string> trie)
+    {
+        var keys = WidthData.Key32;
+        for (var i = 0; i < keys.Length; i++)
+        {
+            var match = trie.GetMatch(in keys[i]);
+            if (!match.Found || match.Value != string.Empty || match.Prefix.PrefixLength < 0) throw new Exception();
+        }
+    }
+
+    private static void D(ResultShapeTrie<Bits32, IPNetwork, string> trie)
+    {
+        var keys = WidthData.Key32;
+        for (var i = 0; i < keys.Length; i++)
+        {
+            var entry = trie.FindEntry(in keys[i]);
+            if (entry == null || entry.Value != string.Empty || entry.Prefix.PrefixLength < 0) throw new Exception();
+        }
+    }
 }
