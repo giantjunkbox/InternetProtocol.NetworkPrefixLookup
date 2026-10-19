@@ -75,6 +75,7 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         public Leaf[] LeafEntries = Array.Empty<Leaf>();
         public Entry[] FringeEntries = Array.Empty<Entry>();
         public Entry[] PrefixEntries = Array.Empty<Entry>();
+        public bool HasLocal; // prefixes or fringes in this node; lookups skip nodes without them when backtracking
 
         // writer only
         public int Count;   // prefixes in this subtree, including fringes and leaves
@@ -97,6 +98,24 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         private Node _element;
     }
 
+    [InlineArray(17)]
+    private struct DepthStack
+    {
+        private byte _element;
+    }
+
+    // a stored entry, for the shortcut table: an entry array never changes once readers can see it
+    private sealed class Hit(Entry[] array, int index)
+    {
+        public readonly Entry[] Array = array;
+        public readonly int Index = index;
+    }
+
+    // Experiment switches, read once per process so that the JIT folds them. Both are off by default: in one
+    // BenchmarkDotNet session (BartVariantBenchmarks) neither made lookups faster on the real tables.
+    private static readonly bool Prune = Environment.GetEnvironmentVariable("BART_PRUNE") == "1";
+    private static readonly bool SlotBest = Environment.GetEnvironmentVariable("BART_SLOTBEST") == "1";
+
     // Shortcuts for the first 16 bits: for each /16 block, the node at depth 1 and the node at depth 2 on its path,
     // or null. Lookups start there instead of at the root. A write that replaces a node at depth 1 or 2 updates the
     // slots that point at it. A reader may briefly combine nodes of different versions; since a write changes one
@@ -105,6 +124,7 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
     {
         public Node? Depth1;
         public Node? Depth2;
+        public Hit? Best; // the longest match among the root's and the depth-1 node's own prefixes, for this /16
     }
 
     private readonly Slot[]? _table;
@@ -127,6 +147,11 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
 
     /// <summary>Number of stored prefixes.</summary>
     public long Count { get; private set; }
+
+    /// <summary>Changes with every published change, so callers can validate cached results with one comparison.</summary>
+    public long Version => Volatile.Read(ref _version);
+
+    private long _version;
 
     /// <summary>Returns the array elements and nodes copied since the last call. For measurements only.</summary>
     public long TakeWork()
@@ -156,6 +181,96 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
 
     private ref Entry Find(in TKey key)
     {
+        if (!Prune && !SlotBest) return ref FindPlain(in key);
+
+        var nodes = new NodeStack();
+        var depths = new DepthStack();
+        var count = 0;
+        var n = Volatile.Read(ref _root);
+        var depth = 0;
+        Hit? above = null;
+
+        var table = _table;
+        if (table != null)
+        {
+            ref var slot = ref table[TKey.GetTopBits(key, 16)];
+            var depth1 = slot.Depth1;
+            var depth2 = slot.Depth2;
+            if (depth1 != null)
+            {
+                if (SlotBest)
+                {
+                    // the levels above the starting node are summarized by the slot
+                    above = slot.Best;
+                }
+                else if (!Prune || n.HasLocal)
+                {
+                    nodes[count] = n;
+                    depths[count++] = 0;
+                }
+
+                n = depth1;
+                depth = 1;
+                if (depth2 != null)
+                {
+                    if (!SlotBest && (!Prune || n.HasLocal))
+                    {
+                        nodes[count] = n;
+                        depths[count++] = 1;
+                    }
+
+                    n = depth2;
+                    depth = 2;
+                }
+            }
+        }
+
+        // descend as far as the key leads, remembering only the nodes that could hold a match
+        while (true)
+        {
+            if (!Prune || n.HasLocal)
+            {
+                nodes[count] = n;
+                depths[count++] = (byte)depth;
+            }
+
+            var octet = TKey.GetBits(key, depth << 3, 8);
+            if (n.Kids.Test(octet))
+            {
+                n = n.KidNodes[n.Kids.Rank(octet) - 1];
+                depth++;
+                continue;
+            }
+
+            if (n.Leaves.Test(octet))
+            {
+                ref var leaf = ref n.LeafEntries[n.Leaves.Rank(octet) - 1];
+                if (TKey.MatchesUnderMask(key, leaf.Bits, leaf.Mask))
+                    return ref leaf.Entry;
+            }
+
+            break;
+        }
+
+        // then from the deepest remembered node up
+        while (count > 0)
+        {
+            n = nodes[--count];
+            var octet = TKey.GetBits(key, depths[count] << 3, 8);
+            if (n.Fringes.Test(octet))
+                return ref n.FringeEntries[n.Fringes.Rank(octet) - 1];
+            if (n.Prefixes.AndTop(in ArtTables.Ancestors[(octet >> 1) + 128], out var top))
+                return ref n.PrefixEntries[n.Prefixes.Rank(top) - 1];
+        }
+
+        if (above != null)
+            return ref above.Array[above.Index];
+        return ref Unsafe.NullRef<Entry>();
+    }
+
+    // the version measured before pruning and the precomputed slot matches
+    private ref Entry FindPlain(in TKey key)
+    {
         var stack = new NodeStack();
         var n = Volatile.Read(ref _root);
         var depth = 0;
@@ -180,7 +295,6 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
             }
         }
 
-        // descend as far as the key leads; a fringe or leaf below the last node ends the search
         while (true)
         {
             stack[depth] = n;
@@ -202,8 +316,6 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
             break;
         }
 
-        // then from the deepest node up: in each node a fringe beats any prefix inside the stride, and the first match
-        // found is the longest
         while (true)
         {
             var octet = TKey.GetBits(key, depth << 3, 8);
@@ -249,6 +361,7 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         _bulk = false;
         _stamp++;
         Volatile.Write(ref _root, _w);
+        Interlocked.Increment(ref _version);
         if (_table != null)
             for (var first = 0; first < 256; first++)
                 RefreshTable(first);
@@ -322,7 +435,8 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         if (!_bulk) for (var i = 0; i < depth; i++) path[i].Count++;
         Link(changed, n, ref path, octets, depth);
         if (_bulk) AdjustCounts(in item.Bits, depth, 1);
-        UpdateTable(in item.Bits, depth);
+        UpdateTable(in item.Bits, length, depth);
+        if (!_bulk) Interlocked.Increment(ref _version);
         Count++;
         return true;
     }
@@ -405,7 +519,8 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         if (!_bulk) for (var i = 0; i < depth; i++) path[i].Count--;
         Link(changed, original, ref path, octets, depth);
         if (_bulk) AdjustCounts(in key, depth, -1);
-        UpdateTable(in key, depth);
+        UpdateTable(in key, length, depth);
+        if (!_bulk) Interlocked.Increment(ref _version);
         Count--;
         return true;
     }
@@ -423,25 +538,46 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
     }
 
     // after a write that replaced the node at the given depth on the path of key
-    private void UpdateTable(in TKey key, int depth)
+    private void UpdateTable(in TKey key, int length, int depth)
     {
         if (_table == null || _bulk || depth > 2) return;
         var first = TKey.GetBits(key, 0, 8);
-        if (depth == 2) RefreshSlot(first, TKey.GetBits(key, 8, 8), Kid(_w, first));
-        else RefreshTable(first);
+        if (depth == 2)
+        {
+            // the levels the slot summarizes did not change, only the depth-2 node
+            RefreshSlot(first, TKey.GetBits(key, 8, 8), Kid(_w, first), null, false);
+            return;
+        }
+
+        // a prefix of the root's own, /0 to /8, covers every /8 block below it
+        var span = depth == 0 && length <= 8 ? 1 << (8 - length) : 1;
+        for (var i = 0; i < span; i++)
+            RefreshTable((first & ~(span - 1)) + i);
     }
 
     private void RefreshTable(int first)
     {
         var depth1 = Kid(_w, first);
+        var rootHit = LocalHit(_w, first);
         for (var second = 0; second < 256; second++)
-            RefreshSlot(first, second, depth1);
+            RefreshSlot(first, second, depth1, rootHit, true);
     }
 
-    private void RefreshSlot(int first, int second, Node? depth1)
+    private static Hit? LocalHit(Node n, int octet)
+    {
+        if (n.Fringes.Test(octet))
+            return new Hit(n.FringeEntries, n.Fringes.Rank(octet) - 1);
+        if (n.Prefixes.AndTop(in ArtTables.Ancestors[(octet >> 1) + 128], out var top))
+            return new Hit(n.PrefixEntries, n.Prefixes.Rank(top) - 1);
+        return null;
+    }
+
+    private void RefreshSlot(int first, int second, Node? depth1, Hit? rootHit, bool refreshBest)
     {
         ref var slot = ref _table![(first << 8) | second];
         var depth2 = depth1 == null ? null : Kid(depth1, second);
+        if (refreshBest)
+            Volatile.Write(ref slot.Best, (depth1 == null ? null : LocalHit(depth1, second)) ?? rootHit);
 
         // a reader that finds a node at depth 2 must also find one at depth 1, so set depth 1 first and clear it last
         if (depth2 == null)
@@ -586,6 +722,7 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         var count = n.Prefixes.PopCount();
         n.Prefixes.Set(index);
         n.PrefixEntries = InsertAt(n.PrefixEntries, count, n.Prefixes.Rank(index) - 1, entry, ref n.Shared, PrefixArray);
+        n.HasLocal = !n.Prefixes.IsEmpty || !n.Fringes.IsEmpty;
     }
 
     private void RemovePrefix(Node n, int index)
@@ -593,6 +730,7 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         var at = n.Prefixes.Rank(index) - 1;
         n.PrefixEntries = RemoveAt(n.PrefixEntries, n.Prefixes.PopCount(), at, ref n.Shared, PrefixArray);
         n.Prefixes.Clear(index);
+        n.HasLocal = !n.Prefixes.IsEmpty || !n.Fringes.IsEmpty;
     }
 
     private void InsertFringe(Node n, int octet, in Entry entry)
@@ -600,6 +738,7 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         var count = n.Fringes.PopCount();
         n.Fringes.Set(octet);
         n.FringeEntries = InsertAt(n.FringeEntries, count, n.Fringes.Rank(octet) - 1, entry, ref n.Shared, FringeArray);
+        n.HasLocal = !n.Prefixes.IsEmpty || !n.Fringes.IsEmpty;
     }
 
     private void RemoveFringe(Node n, int octet)
@@ -607,6 +746,7 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         var at = n.Fringes.Rank(octet) - 1;
         n.FringeEntries = RemoveAt(n.FringeEntries, n.Fringes.PopCount(), at, ref n.Shared, FringeArray);
         n.Fringes.Clear(octet);
+        n.HasLocal = !n.Prefixes.IsEmpty || !n.Fringes.IsEmpty;
     }
 
     private void InsertKid(Node n, int octet, Node kid)

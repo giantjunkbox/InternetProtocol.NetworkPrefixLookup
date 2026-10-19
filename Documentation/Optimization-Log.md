@@ -142,6 +142,9 @@ bits, so no key ever matches it. A missing child simply points at it, and each s
 | Index entries for finished blocks pointing straight at the sentinel | No change | Only 13 to 29% of entries qualify |
 | Best match stored in every node, with 4-byte index entries | Unindexed walk 9% faster, indexed lookups no faster | The smaller table did not help, and inserts must push values down the trie |
 | A 20-bit index | Twice as slow as 17 bits | The 8 MB table does not fit in cache |
+| `BartTrie`: pruned backtracking, using a per-node flag for prefixes held in the node | 6 to 26% slower | Recording which levels could match costs more than the backtracking it saves; see [Bart-Comparison.md](Bart-Comparison.md#remedies-tried) |
+| `BartTrie`: best match of the first two levels kept in each 16-bit shortcut slot | 4% faster on real IPv6, 15% slower on real IPv4 | Saves backtracking only into the first two levels, and writes must refresh up to 256 slots |
+| `BartTrie`: child positions cached per node, as Go's `Fast` variant | 4 to 18% slower | A popcount is one instruction; the 256-byte array per node costs cache misses |
 
 ## Small tables
 

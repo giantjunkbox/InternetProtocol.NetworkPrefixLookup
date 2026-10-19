@@ -21,7 +21,8 @@ from the master branch of torvalds/linux on 2026-10-19:
 - **Linux has good ideas around the edges**, and one is already borrowed: nftables commits a batch of set changes
   atomically, or aborts it. `BartTrie`'s bulk load is now such a batch; an aborted one leaves no trace.
 - **Worth borrowing next:** a version number for validating cached results, as IPv6 routes have; a per-node "shortest
-  prefix below" for pruning lookups, as `fib_trie` keeps; and shared values, as routes share their attributes.
+  prefix below" for pruning lookups, as `fib_trie` keeps; and shared values, as routes share their attributes. The
+  version number is now in `BartTrie`. Pruning was tried and made lookups slower.
 
 ## What Linux does
 
@@ -97,8 +98,8 @@ ranges, used for virtual memory areas, with lock-free readers and locked writers
 | Idea | Source | Verdict |
 | --- | --- | --- |
 | Atomic batches with commit and abort | nftables | **Borrowed**: `BartTrie.AbortBulkLoad` discards a bulk load that readers never saw; tested |
-| A version number for validating cached results | IPv6 `fn_sernum` | **Recommended**: one counter on the trie, renewed on every published change |
-| Shortest prefix below each node, to prune lookups | IPv4 suffix length | **Try next** in `BartTrie`: backtracking to the root is a likely cost on small tables |
+| A version number for validating cached results | IPv6 `fn_sernum` | **Borrowed**: `BartTrie.Version` counts published changes |
+| Shortest prefix below each node, to prune lookups | IPv4 suffix length | **Tried, slower**: pruned backtracking in `BartTrie` made lookups 6 to 26% slower; see [Bart-Comparison.md](Bart-Comparison.md#remedies-tried) |
 | Shared values | `fib_info`, nexthop objects | **Recommended for frozen tables**: the real IPv4 table has 1,054,037 prefixes but only 78,196 distinct origin values, so a frozen table can store a small index per prefix into a deduplicated value array |
 | Two-step lookups, such as destination then source | IPv6 subtrees, ipset `hash:net,net` | **Later**: composes from today's API, a lookup whose values are lookups |
 | One comparison per step on path-compressed binary nodes | IPv4 `get_cindex` | **Not now**: would help `SnapshotTrie`, which the BART-style core is set to replace |

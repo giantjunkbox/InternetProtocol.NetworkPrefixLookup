@@ -41,7 +41,7 @@ if (args.Length > 0 && args[0] == "bart-time") { BartCoreChecks.Time(); return; 
 if (args.Length > 1 && args[0] == "time-real") { RealDataChecks.Time(args[1]); return; }
 BenchmarkSwitcher.FromTypes(new[] { typeof(Comparison), typeof(WidthComparison), typeof(CachedWidthComparison), typeof(Width192Comparison), typeof(ResultShapeComparison), typeof(LargeValueShapeComparison),
     typeof(OptimizationComparison), typeof(EndToEndComparison), typeof(BuildComparison),
-    typeof(RealIPv4Lookup), typeof(RealIPv6Lookup), typeof(RealFrozenLookup), typeof(RealBartBenchmarks), typeof(BartCoreBenchmarks), typeof(RealBuild) }).Run(args);
+    typeof(RealIPv4Lookup), typeof(RealIPv6Lookup), typeof(RealFrozenLookup), typeof(RealBartBenchmarks), typeof(BartCoreBenchmarks), typeof(BartVariantBenchmarks), typeof(RealBuild) }).Run(args);
 
 public static class Data
 {

@@ -217,18 +217,43 @@ IPv4 as fast as it can while one reader times every lookup.
 
 - **Small tables.** When the whole table fits in cache, `SnapshotTrie` resolves a lookup through its index in about one
   node, while `BartTrie` walks down several levels, takes a data-dependent branch at each, and often backtracks to the
-  root. Mispredicted branches are the likely cost; that has not been profiled. 90 ns against 32 ns per lookup matters only for very hot small tables, which can be frozen. Go's `Fast` variant,
-  which caches child ranks per node, and branch-free level steps are the next things to try.
+  root. Mispredicted branches are the likely cost; that has not been profiled. 90 ns against 32 ns per lookup matters only for very hot small tables, which can be frozen. The remedies
+  tried so far did not help; see [Remedies tried](#remedies-tried).
 - **Garbage collection.** Copy-on-write moves the cost of cleanup from rare long compactions into allocation: 1.4 KB per
   write, mostly the copied array of the changed node. At full speed that meant a collection about every 5,000 writes,
   each pausing for about 12 ms on average. At a thousand updates per second, a realistic rate for a routing table, that
   works out to roughly one collection every 5 seconds; this is extrapolated, not measured. Copying smaller pieces, such as one of a node's four arrays instead of the whole node, would cut
   the allocation further.
 
+### Remedies tried
+
+Three lookup changes were measured in one BenchmarkDotNet session each, as separate jobs, with one million lookups
+from precomputed keys. Times are per million lookups; a ratio above 1 is slower.
+
+| Change | Random table | Real IPv4 | Real IPv6 |
+| --- | --- | --- | --- |
+| Plain lookup, the baseline | 114.2 ms | 150.8 ms | 333.6 ms |
+| Pruned backtracking | 142.9 ms (1.26) | 171.4 ms (1.14) | 349.2 ms (1.06) |
+| Pruned backtracking and the best match of the first two levels kept in each shortcut slot | 112.8 ms (0.99) | 172.8 ms (1.15) | 317.6 ms (0.96) |
+| Child positions cached per node, as Go's `Fast` variant does, against a plain lookup of 115.4, 152.8 and 342.7 ms | 125.0 ms (1.16) | 178.7 ms (1.18) | 353.6 ms (1.04) |
+
+- **Pruned backtracking** borrows the idea behind Linux's suffix length: each node records whether it holds any prefix
+  of its own, the lookup remembers only the levels that could match, and it backtracks straight to the deepest one.
+  Recording those levels costs more than the backtracking it saves.
+- **Best match in the shortcut slot** lets a lookup that finds nothing deeper than depth 2 skip backtracking into the
+  first two levels. It helps a little on IPv6 and costs as much on IPv4, and it makes writes refresh up to 256 slots
+  when a short prefix changes.
+- **Cached child positions** replace a popcount with a load from a 256-byte array per node. The popcount is one
+  instruction, while the extra array costs memory and cache misses.
+
+None of them is worth its code, so `BartTrie` keeps the plain lookup; the switches `BART_PRUNE=1` and `BART_SLOTBEST=1`
+still turn the first two on for measurement. Branch-free level steps have not been tried.
+
 ### Verdict
 
 `BartTrie` is the better read-write core for the tables this library exists for: faster lookups and builds on real
 routing tables, a quarter of the memory, bounded writes, and no compaction or growth stalls. Its two weaknesses are
-small cache-resident tables and allocation under heavy churn, and both have known remedies to try. The recommendation
+small cache-resident tables and allocation under heavy churn. The lookup remedies tried did not help; copying smaller
+pieces of a node is still untried for the allocation. The recommendation
 is to adopt it as the read-write core, with those two items as the next optimization steps and the frozen tables on
 top. That decision is still open.

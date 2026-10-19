@@ -10,6 +10,7 @@
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
     <PackageReference Include="Bart.NET" Version="1.2.1" />
-    <ProjectReference Include="..\..\Bitvantage.InternetProtocol.NetworkPrefixLookup\Bitvantage.InternetProtocol.NetworkPrefixLookup.csproj" />
+    <!-- the published v2 library, as the "current library" in comparisons; the repository now holds v3 -->
+    <PackageReference Include="Bitvantage.InternetProtocol.NetworkPrefixLookup" Version="2.0.0" />
   </ItemGroup>
 </Project>

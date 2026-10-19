@@ -20,6 +20,7 @@ using System.Diagnostics;
 using System.Net;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Configs;
+using BenchmarkDotNet.Jobs;
 
 namespace GenericTrie;
 
@@ -307,4 +308,48 @@ public class BartCoreBenchmarks
 
     [Benchmark, IterationCount(10), BenchmarkCategory("IPv6 build")]
     public object IPv6_Build_BartTrie_OneAtATime() => BartCoreChecks.BuildBart(RealData.V6, 128, bulk: false);
+}
+
+/// <summary>
+///     BartTrie lookup variants in one session, as separate jobs that differ only in the BART_PRUNE and BART_SLOTBEST
+///     switches: the plain lookup, pruned backtracking, and pruned backtracking with the slot's precomputed match for
+///     the first two levels. One million lookups from precomputed keys.
+/// </summary>
+[Config(typeof(BartVariantConfig))]
+public class BartVariantBenchmarks
+{
+    private static readonly Lazy<BartTrie<Bits32, IPNetwork, int>> V4 = new(() => BartCoreChecks.BuildBart(RealData.V4, 32));
+    private static readonly Lazy<BartTrie<Bits128, IPNetwork, int>> V6 = new(() => BartCoreChecks.BuildBart(RealData.V6, 128));
+    private static readonly Lazy<BartTrie<Bits32, int, int>> Random = new(() =>
+    {
+        var t = new BartTrie<Bits32, int, int>(32);
+        t.BeginBulkLoad();
+        for (var i = 0; i < WidthData.Prefix32.Length; i++) t.TryAdd(in WidthData.Prefix32[i], WidthData.PrefixLengths[i], i, i);
+        t.EndBulkLoad();
+        return t;
+    });
+
+    [Benchmark]
+    public long RandomTable() { var t = Random.Value; long sum = 0; foreach (var k in WidthData.Key32) sum += t.TryGetMatch(in k, out var p, out var v) ? p + v : -1; return sum; }
+
+    [Benchmark]
+    public long RealIPv4() { var t = V4.Value; long sum = 0; foreach (var k in RealData.V4.Keys) sum += t.TryGetMatch(in k, out var p, out var v) ? p.PrefixLength + v : -1; return sum; }
+
+    [Benchmark]
+    public long RealIPv6() { var t = V6.Value; long sum = 0; foreach (var k in RealData.V6.Keys) sum += t.TryGetMatch(in k, out var p, out var v) ? p.PrefixLength + v : -1; return sum; }
+}
+
+public class BartVariantConfig : BenchmarkDotNet.Configs.ManualConfig
+{
+    public BartVariantConfig()
+    {
+        BenchmarkDotNet.Jobs.Job Variant(string id, string prune, string slotBest) => BenchmarkDotNet.Jobs.Job.Default
+            .WithIterationCount(20)
+            .WithEnvironmentVariables(new BenchmarkDotNet.Jobs.EnvironmentVariable("BART_PRUNE", prune), new BenchmarkDotNet.Jobs.EnvironmentVariable("BART_SLOTBEST", slotBest))
+            .WithId(id);
+
+        AddJob(Variant("Plain", "0", "0").AsBaseline());
+        AddJob(Variant("Pruned", "1", "0"));
+        AddJob(Variant("PrunedSlotBest", "1", "1"));
+    }
 }
