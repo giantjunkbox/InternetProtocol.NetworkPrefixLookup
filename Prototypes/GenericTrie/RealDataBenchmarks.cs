@@ -18,6 +18,7 @@
 
 using System.Net;
 using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Configs;
 using Bitvantage.InternetProtocol;
 
 namespace GenericTrie;
@@ -69,6 +70,81 @@ public class RealIPv6Lookup
 
     [Benchmark, IterationCount(20)]
     public long Optimized_MultiLevel_Threshold32() { long sum = 0; foreach (var a in Table.Addresses) { var k = new Bits128(IPBits.V6(a)); sum += Snapshot32.TryGetMatch(in k, out var p, out var v) ? p.PrefixLength + v : -1; } return sum; }
+}
+
+/// <summary>
+///     Frozen-table options against the read-write design, one million lookups from precomputed keys, so address
+///     conversion is left out. The IndexOnly rows stop at the value index and skip reading the prefix and value, which
+///     shows how the time divides between finding the answer and fetching it. Each table is built only in the process
+///     that measures it.
+/// </summary>
+[MemoryDiagnoser, GroupBenchmarksBy(BenchmarkLogicalGroupRule.ByCategory), CategoriesColumn]
+public class RealFrozenLookup
+{
+    private static readonly Lazy<SnapshotTrie<Bits32, IPNetwork, int>> V4Snapshot = new(() => RealDataChecks.BulkSnapshot(RealData.V4, 32, 8));
+    private static readonly Lazy<PooledTrie<Bits32, IPNetwork, int>> V4MultiLevel = new(() => RealDataChecks.BuildMultiLevel(RealData.V4, 16, 8, 8, 32));
+    private static readonly Lazy<PooledTrie<Bits32, IPNetwork, int>> V4LeafPushed16 = new(() => RealDataChecks.BuildLeafPushed(RealData.V4, 16, 8, 32));
+    private static readonly Lazy<PooledTrie<Bits32, IPNetwork, int>> V4LeafPushed24 = new(() => RealDataChecks.BuildLeafPushed(RealData.V4, 24, 8, 32));
+    private static readonly Lazy<PooledTrie<Bits32, IPNetwork, int>> V4Compressed18 = new(() => RealDataChecks.BuildCompressed(RealData.V4, 18, 32));
+    private static readonly Lazy<SnapshotTrie<Bits128, IPNetwork, int>> V6Snapshot = new(() => RealDataChecks.BulkSnapshot(RealData.V6, 128, 8));
+    private static readonly Lazy<PooledTrie<Bits128, IPNetwork, int>> V6MultiLevel = new(() => RealDataChecks.BuildMultiLevel(RealData.V6, 16, 8, 8, 128));
+    private static readonly Lazy<PooledTrie<Bits128, IPNetwork, int>> V6LeafPushed16 = new(() => RealDataChecks.BuildLeafPushed(RealData.V6, 16, 8, 128));
+    private static readonly Lazy<PooledTrie<Bits128, IPNetwork, int>> V6Compressed18 = new(() => RealDataChecks.BuildCompressed(RealData.V6, 18, 128));
+    private static readonly Lazy<PooledTrie<Bits128, IPNetwork, int>> V6Compressed20 = new(() => RealDataChecks.BuildCompressed(RealData.V6, 20, 128));
+
+    private static long Lookups<TKey>(TKey[] keys, SnapshotTrie<TKey, IPNetwork, int> trie) where TKey : struct, IBitKey<TKey>
+    { long sum = 0; for (var i = 0; i < keys.Length; i++) sum += trie.TryGetMatch(in keys[i], out var p, out var v) ? p.PrefixLength + v : -1; return sum; }
+
+    private static long Lookups<TKey>(TKey[] keys, PooledTrie<TKey, IPNetwork, int> trie) where TKey : struct, IBitKey<TKey>
+    { long sum = 0; for (var i = 0; i < keys.Length; i++) sum += trie.TryGetMatch(in keys[i], out var p, out var v) ? p.PrefixLength + v : -1; return sum; }
+
+    private static long IndexOnly<TKey>(TKey[] keys, PooledTrie<TKey, IPNetwork, int> trie) where TKey : struct, IBitKey<TKey>
+    { long sum = 0; for (var i = 0; i < keys.Length; i++) sum += trie.GetMatchIndex(in keys[i]); return sum; }
+
+    [Benchmark(Baseline = true), IterationCount(20), BenchmarkCategory("IPv4")]
+    public long IPv4_ReadWrite_MultiLevel() => Lookups(RealData.V4.Keys, V4Snapshot.Value);
+
+    [Benchmark, IterationCount(20), BenchmarkCategory("IPv4")]
+    public long IPv4_LeafPushed_16_8() => Lookups(RealData.V4.Keys, V4LeafPushed16.Value);
+
+    [Benchmark, IterationCount(20), BenchmarkCategory("IPv4")]
+    public long IPv4_LeafPushed_24_8() => Lookups(RealData.V4.Keys, V4LeafPushed24.Value);
+
+    [Benchmark, IterationCount(20), BenchmarkCategory("IPv4")]
+    public long IPv4_Compressed_18() => Lookups(RealData.V4.Keys, V4Compressed18.Value);
+
+    [Benchmark, IterationCount(20), BenchmarkCategory("IPv4")]
+    public long IPv4_MultiLevel_IndexOnly() => IndexOnly(RealData.V4.Keys, V4MultiLevel.Value);
+
+    [Benchmark, IterationCount(20), BenchmarkCategory("IPv4")]
+    public long IPv4_LeafPushed_16_8_IndexOnly() => IndexOnly(RealData.V4.Keys, V4LeafPushed16.Value);
+
+    [Benchmark, IterationCount(20), BenchmarkCategory("IPv4")]
+    public long IPv4_LeafPushed_24_8_IndexOnly() => IndexOnly(RealData.V4.Keys, V4LeafPushed24.Value);
+
+    [Benchmark, IterationCount(20), BenchmarkCategory("IPv4")]
+    public long IPv4_Compressed_18_IndexOnly() => IndexOnly(RealData.V4.Keys, V4Compressed18.Value);
+
+    [Benchmark(Baseline = true), IterationCount(20), BenchmarkCategory("IPv6")]
+    public long IPv6_ReadWrite_MultiLevel() => Lookups(RealData.V6.Keys, V6Snapshot.Value);
+
+    [Benchmark, IterationCount(20), BenchmarkCategory("IPv6")]
+    public long IPv6_LeafPushed_16_8() => Lookups(RealData.V6.Keys, V6LeafPushed16.Value);
+
+    [Benchmark, IterationCount(20), BenchmarkCategory("IPv6")]
+    public long IPv6_Compressed_18() => Lookups(RealData.V6.Keys, V6Compressed18.Value);
+
+    [Benchmark, IterationCount(20), BenchmarkCategory("IPv6")]
+    public long IPv6_Compressed_20() => Lookups(RealData.V6.Keys, V6Compressed20.Value);
+
+    [Benchmark, IterationCount(20), BenchmarkCategory("IPv6")]
+    public long IPv6_MultiLevel_IndexOnly() => IndexOnly(RealData.V6.Keys, V6MultiLevel.Value);
+
+    [Benchmark, IterationCount(20), BenchmarkCategory("IPv6")]
+    public long IPv6_LeafPushed_16_8_IndexOnly() => IndexOnly(RealData.V6.Keys, V6LeafPushed16.Value);
+
+    [Benchmark, IterationCount(20), BenchmarkCategory("IPv6")]
+    public long IPv6_Compressed_18_IndexOnly() => IndexOnly(RealData.V6.Keys, V6Compressed18.Value);
 }
 
 /// <summary>Building each real table from scratch.</summary>

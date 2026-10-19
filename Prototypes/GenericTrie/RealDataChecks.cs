@@ -115,6 +115,35 @@ public static class RealDataChecks
         }
     }
 
+    public static PooledTrie<TKey, IPNetwork, int> BuildLeafPushed<TKey>(RealData.Table<TKey> table, int rootBits, int subBits, int width, bool report = false)
+        where TKey : struct, IBitKey<TKey>
+    {
+        var t = BuildPooled(table, 0);
+        var sw = Stopwatch.StartNew();
+        var (tables, bytes) = t.BuildLeafPushed(rootBits, subBits, width);
+        if (report)
+            Console.WriteLine($"  {"",-26} leaf-pushed {rootBits}/{subBits}: {tables:N0} child tables, tables {bytes / 1048576.0:F1} MB, built in {sw.Elapsed.TotalMilliseconds:F0} ms");
+        return t;
+    }
+
+    public static PooledTrie<TKey, IPNetwork, int> BuildCompressed<TKey>(RealData.Table<TKey> table, int rootBits, int width, bool report = false)
+        where TKey : struct, IBitKey<TKey>
+    {
+        var t = BuildPooled(table, 0);
+        var sw = Stopwatch.StartNew();
+        var (nodes, bytes) = t.BuildCompressed(rootBits, width);
+        if (report)
+            Console.WriteLine($"  {"",-26} compressed {rootBits}/6: {nodes:N0} nodes, tables {bytes / 1048576.0:F1} MB, built in {sw.Elapsed.TotalMilliseconds:F0} ms");
+        return t;
+    }
+
+    private static double AverageTableReads<TKey>(RealData.Table<TKey> table, PooledTrie<TKey, IPNetwork, int> trie) where TKey : struct, IBitKey<TKey>
+    {
+        long reads = 0;
+        for (var i = 0; i < table.Keys.Length; i++) reads += trie.CountTableReads(in table.Keys[i]);
+        return reads / (double)table.Keys.Length;
+    }
+
     public static NetworkPrefixLookup<int> BuildCurrent<TKey>(RealData.Table<TKey> table) where TKey : struct, IBitKey<TKey>
     {
         var lookup = new NetworkPrefixLookup<int>();
@@ -161,6 +190,20 @@ public static class RealDataChecks
             Console.WriteLine($"  {"",-26} nodes: {pooled.NodeCount:N0}, average nodes visited: {visited / (double)table.Keys.Length:F2}");
         }
 
+        foreach (var (rootBits, subBits) in width == 32 ? new[] { (16, 8), (20, 4), (24, 8) } : new[] { (16, 8), (20, 8) })
+        {
+            var lp = BuildLeafPushed(table, rootBits, subBits, width, report: true);
+            Check($"leaf-pushed {rootBits}/{subBits}", i => lp.TryGetMatch(in table.Keys[i], out var p, out _) ? p : null);
+            Console.WriteLine($"  {"",-26} average table reads: {AverageTableReads(table, lp):F2}");
+        }
+
+        foreach (var rootBits in new[] { 16, 18, 20 })
+        {
+            var cp = BuildCompressed(table, rootBits, width, report: true);
+            Check($"compressed {rootBits}/6", i => cp.TryGetMatch(in table.Keys[i], out var p, out _) ? p : null);
+            Console.WriteLine($"  {"",-26} average table reads, including the answer: {AverageTableReads(table, cp):F2}");
+        }
+
         foreach (var (rootBits, subBits, threshold) in new[] { (16, 8, 8), (16, 8, 32), (16, 4, 4), (16, 4, 16) })
         {
             var ml = BuildMultiLevel(table, rootBits, subBits, threshold, width, report: true);
@@ -189,8 +232,15 @@ public static class RealDataChecks
             // The contents end up identical, so any slowdown comes from layout and garbage. Example: v4-churn50, v6-churn50c
             _ when variant.StartsWith("v4-churn") => SingleSnapshot(RealData.V4, Churned(RealData.V4, 32, variant[8..])),
             _ when variant.StartsWith("v6-churn") => SingleSnapshot(RealData.V6, Churned(RealData.V6, 128, variant[8..])),
-            _ when variant.StartsWith("v4-ml") => Single(RealData.V4, MultiLevel(RealData.V4, variant[5..], 32)),
-            _ when variant.StartsWith("v6-ml") => Single(RealData.V6, MultiLevel(RealData.V6, variant[5..], 128)),
+            // frozen tables and the multi-level index. A trailing 'i' times only finding the value index, without reading
+            // the prefix and value; a trailing 'v' reads only the value, from a dense array of values.
+            // Examples: v4-lp16-8, v4-lp16-8i, v6-cp16, v6-cp16v
+            _ when variant.StartsWith("v4-lp") => Frozen(RealData.V4, LeafPushed(RealData.V4, Shape(variant), 32), variant[^1]),
+            _ when variant.StartsWith("v6-lp") => Frozen(RealData.V6, LeafPushed(RealData.V6, Shape(variant), 128), variant[^1]),
+            _ when variant.StartsWith("v4-cp") => Frozen(RealData.V4, BuildCompressed(RealData.V4, int.Parse(Shape(variant)), 32), variant[^1]),
+            _ when variant.StartsWith("v6-cp") => Frozen(RealData.V6, BuildCompressed(RealData.V6, int.Parse(Shape(variant)), 128), variant[^1]),
+            _ when variant.StartsWith("v4-ml") => Frozen(RealData.V4, MultiLevel(RealData.V4, Shape(variant), 32), variant[^1]),
+            _ when variant.StartsWith("v6-ml") => Frozen(RealData.V6, MultiLevel(RealData.V6, Shape(variant), 128), variant[^1]),
             _ => throw new ArgumentException(variant)
         };
 
@@ -284,11 +334,47 @@ public static class RealDataChecks
         }
     }
 
+    // spec "16-8": root bits, child table bits
+    private static PooledTrie<TKey, IPNetwork, int> LeafPushed<TKey>(RealData.Table<TKey> table, string spec, int width) where TKey : struct, IBitKey<TKey>
+    {
+        var parts = spec.Split('-').Select(int.Parse).ToArray();
+        return BuildLeafPushed(table, parts[0], parts[1], width);
+    }
+
     // spec "16-8-32": root bits, sub-table bits, threshold
     private static PooledTrie<TKey, IPNetwork, int> MultiLevel<TKey>(RealData.Table<TKey> table, string spec, int width) where TKey : struct, IBitKey<TKey>
     {
         var parts = spec.Split('-').Select(int.Parse).ToArray();
         return BuildMultiLevel(table, parts[0], parts[1], parts[2], width);
+    }
+
+    // "v4-cp18i" gives "18"
+    private static string Shape(string variant) => variant[5..].TrimEnd('i', 'v');
+
+    private static Func<long> Frozen<TKey>(RealData.Table<TKey> table, PooledTrie<TKey, IPNetwork, int> trie, char mode) where TKey : struct, IBitKey<TKey>
+    {
+        var keys = table.Keys;
+        switch (mode)
+        {
+            case 'i':
+                return () => { long sum = 0; for (var i = 0; i < keys.Length; i++) sum += trie.GetMatchIndex(in keys[i]); return sum; };
+            case 'v':
+            {
+                var values = Enumerable.Range(0, trie.ValueCount).Select(trie.GetValue).ToArray();
+                return () =>
+                {
+                    long sum = 0;
+                    for (var i = 0; i < keys.Length; i++)
+                    {
+                        var at = trie.GetMatchIndex(in keys[i]);
+                        sum += at >= 0 ? values[at] : -1;
+                    }
+                    return sum;
+                };
+            }
+            default:
+                return Single(table, trie);
+        }
     }
 
     private static Func<long> SingleSnapshot<TKey>(RealData.Table<TKey> table, SnapshotTrie<TKey, IPNetwork, int> trie) where TKey : struct, IBitKey<TKey>

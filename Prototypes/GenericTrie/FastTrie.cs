@@ -16,6 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics.X86;
@@ -200,9 +201,36 @@ public sealed class PooledTrie<TKey, TPrefix, TValue> where TKey : struct, IBitK
     // rest of the target is the start of a sub-table in _mlSubs, otherwise it is a node index.
     private ulong[]? _mlRoot;
     private ulong[] _mlSubs = Array.Empty<ulong>();
+
+    // leaf-pushed tables, for frozen use: every entry holds either the final answer (value index + 1, 0 for no match)
+    // or, with the top bit set, the start of a child table. A lookup reads only these tables, never the nodes.
+    private uint[]? _lpRoot;
+    private uint[] _lpSubs = Array.Empty<uint>();
+    private int _lpRootBits;
+    private int _lpSubBits;
     private int _mlRootBits;
     private int _mlSubBits;
     private const uint SubTableFlag = 0x8000_0000;
+
+    // compressed leaf-pushed tables, in the style of Poptrie (Asai and Ohara, SIGCOMM 2015), also for frozen use: a direct
+    // root over the first _cpRootBits bits, then nodes that each decide 6 more bits. Instead of 64 entries, a node keeps
+    // one bitmap of the slots that lead to another node and one of the slots where a run of equal answers starts, and a
+    // popcount turns a slot number into a position among the node's children or answers. Equal neighbouring answers
+    // are stored once, so the tables are far smaller than plain leaf-pushed tables.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CompressedNode
+    {
+        public ulong Children;  // bit s set: slot s leads to a child node
+        public ulong Runs;      // bit s set: slot s is an answer that differs from the answer in the previous answer slot
+        public int FirstChild;  // index of the child for the lowest child slot; the other children follow it
+        public int FirstAnswer; // index in _cpAnswers of the first run's answer; the other runs' answers follow it
+    }
+
+    private uint[]? _cpRoot; // value index + 1 (0 for no match), or SubTableFlag | node index
+    private CompressedNode[] _cpNodes = Array.Empty<CompressedNode>();
+    private int[] _cpAnswers = Array.Empty<int>(); // value index, or -1 for no match
+    private int _cpRootBits;
+    private const int CompressedStride = 6;
 
     private const int Root = 1;
 
@@ -218,6 +246,9 @@ public sealed class PooledTrie<TKey, TPrefix, TValue> where TKey : struct, IBitK
     }
 
     public int NodeCount => _nodeCount;
+
+    /// <summary>The number of stored prefixes, which is also one more than the highest value index.</summary>
+    public int ValueCount => _valueCount;
 
     public int NodeSizeInBytes => Unsafe.SizeOf<Node>();
 
@@ -255,6 +286,8 @@ public sealed class PooledTrie<TKey, TPrefix, TValue> where TKey : struct, IBitK
         _index = null; // the prototype rebuilds the index explicitly after changes
         _candidateIndex = null;
         _mlRoot = null;
+        _lpRoot = null;
+        _cpRoot = null;
 
         var bits = TKey.Truncate(key, length);
 
@@ -353,8 +386,9 @@ public sealed class PooledTrie<TKey, TPrefix, TValue> where TKey : struct, IBitK
 
         _nodes = nodes;
         _lengths = lengths;
-        _index = null;
+        _index = null; // these hold node indexes; the frozen tables hold only value indexes, which do not move
         _candidateIndex = null;
+        _mlRoot = null;
     }
 
     /// <summary>
@@ -560,12 +594,169 @@ public sealed class PooledTrie<TKey, TPrefix, TValue> where TKey : struct, IBitK
         return false;
     }
 
+    /// <summary>
+    ///     Builds leaf-pushed tables: a root over the first <paramref name="rootBits" /> bits and child tables of
+    ///     <paramref name="subBits" /> bits wherever a block still contains a more specific prefix. Every other entry
+    ///     stores the final answer for its whole block. Lookups then read only tables. Any change to the trie would
+    ///     require rewriting the entries of every block it covers, so this suits frozen tables only.
+    /// </summary>
+    public (int Tables, long Bytes) BuildLeafPushed(int rootBits, int subBits, int keyWidth)
+    {
+        var subs = new List<uint>();
+        var root = new uint[1 << rootBits];
+        for (var top = 0; top < root.Length; top++)
+        {
+            var key = TKey.FromTopBits(top, rootBits);
+            var (node, best) = Descend(Root, -1, key, rootBits);
+            root[top] = MakeLeafEntry(node, best, key, rootBits);
+        }
+
+        _lpRootBits = rootBits;
+        _lpSubBits = subBits;
+        _lpSubs = subs.ToArray();
+        _lpRoot = root;
+        return (subs.Count >> subBits, (root.LongLength + subs.Count) * sizeof(uint));
+
+        uint MakeLeafEntry(int node, int best, TKey key, int decided)
+        {
+            // nothing more specific inside this block: the answer is final
+            if (decided >= keyWidth || !HasMoreNodesBelow(node, key, decided, 0))
+                return (uint)(best + 1);
+
+            var start = subs.Count;
+            subs.AddRange(new uint[1 << subBits]);
+            var stride = Math.Min(subBits, keyWidth - decided);
+            for (var w = 0; w < 1 << subBits; w++)
+            {
+                // when the last table is narrower than subBits, slots repeat the narrower table's entries
+                var bits = w >> (subBits - stride);
+                var subKey = TKey.SetBits(key, decided, stride, bits);
+                var (subNode, subBest) = Descend(node, best, subKey, decided + stride);
+                subs[start + w] = MakeLeafEntry(subNode, subBest, subKey, decided + stride);
+            }
+
+            return SubTableFlag | (uint)start;
+        }
+    }
+
+    /// <summary>
+    ///     Builds compressed leaf-pushed tables: a root over the first <paramref name="rootBits" /> bits, then nodes of
+    ///     6 bits each that store their children and their runs of equal answers once, found by popcount. Frozen tables
+    ///     only, for the same reason as <see cref="BuildLeafPushed" />.
+    /// </summary>
+    public (int Nodes, long Bytes) BuildCompressed(int rootBits, int keyWidth)
+    {
+        var nodes = new List<CompressedNode>();
+        var answers = new List<int>();
+        var root = new uint[1 << rootBits];
+        for (var top = 0; top < root.Length; top++)
+        {
+            var key = TKey.FromTopBits(top, rootBits);
+            var (node, best) = Descend(Root, -1, key, rootBits);
+            if (rootBits >= keyWidth || !HasMoreNodesBelow(node, key, rootBits, 0))
+            {
+                root[top] = (uint)(best + 1);
+                continue;
+            }
+
+            nodes.Add(default);
+            root[top] = SubTableFlag | (uint)(nodes.Count - 1);
+            BuildNode(nodes.Count - 1, node, best, key, rootBits);
+        }
+
+        _cpRootBits = rootBits;
+        _cpNodes = nodes.ToArray();
+        _cpAnswers = answers.ToArray();
+        _cpRoot = root;
+        return (nodes.Count, root.LongLength * sizeof(uint) + (long)nodes.Count * Unsafe.SizeOf<CompressedNode>() + (long)answers.Count * sizeof(int));
+
+        // fills nodes[at] for the block of keys that share the first `decided` bits of key; trie node `node` is the
+        // deepest one those bits decide and `best` the best match on the way to it
+        void BuildNode(int at, int node, int best, TKey key, int decided)
+        {
+            const int slots = 1 << CompressedStride;
+            var stride = Math.Min(CompressedStride, keyWidth - decided);
+            var subNodes = new int[slots];
+            var subBests = new int[slots];
+            var subKeys = new TKey[slots];
+            ulong children = 0, runs = 0;
+            var firstAnswer = answers.Count;
+            var lastAnswer = 0;
+            var anyAnswer = false;
+
+            for (var s = 0; s < slots; s++)
+            {
+                // when the last node is narrower than 6 bits, neighbouring slots repeat the same answer
+                var subKey = TKey.SetBits(key, decided, stride, s >> (CompressedStride - stride));
+                var (subNode, subBest) = Descend(node, best, subKey, decided + stride);
+                if (decided + stride < keyWidth && HasMoreNodesBelow(subNode, subKey, decided + stride, 0))
+                {
+                    children |= 1UL << s;
+                    (subNodes[s], subBests[s], subKeys[s]) = (subNode, subBest, subKey);
+                }
+                else if (!anyAnswer || subBest != lastAnswer)
+                {
+                    runs |= 1UL << s;
+                    answers.Add(subBest);
+                    (lastAnswer, anyAnswer) = (subBest, true);
+                }
+            }
+
+            // children of one node are contiguous, so reserve their places before building any of them
+            var firstChild = nodes.Count;
+            for (var c = 0; c < BitOperations.PopCount(children); c++)
+                nodes.Add(default);
+            nodes[at] = new CompressedNode { Children = children, Runs = runs, FirstChild = firstChild, FirstAnswer = firstAnswer };
+
+            var child = firstChild;
+            for (var s = 0; s < slots; s++)
+                if ((children & (1UL << s)) != 0)
+                    BuildNode(child++, subNodes[s], subBests[s], subKeys[s], decided + stride);
+        }
+    }
+
     /// <summary>The share of index entries that point at the sentinel because nothing below them can match.</summary>
     public double FinalEntryFraction { get; private set; }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private int FindValueIndex(in TKey key)
     {
+        var cpRoot = _cpRoot;
+        if (cpRoot != null)
+        {
+            var e = Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(cpRoot), TKey.GetTopBits(key, _cpRootBits));
+            if ((e & SubTableFlag) == 0)
+                return (int)e - 1;
+
+            ref var cpNodes = ref MemoryMarshal.GetArrayDataReference(_cpNodes);
+            var at = (int)(e & ~SubTableFlag);
+            var offset = _cpRootBits;
+            while (true)
+            {
+                ref var n = ref Unsafe.Add(ref cpNodes, at);
+                var slot = TKey.GetBits(key, offset, CompressedStride);
+                var upToSlot = ulong.MaxValue >> (63 - slot); // bits 0 to slot
+                if ((n.Children & (1UL << slot)) == 0)
+                    return Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(_cpAnswers), n.FirstAnswer + BitOperations.PopCount(n.Runs & upToSlot) - 1);
+                at = n.FirstChild + BitOperations.PopCount(n.Children & upToSlot) - 1;
+                offset += CompressedStride;
+            }
+        }
+
+        var lpRoot = _lpRoot;
+        if (lpRoot != null)
+        {
+            var e = Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(lpRoot), TKey.GetTopBits(key, _lpRootBits));
+            var offset = _lpRootBits;
+            ref var subs = ref MemoryMarshal.GetArrayDataReference(_lpSubs);
+            while ((e & SubTableFlag) != 0)
+            {
+                e = Unsafe.Add(ref subs, (int)(e & ~SubTableFlag) + TKey.GetBits(key, offset, _lpSubBits));
+                offset += _lpSubBits;
+            }
+            return (int)e - 1;
+        }
+
         ref var nodes = ref MemoryMarshal.GetArrayDataReference(_nodes);
 
         var mlRoot = _mlRoot;
@@ -657,6 +848,49 @@ public sealed class PooledTrie<TKey, TPrefix, TValue> where TKey : struct, IBitK
         value = default!;
         return false;
     }
+
+    /// <summary>Counts the table entries and nodes a lookup reads in leaf-pushed or compressed tables. For measurements only.</summary>
+    public int CountTableReads(in TKey key)
+    {
+        if (_cpRoot != null)
+        {
+            var e = _cpRoot[TKey.GetTopBits(key, _cpRootBits)];
+            var reads = 1;
+            var offset = _cpRootBits;
+            while ((e & SubTableFlag) != 0)
+            {
+                ref var n = ref _cpNodes[(int)(e & ~SubTableFlag)];
+                reads++;
+                var slot = TKey.GetBits(key, offset, CompressedStride);
+                if ((n.Children & (1UL << slot)) == 0)
+                    return reads + 1; // the answer array
+                e = SubTableFlag | (uint)(n.FirstChild + BitOperations.PopCount(n.Children & (ulong.MaxValue >> (63 - slot))) - 1);
+                offset += CompressedStride;
+            }
+
+            return reads;
+        }
+
+        if (_lpRoot != null)
+        {
+            var e = _lpRoot[TKey.GetTopBits(key, _lpRootBits)];
+            var reads = 1;
+            var offset = _lpRootBits;
+            while ((e & SubTableFlag) != 0)
+            {
+                e = _lpSubs[(int)(e & ~SubTableFlag) + TKey.GetBits(key, offset, _lpSubBits)];
+                offset += _lpSubBits;
+                reads++;
+            }
+
+            return reads;
+        }
+
+        throw new InvalidOperationException("No leaf-pushed or compressed tables have been built.");
+    }
+
+    /// <summary>The value index of the best match, or -1, without reading the prefix and value. For measurements only.</summary>
+    public int GetMatchIndex(in TKey key) => FindValueIndex(key);
 
     /// <summary>Counts the nodes a lookup visits, including the starting node. For measurements only.</summary>
     public int CountVisited(in TKey key)
