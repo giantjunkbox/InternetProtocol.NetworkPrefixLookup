@@ -54,6 +54,12 @@ public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
 
     /// <summary>True when <c>(key &amp; mask) == bits</c>.</summary>
     static abstract bool MatchesUnderMask(in TSelf key, in TSelf bits, in TSelf mask);
+
+    /// <summary>The first <paramref name="count" /> bits as an integer, for indexing a table. 1 to 24 bits.</summary>
+    static abstract int GetTopBits(in TSelf key, int count);
+
+    /// <summary>A key whose first <paramref name="count" /> bits are <paramref name="top" /> and whose other bits are zero.</summary>
+    static abstract TSelf FromTopBits(int top, int count);
 }
 
 /// <summary>32-bit key.</summary>
@@ -85,6 +91,11 @@ public readonly struct Bits32 : IBitKey<Bits32>
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool MatchesUnderMask(in Bits32 key, in Bits32 bits, in Bits32 mask) => (key.Value & mask.Value) == bits.Value;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int GetTopBits(in Bits32 key, int count) => (int)(key.Value >> (32 - count));
+
+    public static Bits32 FromTopBits(int top, int count) => new((uint)top << (32 - count));
 }
 
 /// <summary>128-bit key.</summary>
@@ -114,6 +125,11 @@ public readonly struct Bits128 : IBitKey<Bits128>
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool MatchesUnderMask(in Bits128 key, in Bits128 bits, in Bits128 mask) => (key.Value & mask.Value) == bits.Value;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int GetTopBits(in Bits128 key, int count) => (int)(ulong)(key.Value >> (128 - count));
+
+    public static Bits128 FromTopBits(int top, int count) => new((UInt128)(uint)top << (128 - count));
 }
 
 [InlineArray(4)]
@@ -183,6 +199,11 @@ public struct Bits256 : IBitKey<Bits256>
     public static bool MatchesUnderMask(in Bits256 key, in Bits256 bits, in Bits256 mask) => (AsVector(key) & AsVector(mask)) == AsVector(bits);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int GetTopBits(in Bits256 key, int count) => (int)(key.Words[0] >> (64 - count));
+
+    public static Bits256 FromTopBits(int top, int count) { var k = new Bits256(); k.Words[0] = (ulong)(uint)top << (64 - count); return k; }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector256<ulong> AsVector(in Bits256 value) => Unsafe.As<Words4, Vector256<ulong>>(ref Unsafe.AsRef(in value.Words));
 
     private static Words4 AllOnes() { var w = new Words4(); for (var i = 0; i < 4; i++) w[i] = ulong.MaxValue; return w; }
@@ -249,6 +270,11 @@ public readonly struct Bits192 : IBitKey<Bits192>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool MatchesUnderMask(in Bits192 key, in Bits192 bits, in Bits192 mask) =>
         (((key.W0 & mask.W0) ^ bits.W0) | ((key.W1 & mask.W1) ^ bits.W1) | ((key.W2 & mask.W2) ^ bits.W2)) == 0;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int GetTopBits(in Bits192 key, int count) => (int)(key.W0 >> (64 - count));
+
+    public static Bits192 FromTopBits(int top, int count) => new((ulong)(uint)top << (64 - count), 0, 0);
 }
 
 /// <summary>
@@ -327,6 +353,10 @@ public readonly struct BitsVar : IBitKey<BitsVar>
                 return false;
         return true;
     }
+
+    public static int GetTopBits(in BitsVar key, int count) => (int)(key.Words[0] >> (64 - count));
+
+    public static BitsVar FromTopBits(int top, int count) => new(new[] { (ulong)(uint)top << (64 - count), 0UL, 0UL, 0UL });
 }
 
 /// <summary>
