@@ -31,7 +31,8 @@ A redesign is planned in `Documentation/Abstraction-Study.md`: a generic core th
 - `NetworkPrefixLookup.cs`, `NetworkPrefixKey.cs` and `ConcurrenceNetworkPrefixLookup.cs` are thin public wrappers.
 - `Test/` contains NUnit tests. `PerformanceTest/` contains BenchmarkDotNet benchmarks.
 - `Prototypes/GenericTrie/` is a standalone prototype of a key-type-agnostic core. It is not in the solution. Its
-  design and measurements are in `Documentation/Abstraction-Study.md`.
+  design and measurements are in `Documentation/Abstraction-Study.md`, and its lookup optimizations are in
+  `Documentation/Optimization-Log.md`.
 - The `NetworkPrefix` type comes from the `Bitvantage.InternetProtocol.NetworkPrefix` NuGet package, version `2.0.*`.
 
 ## Build and test
@@ -88,6 +89,8 @@ The library build has 4 pre-existing nullable warnings (CS8618, CS8625). Do not 
 - The baseline in `Documentation/Architecture.md` shows about 16 nodes visited per lookup with the benchmark data, and
   64 bytes allocated per `TryGetMatch(IPAddress)` call in `ToUInt128`.
 - Search for `PERF:` to find the hot spots that are already identified.
+- `Documentation/Optimization-Log.md` lists what made the prototype core about 30 times faster, what did not help, and
+  the concurrency rules the production version must follow. Check it before trying an idea again.
 - Cloud containers drift by about 10% between benchmark sessions. Compare variants in one BenchmarkDotNet session, as
   separate jobs, rather than across separate runs.
 - On .NET 10 the insert benchmarks are dominated by garbage collection, because the Gen0 budget is much smaller than

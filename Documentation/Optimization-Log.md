@@ -19,7 +19,48 @@ node and lookups returning `out` parameters. All code is in [`Prototypes/Generic
 
 ## Results
 
-The BenchmarkDotNet results are being collected and will be added here.
+All figures below are BenchmarkDotNet means, with ratios against the first row of the same session.
+
+**Lookup, from precomputed 32-bit keys.** One million lookups against the large table.
+
+| Variant | Time | Ratio |
+| --- | --- | --- |
+| Baseline: the decided design, `CachedKeyTrie` | 643 ms | 1.00 |
+| Children as fields | 503 ms | 0.79 ± 0.13 |
+| Node pool | 317 ms | 0.50 ± 0.09 |
+| Node pool, breadth-first layout | 242 ms | 0.38 ± 0.07 |
+| Node pool, depth-first layout | 210 ms | 0.33 ± 0.06 |
+| Depth-first, 12-bit index | 57 ms | 0.09 ± 0.01 |
+| Depth-first, 16-bit index | 21 ms | 0.03 |
+| Depth-first, 17-bit index | 22 ms | 0.04 ± 0.01 |
+
+The final design looks up a key in about 21 ns, roughly 30 times faster than the baseline. None of the variants
+allocates during lookups.
+
+**End to end, from `IPAddress` objects.** One million lookups against the large table, including converting each
+address to a key. The optimized rows use the depth-first node pool with a 17-bit index.
+
+| Variant | Time | Ratio | Allocated |
+| --- | --- | --- | --- |
+| Current library, `NetworkPrefixLookup<string>` | 1,885 ms | 1.00 | 61 MB |
+| Optimized, `TryWriteBytes` conversion | 42 ms | 0.02 | 0 |
+| Optimized, `Address` property conversion | 29 ms | 0.02 | 0 |
+| Optimized, private field conversion | 32 ms | 0.02 | 0 |
+
+The optimized design is 45 to 64 times faster than the current library end to end.
+
+**Building the large table.** Inserting all 96,944 prefixes.
+
+| Variant | Time | Ratio | Allocated | Garbage collections per build |
+| --- | --- | --- | --- | --- |
+| Current library | 347 ms | 1.00 | 94.6 MB | 5 Gen0, 4 Gen1 |
+| Baseline: `CachedKeyTrie` | 83 ms | 0.24 ± 0.02 | 18.5 MB | 1 Gen0, 0.8 Gen1 |
+| Node pool | 33 ms | 0.10 ± 0.01 | 20.0 MB | none |
+| Node pool, then depth-first relayout | 54 ms | 0.16 ± 0.02 | 28.3 MB | none |
+| Node pool, relayout and 17-bit index | 58 ms | 0.17 ± 0.02 | 29.3 MB | none |
+
+The node pool allocates a few large arrays instead of an object per node, so building it triggers no collections. The
+depth-first relayout costs about 21 ms and the index about 4 ms on top.
 
 ## The steps
 
@@ -122,11 +163,15 @@ example a full BGP table, before the index design is settled for it.
 End to end from `IPAddress` objects, the lookup also converts the address to a key. Three conversions were tried. All
 three agreed for every one of the 1,000,000 addresses.
 
-| Conversion | Notes |
-| --- | --- |
-| `IPAddress.TryWriteBytes` into a stack buffer, then `BinaryPrimitives.ReadUInt32BigEndian` | Public, supported API |
-| The `IPAddress.Address` property, byte-swapped | Public but marked obsolete because it only works for IPv4 |
-| The private `_addressOrScopeId` field through `UnsafeAccessor` | Fastest, but depends on a runtime implementation detail |
+| Conversion | End-to-end time | Notes |
+| --- | --- | --- |
+| `IPAddress.TryWriteBytes` into a stack buffer, then `BinaryPrimitives.ReadUInt32BigEndian` | 42 ms | Public, supported API |
+| The `IPAddress.Address` property, byte-swapped | 29 ms | Public but marked obsolete because it only works for IPv4 |
+| The private `_addressOrScopeId` field through `UnsafeAccessor` | 32 ms | Depends on a runtime implementation detail |
+
+The `Address` property was the fastest in the authoritative session, about 12 ns per lookup quicker than
+`TryWriteBytes`. Reading the private field brought nothing extra. In the quick timings the private field came out
+ahead; the difference between those two is within the noise.
 
 ## Recommendations for the production core
 
@@ -137,8 +182,9 @@ three agreed for every one of the 1,000,000 addresses.
 3. **Lay nodes out depth-first** after bulk loads, through an explicit method such as `Optimize()`, or automatically
    once enough inserts have accumulated.
 4. **Add the top-level index**, sized from the node count: about log2(nodes) minus one, between 8 and 17 bits for IPv4.
-5. **Convert addresses with `TryWriteBytes`.** The `Address` property is a reasonable alternative for IPv4. The private
-   field is not worth the fragility.
+5. **Convert IPv4 addresses with the `Address` property**, byte-swapped, behind a warning suppression with a comment
+   explaining why. It was about 30% faster end to end than `TryWriteBytes`. Use `TryWriteBytes` for IPv6, where
+   `Address` throws. Do not read the private field; it is no faster and depends on runtime internals.
 6. **Do not add batch lookups or the other ideas** in [What did not help](#what-did-not-help).
 
 ## Production concerns

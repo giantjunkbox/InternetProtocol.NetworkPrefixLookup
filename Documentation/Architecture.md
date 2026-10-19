@@ -37,7 +37,7 @@ The library depends on one package, `Bitvantage.InternetProtocol.NetworkPrefix`.
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup/ConcurrenceNetworkPrefixLookup.cs` | Variants that lock around writes. |
 | `Test/` | NUnit tests. Most compare the text rendering of the trie with an expected string. |
 | `PerformanceTest/` | BenchmarkDotNet benchmarks for lookup and insert. |
-| `Prototypes/GenericTrie/` | A prototype of a trie core that does not depend on `NetworkPrefix`. It is not in the solution; see [Abstraction-Study.md](Abstraction-Study.md). |
+| `Prototypes/GenericTrie/` | A prototype of a trie core that does not depend on `NetworkPrefix`. It is not in the solution; see [Abstraction-Study.md](Abstraction-Study.md) and [Optimization-Log.md](Optimization-Log.md). |
 | `Documentation/Media/` | Tree images used by the README. |
 
 ## Public types

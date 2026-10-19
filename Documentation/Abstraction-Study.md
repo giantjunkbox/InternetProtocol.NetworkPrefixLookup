@@ -416,9 +416,11 @@ pattern.
 
 ## Work plan
 
-1. **Core.** Build `BitTrie` on `IBitKey<TSelf>` with cached masks, and bring it to feature parity: remove, longest
-   match by prefix, all matches, clear and count. Use node replacement for in-place changes. Write unit tests directly
-   against the core, including at least one non-IP key width.
+1. **Core.** Build `BitTrie` on `IBitKey<TSelf>` with cached masks, using the node pool, branch-free walk, depth-first
+   relayout and top-level index from [Optimization-Log.md](Optimization-Log.md). Bring it to feature parity: remove,
+   longest match by prefix, all matches, clear and count. Follow the concurrency rules in that log for array growth,
+   removal and publishing the index. Write unit tests directly against the core, including at least one non-IP key
+   width.
 2. **IP layer.** Add the dual-stack lookup, `IPAddress` conversions, both adapters and a formatter. Port `ToTextTree`
    and `ToDotTree` onto the formatter.
 3. **Port the tests.** Rewrite the existing 19 tests against the new API, keeping their tree-shape assertions through
