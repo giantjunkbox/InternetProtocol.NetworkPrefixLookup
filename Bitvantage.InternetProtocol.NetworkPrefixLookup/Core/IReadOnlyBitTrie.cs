@@ -68,6 +68,14 @@ public interface IReadOnlyBitTrie<TKey, TPrefix, TValue> : IReadOnlyCollection<P
     /// <returns>True when the prefix is stored.</returns>
     bool TryGetValue(in TKey bits, int length, out TValue value);
 
+    /// <summary>Gets the prefix object and value of exactly this prefix.</summary>
+    /// <param name="bits">The prefix bits.</param>
+    /// <param name="length">The prefix length.</param>
+    /// <param name="prefix">The prefix object, when the prefix is stored.</param>
+    /// <param name="value">The value, when the prefix is stored.</param>
+    /// <returns>True when the prefix is stored.</returns>
+    bool TryGetValue(in TKey bits, int length, out TPrefix prefix, out TValue value);
+
     /// <summary>True when exactly this prefix is stored.</summary>
     /// <param name="bits">The prefix bits.</param>
     /// <param name="length">The prefix length.</param>

@@ -1,0 +1,294 @@
+﻿/*
+   Bitvantage.InternetProtocol.NetworkPrefixLookup
+   Copyright (C) 2024 Michael Crino
+
+   This program is free software: you can redistribute it and/or modify
+   it under the terms of the GNU Affero General Public License as published by
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU Affero General Public License for more details.
+
+   You should have received a copy of the GNU Affero General Public License
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+using System.Net;
+using System.Net.Sockets;
+using Bitvantage.InternetProtocol;
+
+namespace Test.IP;
+
+/// <summary>
+///     Tests for the IP layer through <see cref="IPNetworkLookup{TValue}" />: address conversion, both families, the
+///     frozen form, and the scenarios of the v2 tests, which asserted tree shapes of the old trie and here assert lookups.
+/// </summary>
+public class IPNetworkLookupTests
+{
+    private static IPNetwork N(string text) => IPNetwork.Parse(text);
+
+    private static IPNetworkLookup<string> Lookup(params string[] networks)
+    {
+        var lookup = new IPNetworkLookup<string>();
+        foreach (var network in networks)
+            lookup.Add(N(network), network);
+        return lookup;
+    }
+
+    // both forms, so every assertion covers the read-write and the frozen lookup
+    private static IEnumerable<IReadOnlyIPPrefixLookup<IPNetwork, string>> Forms(IPNetworkLookup<string> lookup)
+    {
+        yield return lookup;
+        yield return lookup.Freeze();
+        yield return lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }, new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });
+    }
+
+    private static string? Match(IReadOnlyIPPrefixLookup<IPNetwork, string> lookup, string address) =>
+        lookup.TryGetMatch(IPAddress.Parse(address), out _, out var value) ? value : null;
+
+    [Test(Description = "v2 Add_IPv4_01: nested and adjacent IPv4 prefixes")]
+    public void Nested_IPv4_prefixes_give_the_longest_match()
+    {
+        var lookup = Lookup("10.20.30.0/23", "10.20.30.0/24", "10.20.31.0/24", "10.20.16.0/20", "10.20.0.0/16", "200.20.0.0/16",
+            "10.20.30.0/32", "10.20.30.1/32", "10.20.30.2/32", "10.20.30.3/32", "10.20.30.4/32", "10.20.30.5/32");
+        foreach (var form in Forms(lookup))
+        {
+            Assert.That(Match(form, "10.20.30.0"), Is.EqualTo("10.20.30.0/32"));
+            Assert.That(Match(form, "10.20.30.5"), Is.EqualTo("10.20.30.5/32"));
+            Assert.That(Match(form, "10.20.30.6"), Is.EqualTo("10.20.30.0/24"));
+            Assert.That(Match(form, "10.20.31.200"), Is.EqualTo("10.20.31.0/24"));
+            Assert.That(Match(form, "10.20.17.1"), Is.EqualTo("10.20.16.0/20"));
+            Assert.That(Match(form, "10.20.200.1"), Is.EqualTo("10.20.0.0/16"));
+            Assert.That(Match(form, "200.20.1.1"), Is.EqualTo("200.20.0.0/16"));
+            Assert.That(Match(form, "10.21.0.0"), Is.Null);
+            Assert.That(form.GetMatches(IPAddress.Parse("10.20.30.3")).Select(e => e.Value),
+                Is.EqualTo(new[] { "10.20.30.3/32", "10.20.30.0/24", "10.20.30.0/23", "10.20.16.0/20", "10.20.0.0/16" }));
+            Assert.That(form.Select(e => e.Value), Is.EqualTo(new[]
+            {
+                "10.20.0.0/16", "10.20.16.0/20", "10.20.30.0/23", "10.20.30.0/24", "10.20.30.0/32", "10.20.30.1/32", "10.20.30.2/32",
+                "10.20.30.3/32", "10.20.30.4/32", "10.20.30.5/32", "10.20.31.0/24", "200.20.0.0/16"
+            }), "address order");
+        }
+    }
+
+    [Test(Description = "v2 Add_IPv4_02 to 05, 07, 08, 10 and 11: small sets in different orders")]
+    public void Small_sets_match_in_any_order()
+    {
+        string[][] sets =
+        {
+            new[] { "241.104.240.0/21", "128.0.0.0/5", "131.126.152.0/21" },
+            new[] { "241.104.240.0/21", "128.0.0.0/5", "129.51.252.0/22" },
+            new[] { "241.104.240.0/21", "128.0.0.0/10", "128.0.0.0/1" },
+            new[] { "97.84.184.0/21", "76.97.224.0/21", "24.38.216.86/31", "116.11.0.0/16" },
+            new[] { "51.229.96.0/23", "40.200.240.0/22", "32.0.0.0/3" },
+            new[] { "0.0.0.0/0" }
+        };
+
+        foreach (var set in sets)
+        {
+            var expected = Lookup(set).ToTextTree(AddressFamily.InterNetwork);
+            Assert.That(Lookup(set.Reverse().ToArray()).ToTextTree(AddressFamily.InterNetwork), Is.EqualTo(expected), string.Join(", ", set));
+            foreach (var network in set)
+            {
+                var n = N(network);
+                Assert.That(Match(Lookup(set), n.BaseAddress.ToString()), Is.EqualTo(set.Where(s => N(s).Contains(n.BaseAddress)).OrderByDescending(s => N(s).PrefixLength).First()));
+            }
+        }
+
+        Assert.That(Match(Lookup("128.0.0.0/5", "131.126.152.0/21"), "131.126.153.1"), Is.EqualTo("131.126.152.0/21"));
+        Assert.That(Match(Lookup("128.0.0.0/5", "131.126.152.0/21"), "131.126.160.1"), Is.EqualTo("128.0.0.0/5"));
+        Assert.That(Match(Lookup("0.0.0.0/0"), "255.255.255.255"), Is.EqualTo("0.0.0.0/0"));
+    }
+
+    [Test(Description = "v2 Add_IPv4_09 and Delete_IPv4_03: insertion order and removal do not change the shape")]
+    public void Order_and_removal_do_not_change_the_shape()
+    {
+        var random = new Random(55);
+        var networks = Enumerable.Range(0, 20000)
+            .Select(_ => new IPNetwork(new IPAddress(random.NextInt64(0, 1L << 32)), (int)Math.Cbrt(random.Next(0, 33 * 33 * 33))))
+            .Select(n => new IPNetwork(IPAddressBits.FromIPv4Bits(IPAddressBits.ToIPv4Bits(n.BaseAddress) & (uint)(0xFFFFFFFF00000000UL >> n.PrefixLength)), n.PrefixLength))
+            .Distinct().Take(10000).ToList();
+        var keep = networks.Take(8000).ToList();
+
+        var expected = new IPNetworkLookup<int>(keep.Select(n => KeyValuePair.Create(n, 0))).ToTextTree(AddressFamily.InterNetwork);
+        var lookup = new IPNetworkLookup<int>();
+        foreach (var network in networks.OrderBy(_ => random.Next()))
+            lookup.Add(network, 0);
+        foreach (var network in networks.Skip(8000))
+            Assert.That(lookup.Remove(network), Is.True);
+        Assert.That(lookup.ToTextTree(AddressFamily.InterNetwork), Is.EqualTo(expected));
+        Assert.That(lookup.Count, Is.EqualTo(8000));
+    }
+
+    [Test(Description = "v2 Add_IPv6_01 and 02")]
+    public void IPv6_prefixes_give_the_longest_match()
+    {
+        var lookup = Lookup("2001:db8:3333:4444:5555:6666:7777:8888/128", "2001:db8:3333:4444:cccc:dddd:eeee:ffff/128", "2001:db8::/128", "::/128",
+            "::1234:5678/128", "2001:db8::1234:5678/128", "2001:db8::/32", "2000::/8", "2001:db8:1::ab9:c0a8:102/128", "::b16:212c/128");
+        foreach (var form in Forms(lookup))
+        {
+            Assert.That(Match(form, "2001:db8::1234:5678"), Is.EqualTo("2001:db8::1234:5678/128"));
+            Assert.That(Match(form, "2001:db8::1234:5679"), Is.EqualTo("2001:db8::/32"));
+            Assert.That(Match(form, "2001:db9::"), Is.EqualTo("2000::/8"));
+            Assert.That(Match(form, "::"), Is.EqualTo("::/128"));
+            Assert.That(Match(form, "::1"), Is.Null);
+            Assert.That(Match(form, "::11.22.33.44"), Is.EqualTo("::b16:212c/128"));
+            Assert.That(Match(form, "10.0.0.1"), Is.Null, "IPv4 addresses only search the IPv4 prefixes");
+        }
+
+        Assert.That(lookup.ToTextTree(AddressFamily.InterNetworkV6), Does.Contain("2001:db8::/32"));
+        Assert.That(lookup.ToTextTree(AddressFamily.InterNetwork), Is.Empty);
+    }
+
+    [Test(Description = "v2 TryGetMatch_IPv4_01")]
+    public void A_network_matches_the_longest_prefix_that_contains_it()
+    {
+        var lookup = Lookup("10.0.0.0/8", "10.0.0.0/16", "10.0.0.0/20", "10.0.0.0/24", "10.0.0.0/32");
+        foreach (var form in Forms(lookup))
+        {
+            Assert.That(form.TryGetMatch(N("10.0.0.0/25"), out var prefix, out _) && prefix == N("10.0.0.0/24"));
+            Assert.That(form.TryGetMatch(N("10.0.0.0/24"), out prefix, out _) && prefix == N("10.0.0.0/24"));
+            Assert.That(form.TryGetMatch(N("10.0.0.0/7"), out _, out _), Is.False);
+            Assert.That(form.TryGetValue(N("10.0.0.0/20"), out var value) && value == "10.0.0.0/20");
+            Assert.That(form.TryGetValue(N("10.0.0.0/21"), out _), Is.False);
+            Assert.That(form.ContainsPrefix(N("10.0.0.0/32")));
+            Assert.That(form.ContainsPrefix(N("10.0.0.1/32")), Is.False);
+        }
+    }
+
+    [Test(Description = "v2 Add_IPv4_13: a set of networks without values")]
+    public void Networks_without_values()
+    {
+        var lookup = new IPNetworkLookup<NoValue>();
+        foreach (var network in new[] { "69.0.0.0/8", "9.213.0.0/21", "52.137.186.232/30", "59.168.0.0/13", "59.168.83.0/24", "69.169.125.128/30", "69.15.21.0/25", "69.248.13.0/26", "109.114.42.64/28", "109.195.0.0/17" })
+            lookup.Add(N(network));
+        Assert.That(lookup.TryAdd(N("69.0.0.0/8")), Is.False);
+        Assert.That(lookup.TryGetMatch(IPAddress.Parse("69.15.21.1"), out var match) && match == N("69.15.21.0/25"));
+        Assert.That(lookup.TryGetMatch(IPAddress.Parse("69.15.22.1"), out match) && match == N("69.0.0.0/8"));
+        Assert.That(lookup.ContainsMatch(IPAddress.Parse("70.0.0.0")), Is.False);
+        Assert.That(lookup.Freeze().ContainsMatch(IPAddress.Parse("59.168.83.9")));
+    }
+
+    [Test]
+    public void Every_address_form_finds_the_same_match()
+    {
+        var lookup = Lookup("10.0.0.0/8", "10.1.0.0/16", "2001:db8::/32", "::ffff:0:0/96");
+        foreach (var form in Forms(lookup))
+        {
+            Assert.That(form.TryGetMatch(new byte[] { 10, 1, 2, 3 }, out _, out var value) && value == "10.1.0.0/16");
+            Assert.That(form.TryGetMatchIPv4(0x0A010203, out _, out value) && value == "10.1.0.0/16");
+            Assert.That(form.TryGetMatchValueIPv4(0x0A020203, out value) && value == "10.0.0.0/8");
+            Assert.That(form.TryGetMatchValue(IPAddress.Parse("10.1.9.9"), out value) && value == "10.1.0.0/16");
+            Assert.That(form.TryGetMatchValue(new byte[] { 10, 9, 9, 9 }, out value) && value == "10.0.0.0/8");
+
+            var v6 = IPAddress.Parse("2001:db8::1").GetAddressBytes();
+            Assert.That(form.TryGetMatch(v6, out _, out value) && value == "2001:db8::/32");
+            Assert.That(form.TryGetMatchIPv6(IPAddressBits.ToIPv6Bits(IPAddress.Parse("2001:db8::1")), out _, out value) && value == "2001:db8::/32");
+            Assert.That(form.TryGetMatchValueIPv6(IPAddressBits.ToIPv6Bits(IPAddress.Parse("2001:db8::1")), out value) && value == "2001:db8::/32");
+
+            Assert.Throws<ArgumentException>(() => form.TryGetMatch(new byte[5], out _, out _));
+            Assert.Throws<ArgumentNullException>(() => form.TryGetMatch((IPAddress)null!, out _, out _));
+
+            var span = new PrefixEntry<IPNetwork, string>[129];
+            Assert.That(form.GetMatches(IPAddress.Parse("10.1.2.3"), span), Is.EqualTo(2));
+            Assert.That(span[0].Value, Is.EqualTo("10.1.0.0/16"));
+        }
+    }
+
+    [Test]
+    public void IPv4_mapped_addresses_are_looked_up_as_IPv4_by_default()
+    {
+        var lookup = Lookup("10.0.0.0/8", "::ffff:0:0/96");
+        var mapped = IPAddress.Parse("::ffff:10.1.2.3");
+        foreach (var form in Forms(lookup))
+        {
+            Assert.That(Match(form, "::ffff:10.1.2.3"), Is.EqualTo("10.0.0.0/8"));
+            Assert.That(form.TryGetMatch(mapped.GetAddressBytes(), out _, out var value) && value == "10.0.0.0/8");
+            Assert.That(form.TryGetMatchIPv6(IPAddressBits.ToIPv6Bits(mapped), out _, out value) && value == "10.0.0.0/8");
+            Assert.That(Match(form, "::ffff:11.1.2.3"), Is.Null, "no IPv4 prefix contains it");
+        }
+
+        var unmapped = new IPNetworkLookup<string>(new IPLookupOptions { MapIPv4MappedAddresses = false });
+        unmapped.Add(N("10.0.0.0/8"), "10.0.0.0/8");
+        unmapped.Add(N("::ffff:0:0/96"), "::ffff:0:0/96");
+        Assert.That(Match(unmapped, "::ffff:10.1.2.3"), Is.EqualTo("::ffff:0:0/96"));
+        Assert.That(Match(unmapped.Freeze(), "::ffff:10.1.2.3"), Is.EqualTo("::ffff:0:0/96"));
+    }
+
+    [Test]
+    public void Writes_and_batches_cover_both_families()
+    {
+        var lookup = new IPNetworkLookup<int>();
+        Assert.That(lookup.TryAdd(N("10.0.0.0/8"), 1));
+        Assert.That(lookup.TryAdd(N("10.0.0.0/8"), 2), Is.False);
+        Assert.Throws<ArgumentException>(() => lookup.Add(N("10.0.0.0/8"), 2));
+        Assert.That(lookup.AddOrUpdate(N("10.0.0.0/8"), 3), Is.False);
+        Assert.That(lookup.AddOrUpdate(N("2001:db8::/32"), 4), Is.True);
+        Assert.That(lookup.GetOrAdd(N("2001:db8::/32"), _ => 5), Is.EqualTo(4));
+        Assert.That(lookup.GetOrAdd(N("2001:db8::/48"), _ => 6), Is.EqualTo(6));
+        Assert.That(lookup.Count, Is.EqualTo(3));
+        var version = lookup.Version;
+
+        using (var batch = lookup.BeginBatch())
+        {
+            lookup.Add(N("192.168.0.0/16"), 7);
+            lookup.Remove(N("2001:db8::/48"));
+            Assert.That(Task.Run(() => lookup.Count).Result, Is.EqualTo(3), "invisible until committed");
+            batch.Commit();
+        }
+
+        Assert.That(lookup.Count, Is.EqualTo(3));
+        Assert.That(lookup.Version, Is.GreaterThan(version));
+        Assert.That(lookup.TryGetMatchValue(IPAddress.Parse("192.168.1.1"), out var value) && value == 7);
+
+        using (lookup.BeginBatch())
+            lookup.Clear();
+        Assert.That(lookup.Count, Is.EqualTo(3), "discarded");
+
+        Assert.That(lookup.GetStatistics().IPv4.Prefixes, Is.EqualTo(2));
+        Assert.That(lookup.Freeze().Bytes, Is.GreaterThan(0));
+        Assert.That(lookup.ToDotTree(AddressFamily.InterNetworkV6), Does.StartWith("digraph"));
+        Assert.Throws<ArgumentException>(() => lookup.ToTextTree(AddressFamily.Unix));
+        lookup.Clear();
+        Assert.That(lookup.Count, Is.Zero);
+    }
+
+    [Test(Description = "v2 Add_IPv4_12: readers always find 0.0.0.0/32 while every other prefix on its path churns")]
+    public void Readers_never_see_a_half_made_change()
+    {
+        var lookup = new IPNetworkLookup<string>();
+        var networks = new List<IPNetwork>();
+        for (var length = 0; length <= 31; length++)
+        {
+            networks.Add(new IPNetwork(IPAddress.Any, length));
+            if (length > 0) networks.Add(new IPNetwork(IPAddressBits.FromIPv4Bits(1u << (32 - length)), length));
+        }
+
+        lookup.Add(N("0.0.0.0/32"), "Success");
+        var stop = false;
+        long failures = 0;
+        var reader = new Thread(() =>
+        {
+            while (!Volatile.Read(ref stop))
+                if (!lookup.TryGetMatchValue(IPAddress.Any, out var value) || value != "Success")
+                    Interlocked.Increment(ref failures);
+        });
+        reader.Start();
+
+        var random = new Random(20);
+        for (var round = 0; round < 500; round++)
+        {
+            foreach (var network in networks.OrderBy(_ => random.Next()))
+                lookup.Add(network, string.Empty);
+            foreach (var network in networks.OrderBy(_ => random.Next()))
+                lookup.Remove(network);
+        }
+
+        Volatile.Write(ref stop, true);
+        reader.Join();
+        Assert.That(failures, Is.Zero);
+    }
+}

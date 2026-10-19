@@ -366,6 +366,23 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     }
 
     /// <inheritdoc />
+    public bool TryGetValue(in TKey bits, int length, out TPrefix prefix, out TValue value)
+    {
+        CheckLength(length);
+        ref var entry = ref FindExact(Root, in bits, length);
+        if (Unsafe.IsNullRef(ref entry))
+        {
+            prefix = default!;
+            value = default!;
+            return false;
+        }
+
+        prefix = entry.Prefix;
+        value = entry.Value;
+        return true;
+    }
+
+    /// <inheritdoc />
     public bool ContainsPrefix(in TKey bits, int length)
     {
         CheckLength(length);
@@ -764,6 +781,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
                 var child = new Node { Stamp = _stamp };
                 AddPrivate(child, depth + 1, in existing);
                 AddPrivate(child, depth + 1, in item);
+                if (!_batch) Trim(child, _stamp); // published now, so no spare capacity
                 changed = Writable(n);
                 RemoveLeaf(changed, octet);
                 InsertKid(changed, octet, child);
@@ -1206,7 +1224,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             bytes += 16 + 4 * 32 + 4 * 8 + 12;
             bytes += ArrayBytes(n.PrefixEntries.Length, Unsafe.SizeOf<Entry>()) + ArrayBytes(n.FringeEntries.Length, Unsafe.SizeOf<Entry>())
                    + ArrayBytes(n.KidNodes.Length, IntPtr.Size) + ArrayBytes(n.LeafEntries.Length, Unsafe.SizeOf<Leaf>());
-            foreach (var kid in n.KidNodes) stack.Push(kid);
+            for (var i = n.Kids.PopCount() - 1; i >= 0; i--) stack.Push(n.KidNodes[i]);
         }
 
         return new BitTrieStatistics(published.Root.Count, (int)nodes, bytes);

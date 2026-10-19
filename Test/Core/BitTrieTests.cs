@@ -100,6 +100,8 @@ public class BitTrieTests
                     failures.Add($"ContainsPrefix({bits}/{l})");
                 if (trie.TryGetValue(in bits, l, out value) != exact || (exact && value != expectedValue * 7))
                     failures.Add($"TryGetValue({bits}/{l})");
+                if (trie.TryGetValue(in bits, l, out prefix, out value) != exact || (exact && (prefix != expectedValue || value != expectedValue * 7)))
+                    failures.Add($"TryGetValue({bits}/{l}) with the prefix object");
             }
 
         Assert.That(trie.Count, Is.EqualTo(reference.Count), because);

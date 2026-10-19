@@ -329,6 +329,24 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
     }
 
     /// <inheritdoc />
+    public bool TryGetValue(in TKey bits, int length, out TPrefix prefix, out TValue value)
+    {
+        CheckLength(length);
+        var i = FindExact(in bits, length);
+        if (i < 0)
+        {
+            prefix = default!;
+            value = default!;
+            return false;
+        }
+
+        ref var entry = ref _entries[i];
+        prefix = entry.Prefix;
+        value = entry.Value;
+        return true;
+    }
+
+    /// <inheritdoc />
     public bool ContainsPrefix(in TKey bits, int length)
     {
         CheckLength(length);
