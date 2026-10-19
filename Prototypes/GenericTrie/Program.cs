@@ -26,7 +26,7 @@ using GenericTrie;
 if (args.Length > 0 && args[0] == "verify") { Verify.Run(); return; }
 if (args.Length > 0 && args[0] == "verify-width") { WidthData.Verify(); return; }
 if (args.Length > 1 && args[0] == "isolate") { WidthData.Isolate(args[1]); return; }
-BenchmarkSwitcher.FromTypes(new[] { typeof(Comparison), typeof(WidthComparison), typeof(CachedWidthComparison) }).Run(args);
+BenchmarkSwitcher.FromTypes(new[] { typeof(Comparison), typeof(WidthComparison), typeof(CachedWidthComparison), typeof(Width192Comparison) }).Run(args);
 
 public static class Data
 {
@@ -142,6 +142,8 @@ public static class WidthData
     public static readonly Bits256[] Prefix256Front = PrefixBits.Select(Front).ToArray();
     public static readonly Bits256[] Prefix256Back = PrefixBits.Select(Back).ToArray();
     public static readonly BitsVar[] PrefixVarBack = PrefixBits.Select(VarBack).ToArray();
+    public static readonly Bits192[] Prefix192Front = PrefixBits.Select(b => new Bits192((ulong)b << 32, 0, 0)).ToArray();
+    public static readonly Bits192[] Prefix192Back = PrefixBits.Select(b => new Bits192(C0, C1, (ulong)b << 32)).ToArray();
 
     public static readonly uint[] KeyRef = AddressBits;
     public static readonly Bits32[] Key32 = AddressBits.Select(b => new Bits32(b)).ToArray();
@@ -149,6 +151,8 @@ public static class WidthData
     public static readonly Bits256[] Key256Front = AddressBits.Select(Front).ToArray();
     public static readonly Bits256[] Key256Back = AddressBits.Select(Back).ToArray();
     public static readonly BitsVar[] KeyVarBack = AddressBits.Select(VarBack).ToArray();
+    public static readonly Bits192[] Key192Front = AddressBits.Select(b => new Bits192((ulong)b << 32, 0, 0)).ToArray();
+    public static readonly Bits192[] Key192Back = AddressBits.Select(b => new Bits192(C0, C1, (ulong)b << 32)).ToArray();
 
     private static Bits256 Front(uint b) { var k = new Bits256(); k.Words[0] = (ulong)b << 32; return k; }
     private static Bits256 Back(uint b) { var k = new Bits256(); k.Words[0] = C0; k.Words[1] = C1; k.Words[2] = C2; k.Words[3] = (ulong)b << 32; return k; }
@@ -163,6 +167,9 @@ public static class WidthData
     public static CachedKeyTrie<Bits128, int, string?> BuildC128() { var t = new CachedKeyTrie<Bits128, int, string?>(); for (var i = 0; i < Prefix128.Length; i++) t.TryAdd(in Prefix128[i], PrefixLengths[i], i, string.Empty); return t; }
     public static CachedKeyTrie<Bits256, int, string?> BuildC256Front() { var t = new CachedKeyTrie<Bits256, int, string?>(); for (var i = 0; i < Prefix256Front.Length; i++) t.TryAdd(in Prefix256Front[i], PrefixLengths[i], i, string.Empty); return t; }
     public static CachedKeyTrie<Bits256, int, string?> BuildC256Back() { var t = new CachedKeyTrie<Bits256, int, string?>(); for (var i = 0; i < Prefix256Back.Length; i++) t.TryAdd(in Prefix256Back[i], 192 + PrefixLengths[i], i, string.Empty); return t; }
+    // the 192-bit worst case puts a 128-bit context in front, so every comparison covers all three words
+    public static CachedKeyTrie<Bits192, int, string?> BuildC192Front() { var t = new CachedKeyTrie<Bits192, int, string?>(); for (var i = 0; i < Prefix192Front.Length; i++) t.TryAdd(in Prefix192Front[i], PrefixLengths[i], i, string.Empty); return t; }
+    public static CachedKeyTrie<Bits192, int, string?> BuildC192Back() { var t = new CachedKeyTrie<Bits192, int, string?>(); for (var i = 0; i < Prefix192Back.Length; i++) t.TryAdd(in Prefix192Back[i], 128 + PrefixLengths[i], i, string.Empty); return t; }
     public static CachedKeyTrie<BitsVar, int, string?> BuildCVarBack() { var t = new CachedKeyTrie<BitsVar, int, string?>(); for (var i = 0; i < PrefixVarBack.Length; i++) t.TryAdd(in PrefixVarBack[i], 192 + PrefixLengths[i], i, string.Empty); return t; }
     public static KeyTrie<BitsVar, int, string?> BuildVarBack() { var t = new KeyTrie<BitsVar, int, string?>(); for (var i = 0; i < PrefixVarBack.Length; i++) t.TryAdd(in PrefixVarBack[i], 192 + PrefixLengths[i], i, string.Empty); return t; }
 
@@ -185,6 +192,8 @@ public static class WidthData
             "cached256front" => Make(BuildC256Front(), Key256Front, (t, k) => t.TryGetMatch(in k, out var p, out _) ? p : -1),
             "cached256back" => Make(BuildC256Back(), Key256Back, (t, k) => t.TryGetMatch(in k, out var p, out _) ? p : -1),
             "cachedvarback" => Make(BuildCVarBack(), KeyVarBack, (t, k) => t.TryGetMatch(in k, out var p, out _) ? p : -1),
+            "cached192front" => Make(BuildC192Front(), Key192Front, (t, k) => t.TryGetMatch(in k, out var p, out _) ? p : -1),
+            "cached192back" => Make(BuildC192Back(), Key192Back, (t, k) => t.TryGetMatch(in k, out var p, out _) ? p : -1),
             _ => throw new ArgumentException(variant)
         };
         for (var i = 0; i < 5; i++) run();
@@ -242,6 +251,18 @@ public static class WidthData
         }
         Console.WriteLine($"cached-mask variants: lookups compared: {KeyRef.Length:N0}, mismatches: {cachedMismatches}");
         Console.WriteLine($"cached-mask retained bytes per prefix: 32={PerPrefix(Retained(BuildC32)):F0} 128={PerPrefix(Retained(BuildC128)):F0} 256={PerPrefix(Retained(BuildC256Back)):F0} var={PerPrefix(Retained(BuildCVarBack)):F0}");
+
+        var f192 = BuildC192Front(); var b192 = BuildC192Back();
+        int mismatches192 = 0;
+        for (var i = 0; i < KeyRef.Length; i++)
+        {
+            r.TryGetMatch(KeyRef[i], out var expected, out _);
+            f192.TryGetMatch(in Key192Front[i], out var a, out _);
+            b192.TryGetMatch(in Key192Back[i], out var b, out _);
+            if (a != expected || b != expected)
+                if (mismatches192++ < 5) Console.WriteLine($"  192 MISMATCH key {i}: ref={expected} front={a} back={b}");
+        }
+        Console.WriteLine($"192-bit cached: lookups compared: {KeyRef.Length:N0}, mismatches: {mismatches192}, retained bytes per prefix: {PerPrefix(Retained(BuildC192Back)):F0}");
 
         Console.WriteLine($"retained bytes per prefix: ref={PerPrefix(Retained(BuildRef)):F0} 32={PerPrefix(Retained(Build32)):F0} 128={PerPrefix(Retained(Build128)):F0} " +
                           $"256front={PerPrefix(Retained(Build256Front)):F0} 256back={PerPrefix(Retained(Build256Back)):F0} varBack={PerPrefix(Retained(BuildVarBack)):F0}");
@@ -327,4 +348,34 @@ public class CachedWidthComparison
 
     [Benchmark, IterationCount(30)]
     public void CachedVarBack_Lookup() { var keys = WidthData.KeyVarBack; for (var i = 0; i < keys.Length; i++) if (!CVarBack.TryGetMatch(in keys[i], out _, out var v) || v != string.Empty) throw new Exception(); }
+}
+
+/// <summary>192-bit keys against the 128-bit and 256-bit key types, all with cached masks, in one session.</summary>
+[MemoryDiagnoser]
+public class Width192Comparison
+{
+    private static readonly BitTrie<uint, int, string?> Ref = WidthData.BuildRef();
+    private static readonly CachedKeyTrie<Bits128, int, string?> C128 = WidthData.BuildC128();
+    private static readonly CachedKeyTrie<Bits192, int, string?> C192Front = WidthData.BuildC192Front();
+    private static readonly CachedKeyTrie<Bits192, int, string?> C192Back = WidthData.BuildC192Back();
+    private static readonly CachedKeyTrie<Bits256, int, string?> C256Front = WidthData.BuildC256Front();
+    private static readonly CachedKeyTrie<Bits256, int, string?> C256Back = WidthData.BuildC256Back();
+
+    [Benchmark(Baseline = true), IterationCount(30)]
+    public void Ref32_IBinaryInteger_Lookup() { var keys = WidthData.KeyRef; for (var i = 0; i < keys.Length; i++) if (!Ref.TryGetMatch(keys[i], out _, out var v) || v != string.Empty) throw new Exception(); }
+
+    [Benchmark, IterationCount(30)]
+    public void Cached128_Lookup() { var keys = WidthData.Key128; for (var i = 0; i < keys.Length; i++) if (!C128.TryGetMatch(in keys[i], out _, out var v) || v != string.Empty) throw new Exception(); }
+
+    [Benchmark, IterationCount(30)]
+    public void Cached192Front_Lookup() { var keys = WidthData.Key192Front; for (var i = 0; i < keys.Length; i++) if (!C192Front.TryGetMatch(in keys[i], out _, out var v) || v != string.Empty) throw new Exception(); }
+
+    [Benchmark, IterationCount(30)]
+    public void Cached192Back_Lookup() { var keys = WidthData.Key192Back; for (var i = 0; i < keys.Length; i++) if (!C192Back.TryGetMatch(in keys[i], out _, out var v) || v != string.Empty) throw new Exception(); }
+
+    [Benchmark, IterationCount(30)]
+    public void Cached256Front_Lookup() { var keys = WidthData.Key256Front; for (var i = 0; i < keys.Length; i++) if (!C256Front.TryGetMatch(in keys[i], out _, out var v) || v != string.Empty) throw new Exception(); }
+
+    [Benchmark, IterationCount(30)]
+    public void Cached256Back_Lookup() { var keys = WidthData.Key256Back; for (var i = 0; i < keys.Length; i++) if (!C256Back.TryGetMatch(in keys[i], out _, out var v) || v != string.Empty) throw new Exception(); }
 }

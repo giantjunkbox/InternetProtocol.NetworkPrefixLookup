@@ -189,6 +189,69 @@ public struct Bits256 : IBitKey<Bits256>
 }
 
 /// <summary>
+///     192-bit key stored inline as three 64-bit words, for example an IPv6 address plus up to 64 bits of context.
+///     Three words do not fill a 256-bit vector, so comparisons use branch-free scalar operations on all three words.
+///     Each cached copy is 24 bytes instead of the 32 bytes of <see cref="Bits256" />.
+/// </summary>
+public readonly struct Bits192 : IBitKey<Bits192>
+{
+    public readonly ulong W0, W1, W2;
+
+    public Bits192(ulong w0, ulong w1, ulong w2)
+    {
+        W0 = w0;
+        W1 = w1;
+        W2 = w2;
+    }
+
+    // mask for one 64-bit word that starts at bit index start
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static ulong WordMask(int length, int start) =>
+        length <= start ? 0 : length >= start + 64 ? ulong.MaxValue : ulong.MaxValue << (64 - (length - start));
+
+    public static Bits192 Truncate(in Bits192 value, int length) =>
+        new(value.W0 & WordMask(length, 0), value.W1 & WordMask(length, 64), value.W2 & WordMask(length, 128));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool GetBit(in Bits192 value, int index)
+    {
+        var word = index < 64 ? value.W0 : index < 128 ? value.W1 : index < 192 ? value.W2 : 0;
+        return (word << (index & 63) >> 63) != 0;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool StartsWith(in Bits192 key, in Bits192 prefix, int length) =>
+        (((key.W0 ^ prefix.W0) & WordMask(length, 0)) | ((key.W1 ^ prefix.W1) & WordMask(length, 64)) | ((key.W2 ^ prefix.W2) & WordMask(length, 128))) == 0;
+
+    public static int CommonPrefixLength(in Bits192 a, in Bits192 b, int maxLength)
+    {
+        var d0 = a.W0 ^ b.W0;
+        if (d0 != 0) return Math.Min(BitOperations.LeadingZeroCount(d0), maxLength);
+        var d1 = a.W1 ^ b.W1;
+        if (d1 != 0) return Math.Min(64 + BitOperations.LeadingZeroCount(d1), maxLength);
+        var d2 = a.W2 ^ b.W2;
+        if (d2 != 0) return Math.Min(128 + BitOperations.LeadingZeroCount(d2), maxLength);
+        return Math.Min(192, maxLength);
+    }
+
+    public static Bits192 MaskFor(int length) => new(WordMask(length, 0), WordMask(length, 64), WordMask(length, 128));
+
+    public static Bits192 SplitFor(int length) =>
+        length >= 192 ? default :
+        length < 64 ? new(1UL << (63 - length), 0, 0) :
+        length < 128 ? new(0, 1UL << (127 - length), 0) :
+        new(0, 0, 1UL << (191 - length));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool IsSet(in Bits192 key, in Bits192 split) =>
+        ((key.W0 & split.W0) | (key.W1 & split.W1) | (key.W2 & split.W2)) != 0;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool MatchesUnderMask(in Bits192 key, in Bits192 bits, in Bits192 mask) =>
+        (((key.W0 & mask.W0) ^ bits.W0) | ((key.W1 & mask.W1) ^ bits.W1) | ((key.W2 & mask.W2) ^ bits.W2)) == 0;
+}
+
+/// <summary>
 ///     Variable-width key: any number of 64-bit words, chosen at run time and held in an array. This is the "truly
 ///     arbitrary" option. Every node then points to a separate array object.
 /// </summary>

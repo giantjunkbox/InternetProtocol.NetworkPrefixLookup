@@ -24,8 +24,9 @@ against the current library on .NET 10.
   `IBinaryInteger<T>` constraint with a small purpose-built key interface did not slow 32-bit keys. A 256-bit key
   using vector instructions was as fast as a 128-bit key. Only keys whose width is chosen at run time were expensive.
   See [Arbitrary key widths](#arbitrary-key-widths).
-- **Decided:** .NET 10 only, no backward compatibility, and a dependency-free core package. The remaining questions are
-  under [Open questions](#open-questions).
+- **Decided:** .NET 10 only, no backward compatibility, a dependency-free core package, a separate package for the
+  `NetworkPrefix` adapter, and the `IBitKey<TSelf>` key interface with cached masks. The remaining questions are under
+  [Open questions](#open-questions).
 
 ## Decisions
 
@@ -34,7 +35,8 @@ against the current library on .NET 10.
 | Target framework | .NET 10 only. |
 | Backward compatibility | Not required. The v2 public types are replaced, and the existing tests are ported to the new API. |
 | Packaging | The core ships as a package with no dependency on `Bitvantage.InternetProtocol.NetworkPrefix`. |
-| Key width | Not decided yet. The recommendation is in [Arbitrary key widths](#arbitrary-key-widths). |
+| `NetworkPrefix` support | A separate package containing the `NetworkPrefix` adapter. |
+| Key interface | `IBitKey<TSelf>`, with each node caching its mask and split bit. Widths are fixed at compile time; widths chosen at run time are not supported. See [Arbitrary key widths](#arbitrary-key-widths). |
 
 ## What the library uses from NetworkPrefix today
 
@@ -357,14 +359,10 @@ Building the trie from 97,000 prefixes, with computed masks:
 
 ## Open questions
 
-- **The `NetworkPrefix` adapter.** It could ship as a separate optional package, as sample code, or not at all. Without
-  backward compatibility, nothing requires it.
 - **Package contents.** The recommendation is one dependency-free package containing the core, the IP layer and the
   `IPNetwork` adapter, because `IPNetwork` is part of .NET.
 - **Result shape.** Lookups can return the prefix and value through `out` parameters, as in the prototype, or through
   a small readonly struct. Both avoid allocation.
-- **Key interface.** The recommendation is `IBitKey<TSelf>` with cached masks, as described in
-  [Arbitrary key widths](#arbitrary-key-widths).
 
 ## Work plan
 

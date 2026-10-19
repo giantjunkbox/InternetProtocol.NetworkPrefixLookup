@@ -9,6 +9,8 @@ lookups of IPv4 and IPv6 network prefixes. It stores prefixes in a path-compress
 The current goal is to prepare for performance optimization of the lookup path.
 
 Read `Documentation/Architecture.md` before changing anything under `Bitvantage.InternetProtocol.NetworkPrefixLookup/`.
+It covers the trie invariants, the lock-free reader rules, measured baseline numbers, optimization candidates, and
+known bugs.
 
 A redesign is planned in `Documentation/Abstraction-Study.md`: a generic core that works on bits only, so it can store
 `System.Net.IPNetwork` or any other network type. Decisions made by the user:
@@ -16,8 +18,9 @@ A redesign is planned in `Documentation/Abstraction-Study.md`: a generic core th
 - Target .NET 10 only.
 - Backward compatibility with the v2 public API is not required.
 - The core ships as a package with no dependency on `Bitvantage.InternetProtocol.NetworkPrefix`.
-It covers the trie invariants, the lock-free reader rules, measured baseline numbers, optimization candidates, and
-known bugs.
+- The `NetworkPrefix` adapter ships as a separate package.
+- The core is constrained on a purpose-built key interface, `IBitKey<TSelf>`, with each node caching its mask and split
+  bit. Key widths are fixed at compile time; widths chosen at run time are not supported.
 
 ## Layout
 
