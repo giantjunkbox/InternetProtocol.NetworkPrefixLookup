@@ -4,6 +4,7 @@
 		<TargetFramework>net7.0</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<RootNamespace>Bitvantage.InternetProtocol</RootNamespace>
 		<Title>Bitvantage.InternetProtocol.NetworkPrefixLookup</Title>
 		<PackageProjectUrl>https://github.com/Bitvantage/InternetProtocol.NetworkPrefixLookup</PackageProjectUrl>
