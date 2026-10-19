@@ -154,9 +154,7 @@ too.
 The same steps carry over to 128-bit keys. With the IPv4 data encoded in 128-bit keys, the baseline took 827 ms, the
 depth-first node pool 381 ms, and the node pool with a 16-bit index 40 ms.
 
-Real IPv6 tables are a different matter. Most IPv6 prefixes fall under `2000::/3`, so an index over the first 16 bits
-would put almost every prefix behind a handful of entries. IPv6 needs its own measurements with realistic data, for
-example a full BGP table, before the index design is settled for it.
+Real IPv6 tables behave very differently from this encoded data; see [Real routing tables](#real-routing-tables).
 
 ## Address conversion
 
@@ -173,32 +171,183 @@ The `Address` property was the fastest in the authoritative session, about 12 ns
 `TryWriteBytes`. Reading the private field brought nothing extra. In the quick timings the private field came out
 ahead; the difference between those two is within the noise.
 
+## Real routing tables
+
+Random prefixes are a convenient benchmark but not a realistic one. The later work used the CAIDA RouteViews
+prefix-to-AS snapshots of 30 September 2025, which list the prefixes announced in the global routing table.
+`Prototypes/GenericTrie/download-routeviews.sh` fetches them, and `ROUTEVIEWS_DIR` points the prototype at them. Lookup
+keys are 1,000,000 random addresses inside randomly chosen announced prefixes, because uniformly random addresses would
+almost never match an IPv6 prefix.
+
+| Table | Prefixes | Most common lengths | Trie nodes |
+| --- | --- | --- | --- |
+| IPv4 | 1,054,037 | /24 (62%), /22, /23, /21 | 1,928,039 |
+| IPv6 | 239,603 | /48 (45%), /32, /40, /44 | 451,326 |
+
+Every variant was checked against the current library on both tables, with no mismatches for any of the 1,000,000 keys.
+
+Real data changes the picture in two ways:
+
+- **The trie no longer fits in cache.** The IPv4 node array alone is 44 MB, more than the 33 MiB L3 cache, so node
+  visits go to main memory.
+- **A flat index fits real data poorly.** Real IPv4 is clustered: after a 20-bit index a lookup still visits 3.9 nodes,
+  against 1.05 for random data. IPv6 is worse: only 66 distinct values occur in the first 16 bits, so a 16-bit index
+  leaves tens of thousands of prefixes behind single entries. Lookups still visited 18.9 nodes with a 16-bit index and
+  15.6 nodes with a 20-bit index.
+
+## Multi-level index
+
+The multi-level index replaces the flat one. A root table covers the first 16 bits. Wherever an entry's block still
+holds more than a threshold number of nodes, the entry points to a sub-table over the next 8 bits instead, and so on
+down. Dense regions are indexed deeply; sparse ones cost nothing. Each sub-table level adds one memory load, so it only
+pays where it saves several node visits.
+
+Nodes visited per lookup, and the index size:
+
+| Index | Real IPv4 | IPv4 index | Real IPv6 | IPv6 index |
+| --- | --- | --- | --- | --- |
+| Flat, 16 bits | 7.55 | 0.5 MB | 18.92 | 0.5 MB |
+| Flat, 20 bits | 3.87 | 8 MB | 15.61 | 8 MB |
+| Multi-level, 8-bit sub-tables, threshold 8 | 1.04 | 36.7 MB | 1.51 | 26.8 MB |
+| Multi-level, 8-bit sub-tables, threshold 32 | 1.31 | 24.8 MB | 2.69 | 8.6 MB |
+| Multi-level, 4-bit sub-tables, threshold 4 | 1.16 | 14.5 MB | 1.43 | 6.5 MB |
+| Multi-level, 4-bit sub-tables, threshold 16 | 2.27 | 6.4 MB | 2.68 | 2.8 MB |
+
+Quick timings for 1,000,000 precomputed keys:
+
+| Variant | Real IPv4 | Real IPv6 |
+| --- | --- | --- |
+| Baseline: the decided design | 2,190 ms | 1,886 ms |
+| Node pool, depth-first, no index | 743 ms | 1,152 ms |
+| Flat 20-bit index | 328 to 351 ms | 899 to 940 ms |
+| Multi-level, 8-bit sub-tables, threshold 8 | 176 ms | 334 ms |
+| Multi-level, 8-bit sub-tables, threshold 32 | 192 ms | 429 ms |
+| Multi-level, 8-bit sub-tables, threshold 4 | | 314 ms |
+| Multi-level, 4-bit sub-tables, threshold 4 | 208 ms | 479 ms |
+
+Eight-bit sub-tables beat four-bit ones, because there are fewer levels to load. A 20-bit root and 12-bit sub-tables were
+both slower. The threshold is the knob between speed and memory.
+
+## Production behaviors
+
+The experimental classes are insert-only and single-threaded. [`SnapshotTrie`](../Prototypes/GenericTrie/SnapshotTrie.cs)
+adds what a production core needs, on top of the node pool, branch-free walk, sentinel and multi-level index:
+
+- **Removal.** A value node is demoted with one write. Routing nodes that are no longer needed are unlinked or replaced
+  by their only child, each with one write. Removing a routing node's prefix returns false, unlike the current library.
+- **Snapshots.** Everything a lookup reads lives in one snapshot object: nodes, lengths, prefixes and values, and the
+  index. A reader reads the snapshot reference once. The writer changes the current snapshot only in ways readers
+  tolerate: new nodes, values and sub-tables are written completely, then linked with one atomic write. When an array
+  is full, the writer copies it, and every array that refers to it, into a new snapshot and publishes it with one write.
+- **Index maintenance.** After each change, the writer walks down the index along the changed prefix and rebuilds only
+  the deepest entry whose block contains it, or the few sub-table entries the prefix spans. The first version rebuilt
+  the whole root entry on every change; on the real IPv6 table that regenerated thousands of sub-tables per insert and
+  ran out of memory.
+- **Compaction.** Removed nodes and values, and replaced sub-tables, stay in place while readers might still use them.
+  `Compact` builds a fresh snapshot with only live data, laid out depth-first, with a rebuilt index, and publishes it
+  with one write. An early version published a half-built snapshot when an array grew during compaction; the writer
+  now builds privately and publishes once.
+- **Bulk loading.** `BeginBulkLoad` stops index maintenance while many prefixes are added, and readers walk from the
+  root meanwhile. `EndBulkLoad` compacts and builds the index once.
+
+### Tests
+
+[`Prototypes/GenericTrie.Tests`](../Prototypes/GenericTrie.Tests) has 17 NUnit tests, all passing:
+
+| Test | What it checks |
+| --- | --- |
+| Lookups match the reference | 1,000,000 lookups against the first prototype, with no index, a flat index and two multi-level shapes |
+| Removing prefixes | Removing 20% gives the same tree and lookups as never adding them, before and after compaction |
+| Insertion order | Shuffled and reversed inserts give the identical tree |
+| Index under churn | 50,000 random inserts and removes, checked every 5,000 against a fresh reference, with a compaction midway |
+| Bulk load | Correct during the load without an index, identical after it, and maintained again afterwards |
+| Edge cases | Empty trie, duplicates, removing a routing node's prefix, the default route, host routes, exact counts |
+| Real IPv4 and IPv6 tables | All 1,000,000 keys against the current library, after removing every tenth prefix, and after compaction |
+| Readers during writes | One writer adding, removing and compacting for 15 seconds while three readers check every result |
+
+In the last run of the concurrency test, the writer made 1.84 million changes and 91 compactions while the readers did
+104 million lookups. Readers checked that every result contained the key, carried the right value, and was at least as
+specific as the best permanent prefix for that key. There were no failures.
+
+Run the tests with:
+
+```sh
+ROUTEVIEWS_DIR=<folder> dotnet test Prototypes/GenericTrie.Tests -c Release
+```
+
+Without `ROUTEVIEWS_DIR`, the two real-table tests are skipped.
+
+### Write costs
+
+Measured on the real tables, with the multi-level index:
+
+| Operation | Real IPv4, threshold 8 | Real IPv4, threshold 32 | Real IPv6, threshold 8 | Real IPv6, threshold 32 |
+| --- | --- | --- | --- | --- |
+| Bulk load of the full table, including the index | 1.8 s | 0.7 s | 0.8 s | 0.2 s |
+| Inserting one at a time with the index maintained | 18 µs each | 4 µs each | 43 µs each | 6 µs each |
+| Removing and re-adding a prefix | 20 µs | 39 µs | 199 µs | 54 µs |
+| Compaction after one-at-a-time inserts | 0.8 s | 1.4 s | 0.8 s | 0.1 s |
+
+Updates to the common prefixes are cheap. Updates to short prefixes cost more, because every index entry stores the
+best match above it: changing a /32 in IPv6 rewrites every index entry beneath it. Inserting a whole table one prefix at
+a time also leaves a lot of replaced sub-tables behind, up to 550 MB before compaction for the full IPv6 table at
+threshold 8. That is what bulk loading is for.
+
+## Memory
+
+Memory kept after building, measured as heap growth after full collections. The callers' own key objects are created
+beforehand and not counted.
+
+| Design | Random IPv4, 96,944 prefixes | Real IPv4, 1,054,037 prefixes | Real IPv6, 239,603 prefixes |
+| --- | --- | --- | --- |
+| Current library | 37.0 MB, 400 bytes per prefix | 415.6 MB, 413 | 106.2 MB, 465 |
+| Baseline: the decided design | 18.5 MB, 200 | 191.2 MB, 190 | 65.4 MB, 286 |
+| Node pool, trimmed, no index | 6.8 MB, 74 | 75.6 MB, 75 | 34.8 MB, 152 |
+| Node pool, trimmed, flat index | 7.3 MB, 79 (16-bit) | 83.6 MB, 83 (20-bit) | 42.8 MB, 187 (20-bit) |
+| `SnapshotTrie`, multi-level, threshold 8 | | 113.2 MB, 113 | 64.0 MB, 280 |
+| `SnapshotTrie`, multi-level, threshold 32 | | 99.8 MB, 99 | 43.5 MB, 190 |
+
+The optimized design uses 2.5 to 5 times less memory than the current library on every table, while also being much
+faster. Breakdown for the trimmed node pool with a 20-bit index on real IPv4:
+
+| Part | Size |
+| --- | --- |
+| Nodes, 24 bytes each | 44.1 MB |
+| Prefix lengths, 4 bytes each; `SnapshotTrie` uses 2 | 7.4 MB |
+| Prefixes and values, an `IPNetwork` and an `int` each | 24.1 MB |
+| Index | 8.0 MB |
+
+The multi-level index costs more than the flat one: 25 to 37 MB on real IPv4. The threshold controls that trade.
+
+## Results on real tables
+
+The BenchmarkDotNet results for the real tables are being collected and will be added here.
+
 ## Recommendations for the production core
 
 1. **Use the node pool.** One struct array per address family, integer child indexes, and prefixes and values in a
    separate array.
 2. **Make the walk branch-free.** Index from the first child field, select the best match with a mask, and use a
    sentinel node for missing children.
-3. **Lay nodes out depth-first** after bulk loads, through an explicit method such as `Optimize()`, or automatically
-   once enough inserts have accumulated.
-4. **Add the top-level index**, sized from the node count: about log2(nodes) minus one, between 8 and 17 bits for IPv4.
-5. **Convert IPv4 addresses with the `Address` property**, byte-swapped, behind a warning suppression with a comment
+3. **Use the multi-level index**, with a 16-bit root and 8-bit sub-tables. Expose the threshold as a tuning option, with
+   a default between 8 and 32: 8 for speed, 32 for memory and cheaper updates. The flat index is a special case and
+   fits real data poorly.
+4. **Follow `SnapshotTrie` for writes and concurrency**: one snapshot object per published state, copy-on-growth of the
+   arrays that refer to a grown array, rebuilding only the deepest affected index entry, and compaction that builds
+   privately and publishes once.
+5. **Offer bulk loading** and use it for initial loads.
+6. **Compact on a policy**, for example when replaced sub-tables or removed nodes exceed a share of the live size.
+   Compaction blocks the writer for 0.1 to 1.4 seconds on the real tables, but never blocks readers.
+7. **Convert IPv4 addresses with the `Address` property**, byte-swapped, behind a warning suppression with a comment
    explaining why. It was about 30% faster end to end than `TryWriteBytes`. Use `TryWriteBytes` for IPv6, where
    `Address` throws. Do not read the private field; it is no faster and depends on runtime internals.
-6. **Do not add batch lookups or the other ideas** in [What did not help](#what-did-not-help).
+8. **Do not add batch lookups or the other ideas** in [What did not help](#what-did-not-help).
 
-## Production concerns
+## Open issues
 
-The prototype is insert-only and single-threaded. The production core has to keep the rule that readers never lock:
-
-- **Growing the node array.** Copy the array, then publish the new one with a single reference write. Readers that
-  still hold the old array see a consistent, slightly older trie.
-- **Adding nodes.** Write the new node completely, then link it with one 32-bit write of the parent's child index,
-  which is atomic.
-- **Removing nodes.** Do not reuse a freed slot while a reader might still reach it. Reclaim slots only when a relayout
-  builds a new array.
-- **Relayout.** It already builds new arrays, so it can be published with one reference write.
-- **The index.** Entries are 8 bytes and can be written atomically. An index refers to positions in one particular node
-  array, so the node array and the index should be published together, for example in one snapshot object. Rebuilding
-  a 17-bit index visits at most a few million nodes, a few milliseconds. Updating it incrementally is possible: a new
-  prefix of length *L* no longer than *k* touches 2^(*k* − *L*) entries.
+- **Updates to short prefixes are expensive** with a deep index, because each entry stores the best match above it.
+  Storing the best match in nodes instead moves the same cost into node updates. If short-prefix churn matters, measure
+  with a real update stream, such as a day of BGP updates, before choosing.
+- **Only one writer at a time.** Multiple writers need an external lock, as the current `Concurrence*` classes do.
+- **Memory ordering** relies on `Volatile` reads and writes, which the .NET memory model guarantees on all platforms. The
+  stress test ran only on x64; it should also run on ARM64.
