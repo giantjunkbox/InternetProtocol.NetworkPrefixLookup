@@ -9,6 +9,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+    <PackageReference Include="Bart.NET" Version="1.2.1" />
     <ProjectReference Include="..\..\Bitvantage.InternetProtocol.NetworkPrefixLookup\Bitvantage.InternetProtocol.NetworkPrefixLookup.csproj" />
   </ItemGroup>
 </Project>
