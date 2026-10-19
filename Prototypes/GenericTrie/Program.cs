@@ -35,10 +35,13 @@ if (args.Length > 0 && args[0] == "snapshot-costs") { RealDataChecks.SnapshotCos
 if (args.Length > 0 && args[0] == "interference") { RealDataChecks.Interference(); return; }
 if (args.Length > 0 && args[0] == "tail-latency") { RealDataChecks.TailLatency(); return; }
 if (args.Length > 0 && args[0] == "bart") { BartComparison.Run(); return; }
+if (args.Length > 0 && args[0] == "bart-memory") { BartCoreChecks.Memory(); return; }
+if (args.Length > 0 && args[0] == "bart-tail") { BartCoreChecks.TailLatency(); return; }
+if (args.Length > 0 && args[0] == "bart-time") { BartCoreChecks.Time(); return; }
 if (args.Length > 1 && args[0] == "time-real") { RealDataChecks.Time(args[1]); return; }
 BenchmarkSwitcher.FromTypes(new[] { typeof(Comparison), typeof(WidthComparison), typeof(CachedWidthComparison), typeof(Width192Comparison), typeof(ResultShapeComparison), typeof(LargeValueShapeComparison),
     typeof(OptimizationComparison), typeof(EndToEndComparison), typeof(BuildComparison),
-    typeof(RealIPv4Lookup), typeof(RealIPv6Lookup), typeof(RealFrozenLookup), typeof(RealBartBenchmarks), typeof(RealBuild) }).Run(args);
+    typeof(RealIPv4Lookup), typeof(RealIPv6Lookup), typeof(RealFrozenLookup), typeof(RealBartBenchmarks), typeof(BartCoreBenchmarks), typeof(RealBuild) }).Run(args);
 
 public static class Data
 {

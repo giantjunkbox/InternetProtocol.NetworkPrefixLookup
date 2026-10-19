@@ -90,11 +90,24 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         }
     }
 
-    [InlineArray(32)]
+    // one slot per level of a 128-bit key and the root; wider keys need a larger stack (experiment)
+    [InlineArray(17)]
     private struct NodeStack
     {
         private Node _element;
     }
+
+    // Shortcuts for the first 16 bits: for each /16 block, the node at depth 1 and the node at depth 2 on its path,
+    // or null. Lookups start there instead of at the root. A write that replaces a node at depth 1 or 2 updates the
+    // slots that point at it. A reader may briefly combine nodes of different versions; since a write changes one
+    // prefix, the result is still the answer from before or after that write.
+    private struct Slot
+    {
+        public Node? Depth1;
+        public Node? Depth2;
+    }
+
+    private readonly Slot[]? _table;
 
     private Node _root;      // what readers see
     private Node _w;         // what the writer works on; ahead of _root only during a bulk load
@@ -109,6 +122,7 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         if (width % 8 != 0 || width > 256) throw new ArgumentOutOfRangeException(nameof(width));
         _width = width;
         _root = _w = new Node();
+        if (width >= 16) _table = new Slot[1 << 16];
     }
 
     /// <summary>Number of stored prefixes.</summary>
@@ -145,6 +159,26 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         var stack = new NodeStack();
         var n = Volatile.Read(ref _root);
         var depth = 0;
+
+        var table = _table;
+        if (table != null)
+        {
+            ref var slot = ref table[TKey.GetTopBits(key, 16)];
+            var depth1 = slot.Depth1;
+            var depth2 = slot.Depth2;
+            if (depth1 != null)
+            {
+                stack[0] = n;
+                n = depth1;
+                depth = 1;
+                if (depth2 != null)
+                {
+                    stack[1] = n;
+                    n = depth2;
+                    depth = 2;
+                }
+            }
+        }
 
         // descend as far as the key leads; a fringe or leaf below the last node ends the search
         while (true)
@@ -202,6 +236,9 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         _bulk = false;
         _stamp++;
         Volatile.Write(ref _root, _w);
+        if (_table != null)
+            for (var first = 0; first < 256; first++)
+                RefreshTable(first);
     }
 
     /// <summary>Adds a prefix. Returns false, and changes nothing, when it is already present.</summary>
@@ -271,6 +308,7 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         changed.Count++;
         for (var i = 0; i < depth; i++) path[i].Count++;
         Link(changed, n, ref path, octets, depth);
+        UpdateTable(in item.Bits, depth);
         Count++;
         return true;
     }
@@ -352,9 +390,46 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
 
         for (var i = 0; i < depth; i++) path[i].Count--;
         Link(changed, original, ref path, octets, depth);
+        UpdateTable(in key, depth);
         Count--;
         return true;
     }
+
+    // after a write that replaced the node at the given depth on the path of key
+    private void UpdateTable(in TKey key, int depth)
+    {
+        if (_table == null || _bulk || depth > 2) return;
+        var first = TKey.GetBits(key, 0, 8);
+        if (depth == 2) RefreshSlot(first, TKey.GetBits(key, 8, 8), Kid(_w, first));
+        else RefreshTable(first);
+    }
+
+    private void RefreshTable(int first)
+    {
+        var depth1 = Kid(_w, first);
+        for (var second = 0; second < 256; second++)
+            RefreshSlot(first, second, depth1);
+    }
+
+    private void RefreshSlot(int first, int second, Node? depth1)
+    {
+        ref var slot = ref _table![(first << 8) | second];
+        var depth2 = depth1 == null ? null : Kid(depth1, second);
+
+        // a reader that finds a node at depth 2 must also find one at depth 1, so set depth 1 first and clear it last
+        if (depth2 == null)
+        {
+            Volatile.Write(ref slot.Depth2, null);
+            Volatile.Write(ref slot.Depth1, depth1);
+        }
+        else
+        {
+            Volatile.Write(ref slot.Depth1, depth1);
+            Volatile.Write(ref slot.Depth2, depth2);
+        }
+    }
+
+    private static Node? Kid(Node n, int octet) => n.Kids.Test(octet) ? n.KidNodes[n.Kids.Rank(octet) - 1] : null;
 
     // a node the current write may change in place: itself if this write created it, otherwise a copy
     private Node Writable(Node n)
