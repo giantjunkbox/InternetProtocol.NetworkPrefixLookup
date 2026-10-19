@@ -24,6 +24,8 @@ A redesign is planned in `Documentation/Abstraction-Study.md`: a generic core th
 - Lookup results use whichever shape is fastest. All measured shapes tied, so lookups return the prefix and value
   through `out` parameters, which keep the node layout private.
 
+The proposed public interface for the redesign, including frozen lookups, is in `Documentation/Interface.md`.
+
 ## Layout
 
 - `Bitvantage.InternetProtocol.NetworkPrefixLookup/NetworkPrefixLookupBase.cs` holds nearly all logic: the trie nodes,

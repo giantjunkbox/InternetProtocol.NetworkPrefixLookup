@@ -72,6 +72,9 @@ works without the core knowing that width. A 48-bit MAC address prefix fits in a
 
 ## Proposed design
 
+The full proposed public interface, including frozen lookups, is in [Interface.md](Interface.md). This section shows
+the shape of the design.
+
 Three layers, each knowing less than the one above it:
 
 ```text
