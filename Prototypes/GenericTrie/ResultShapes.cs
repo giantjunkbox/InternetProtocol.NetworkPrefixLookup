@@ -26,8 +26,14 @@ namespace GenericTrie;
 /// </summary>
 public class PrefixEntry<TPrefix, TValue>
 {
-    public TPrefix Prefix { get; internal set; } = default!;
-    public TValue Value { get; internal set; } = default!;
+    internal TPrefix PrefixField = default!;
+    internal TValue ValueField = default!;
+
+    /// <summary>The stored prefix, by read-only reference so that struct prefixes are not copied.</summary>
+    public ref readonly TPrefix Prefix => ref PrefixField;
+
+    /// <summary>The stored value, by read-only reference so that struct values are not copied.</summary>
+    public ref readonly TValue Value => ref ValueField;
 }
 
 /// <summary>A lookup result returned by value.</summary>
@@ -71,15 +77,15 @@ public sealed class ResultShapeTrie<TKey, TPrefix, TValue> where TKey : struct, 
             if (parent.HasValue)
                 return false;
 
-            parent.Prefix = prefix;
-            parent.Value = value;
+            parent.PrefixField = prefix;
+            parent.ValueField = value;
             parent.HasValue = true;
             return true;
         }
 
         var slot = TKey.IsSet(bits, parent.Split) ? 1 : 0;
         var existing = parent.Children[slot];
-        var node = new Node(bits, length) { Prefix = prefix, Value = value, HasValue = true };
+        var node = new Node(bits, length) { PrefixField = prefix, ValueField = value, HasValue = true };
 
         if (existing == null)
         {
@@ -126,8 +132,8 @@ public sealed class ResultShapeTrie<TKey, TPrefix, TValue> where TKey : struct, 
         var node = FindNode(key);
         if (node != null)
         {
-            prefix = node.Prefix;
-            value = node.Value;
+            prefix = node.PrefixField;
+            value = node.ValueField;
             return true;
         }
 
@@ -141,7 +147,7 @@ public sealed class ResultShapeTrie<TKey, TPrefix, TValue> where TKey : struct, 
     public bool TryGetMatch(in TKey key, out PrefixMatch<TPrefix, TValue> match)
     {
         var node = FindNode(key);
-        match = node != null ? new PrefixMatch<TPrefix, TValue>(node.Prefix, node.Value) : default;
+        match = node != null ? new PrefixMatch<TPrefix, TValue>(node.PrefixField, node.ValueField) : default;
         return node != null;
     }
 
@@ -150,7 +156,7 @@ public sealed class ResultShapeTrie<TKey, TPrefix, TValue> where TKey : struct, 
     public PrefixMatch<TPrefix, TValue> GetMatch(in TKey key)
     {
         var node = FindNode(key);
-        return node != null ? new PrefixMatch<TPrefix, TValue>(node.Prefix, node.Value) : default;
+        return node != null ? new PrefixMatch<TPrefix, TValue>(node.PrefixField, node.ValueField) : default;
     }
 
     /// <summary>Shape D: the matching node itself, through its read-only base type, or null.</summary>

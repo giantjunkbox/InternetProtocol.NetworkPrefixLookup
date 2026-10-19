@@ -27,7 +27,7 @@ if (args.Length > 0 && args[0] == "verify") { Verify.Run(); return; }
 if (args.Length > 0 && args[0] == "verify-width") { WidthData.Verify(); return; }
 if (args.Length > 1 && args[0] == "isolate") { WidthData.Isolate(args[1]); return; }
 if (args.Length > 0 && args[0] == "verify-shapes") { ResultShapeComparison.Verify(); return; }
-BenchmarkSwitcher.FromTypes(new[] { typeof(Comparison), typeof(WidthComparison), typeof(CachedWidthComparison), typeof(Width192Comparison), typeof(ResultShapeComparison) }).Run(args);
+BenchmarkSwitcher.FromTypes(new[] { typeof(Comparison), typeof(WidthComparison), typeof(CachedWidthComparison), typeof(Width192Comparison), typeof(ResultShapeComparison), typeof(LargeValueShapeComparison) }).Run(args);
 
 public static class Data
 {
@@ -479,4 +479,55 @@ public class ResultShapeComparison
             if (entry == null || entry.Value != string.Empty || entry.Prefix.PrefixLength < 0) throw new Exception();
         }
     }
+}
+
+/// <summary>A 64-byte value, to see whether copying the value out of the trie costs anything.</summary>
+public readonly struct Payload64
+{
+    public readonly long A, B, C, D, E, F, G, H;
+    public Payload64(long a) { A = a; B = C = D = E = F = G = H = a; }
+}
+
+/// <summary>
+///     The four result shapes on the small table, once with string values and once with 64-byte struct values, in one
+///     session. Consumers read the prefix length and one field of the value.
+/// </summary>
+[MemoryDiagnoser, GroupBenchmarksBy(BenchmarkLogicalGroupRule.ByCategory), CategoriesColumn]
+public class LargeValueShapeComparison
+{
+    private static readonly ResultShapeTrie<Bits32, IPNetwork, string> SmallString = Build<string>(i => string.Empty);
+    private static readonly ResultShapeTrie<Bits32, IPNetwork, Payload64> SmallPayload = Build(i => new Payload64(i + 1));
+
+    private static ResultShapeTrie<Bits32, IPNetwork, T> Build<T>(Func<int, T> value)
+    {
+        var t = new ResultShapeTrie<Bits32, IPNetwork, T>();
+        for (var i = 0; i < 1_000; i++)
+            t.TryAdd(in WidthData.Prefix32[i], WidthData.PrefixLengths[i], Data.IPNetworks[i], value(i));
+        t.TryAdd(new Bits32(0), 0, IPNetwork.Parse("0.0.0.0/0"), value(-1));
+        return t;
+    }
+
+    [Benchmark(Baseline = true), BenchmarkCategory("string value"), IterationCount(30)]
+    public void A_OutParameters_String() { var t = SmallString; var keys = WidthData.Key32; for (var i = 0; i < keys.Length; i++) if (!t.TryGetMatch(in keys[i], out var p, out var v) || v != string.Empty || p.PrefixLength < 0) throw new Exception(); }
+
+    [Benchmark, BenchmarkCategory("string value"), IterationCount(30)]
+    public void B_OutStruct_String() { var t = SmallString; var keys = WidthData.Key32; for (var i = 0; i < keys.Length; i++) if (!t.TryGetMatch(in keys[i], out PrefixMatch<IPNetwork, string> m) || m.Value != string.Empty || m.Prefix.PrefixLength < 0) throw new Exception(); }
+
+    [Benchmark, BenchmarkCategory("string value"), IterationCount(30)]
+    public void C_ReturnedStruct_String() { var t = SmallString; var keys = WidthData.Key32; for (var i = 0; i < keys.Length; i++) { var m = t.GetMatch(in keys[i]); if (!m.Found || m.Value != string.Empty || m.Prefix.PrefixLength < 0) throw new Exception(); } }
+
+    [Benchmark, BenchmarkCategory("string value"), IterationCount(30)]
+    public void D_ReturnedEntry_String() { var t = SmallString; var keys = WidthData.Key32; for (var i = 0; i < keys.Length; i++) { var e = t.FindEntry(in keys[i]); if (e == null || e.Value != string.Empty || e.Prefix.PrefixLength < 0) throw new Exception(); } }
+
+    [Benchmark(Baseline = true), BenchmarkCategory("64-byte value"), IterationCount(30)]
+    public void A_OutParameters_Payload() { var t = SmallPayload; var keys = WidthData.Key32; for (var i = 0; i < keys.Length; i++) if (!t.TryGetMatch(in keys[i], out var p, out var v) || v.A == 0 || p.PrefixLength < 0) throw new Exception(); }
+
+    [Benchmark, BenchmarkCategory("64-byte value"), IterationCount(30)]
+    public void B_OutStruct_Payload() { var t = SmallPayload; var keys = WidthData.Key32; for (var i = 0; i < keys.Length; i++) if (!t.TryGetMatch(in keys[i], out PrefixMatch<IPNetwork, Payload64> m) || m.Value.A == 0 || m.Prefix.PrefixLength < 0) throw new Exception(); }
+
+    [Benchmark, BenchmarkCategory("64-byte value"), IterationCount(30)]
+    public void C_ReturnedStruct_Payload() { var t = SmallPayload; var keys = WidthData.Key32; for (var i = 0; i < keys.Length; i++) { var m = t.GetMatch(in keys[i]); if (!m.Found || m.Value.A == 0 || m.Prefix.PrefixLength < 0) throw new Exception(); } }
+
+    [Benchmark, BenchmarkCategory("64-byte value"), IterationCount(30)]
+    public void D_ReturnedEntry_Payload() { var t = SmallPayload; var keys = WidthData.Key32; for (var i = 0; i < keys.Length; i++) { var e = t.FindEntry(in keys[i]); if (e == null || e.Value.A == 0 || e.Prefix.PrefixLength < 0) throw new Exception(); } }
 }
