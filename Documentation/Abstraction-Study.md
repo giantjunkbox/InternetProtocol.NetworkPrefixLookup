@@ -184,6 +184,7 @@ dotnet run $P --filter 'Comparison.*'                   # abstraction benchmarks
 dotnet run $P verify-width                              # key widths: correctness and memory
 dotnet run $P --filter 'WidthComparison.*'              # key widths with computed masks, about 10 minutes
 dotnet run $P --filter 'CachedWidthComparison.*'        # key widths with cached masks, about 9 minutes
+dotnet run $P --filter 'Width192Comparison.*'           # 192-bit keys against 128-bit and 256-bit, about 6 minutes
 dotnet run $P isolate cached32                          # one variant in its own process, quick timing
 ```
 
@@ -268,8 +269,9 @@ The generic variants add two more gains:
    | `MatchesUnderMask(key, bits, mask)` | Testing whether a node contains a key |
 
 2. **Ship a few key types.** `Bits32`, `Bits64` and `Bits128` are one-field wrappers around `uint`, `ulong` and
-   `UInt128`. `Bits256` holds four 64-bit words inline and compares them with one 256-bit vector instruction. Anyone
-   can implement the interface for another fixed width, such as 160 bits for a VRF identifier plus an IPv6 address.
+   `UInt128`. `Bits192` holds three 64-bit words inline, enough for an IPv6 address plus up to 64 bits of context.
+   `Bits256` holds four words and compares them with one 256-bit vector instruction. Anyone can implement the interface
+   for another fixed width.
 3. **Have adapters produce key types instead of raw integers.** The IP layer wraps `uint` and `UInt128` in `Bits32` and
    `Bits128`.
 4. **Keep the cached mask and split bit in each node.** That means three copies of the key per node, so node size grows
@@ -305,6 +307,18 @@ results for 1,000,000 lookups.
 | Variable width, array-backed, worst case | computed | 2.24 ± 0.33 | 271 |
 | Variable width, array-backed, worst case | cached | 3.54 ± 0.54 | 499 |
 
+A third session added the 192-bit key. Three 64-bit words do not fill a 256-bit vector, so `Bits192` uses
+branch-free scalar operations on all three words. Its worst case puts a 128-bit context in front of the IPv4 bits.
+
+| Key type | Masks | Lookup time ratio | Retained bytes per prefix |
+| --- | --- | --- | --- |
+| 32-bit, `IBinaryInteger` reference | cached | 1.00 | 171 |
+| 128-bit | cached | 2.03 ± 0.21 | 243 |
+| 192-bit scalar, best case | cached | 2.08 ± 0.34 | 285 |
+| 192-bit scalar, worst case | cached | 2.15 ± 0.25 | 285 |
+| 256-bit vector, best case | cached | 1.83 ± 0.23 | 328 |
+| 256-bit vector, worst case | cached | 1.94 ± 0.26 | 328 |
+
 Building the trie from 97,000 prefixes, with computed masks:
 
 | 32-bit reference | 32-bit `IBitKey` | 128-bit | 256-bit | Variable width |
@@ -325,6 +339,8 @@ Building the trie from 97,000 prefixes, with computed masks:
 - **256-bit keys with vector instructions are about as fast as 128-bit keys.** One vector instruction covers all four
   words, while each `UInt128` operation takes two scalar instructions. A 128-bit key built on 128-bit vectors might
   therefore beat `UInt128` for IPv6. That has not been tested.
+- **192-bit keys run at about the same speed as 128-bit and 256-bit keys, and use 13% less memory than 256-bit
+  keys.** The 256-bit vector type was slightly faster in this session, but the difference is within the noise.
 - **Run-time widths are the expensive option.** An array-backed key adds a pointer load per node, and caching masks
   adds two more arrays per node. That made lookups 2.2 to 3.5 times slower and used up to 2.9 times the memory.
 
@@ -332,8 +348,9 @@ Building the trie from 97,000 prefixes, with computed masks:
 
 - Constrain the core on `IBitKey<TSelf>` rather than `IBinaryInteger<T>`. It is equally fast and allows any fixed
   width.
-- Ship `Bits32`, `Bits64` and `Bits128`, and add `Bits256` if a use for it appears. Try a vector-based `Bits128` and
-  keep whichever benchmarks faster.
+- Ship `Bits32`, `Bits64`, `Bits128` and `Bits192`. `Bits192` covers IPv6 plus up to 64 bits of context at the same
+  speed as `Bits128`. Add `Bits256` only if more context bits are needed. Try a vector-based `Bits128` and keep
+  whichever benchmarks faster.
 - Cache the mask and split bit in each node.
 - Do not support widths chosen at run time. Shorter keys already fit in a wider key type, because bits are
   left-aligned and each prefix carries its own length. If keys from different families share one trie, put a few tag
