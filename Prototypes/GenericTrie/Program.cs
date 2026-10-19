@@ -496,7 +496,8 @@ public readonly struct Payload64
 public class LargeValueShapeComparison
 {
     private static readonly ResultShapeTrie<Bits32, IPNetwork, string> SmallString = Build<string>(i => string.Empty);
-    private static readonly ResultShapeTrie<Bits32, IPNetwork, Payload64> SmallPayload = Build(i => new Payload64(i + 1));
+    // values start at 1 so that the consumers' zero check never fires, including for the default route (index -1)
+    private static readonly ResultShapeTrie<Bits32, IPNetwork, Payload64> SmallPayload = Build(i => new Payload64(i + 2));
 
     private static ResultShapeTrie<Bits32, IPNetwork, T> Build<T>(Func<int, T> value)
     {
