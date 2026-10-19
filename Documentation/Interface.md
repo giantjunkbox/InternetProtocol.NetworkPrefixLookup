@@ -15,15 +15,18 @@ Three layers, as in the study, each knowing less than the one above it:
 | Core | `BitTrie<TKey, TPrefix, TValue>`, `FrozenBitTrie<TKey, TPrefix, TValue>` | Bits and lengths only |
 | Keys | `IBitKey<TSelf>`, `Bits32`, `Bits64`, `Bits128`, `Bits192` | Bit arithmetic for one fixed width |
 
-Every layer comes in two forms, and the read-write form has two write modes:
+Every layer comes in two forms:
 
 | Form | For | Lookups | Changes |
 | --- | --- | --- | --- |
-| Read-write, throughput mode (default) | Tables that change during their life | Multi-level index, about 14 times faster than today on real IPv4 | Fastest on average; growth and compaction pause the writer |
-| Read-write, [real-time mode](#real-time-mode) | Tables that change and must never stall a write | Target: within 10% of throughput mode | Every write does a bounded amount of work |
+| Read-write | Tables that change during their life | Multi-level index, about 14 times faster than today on real IPv4 | Every write does a bounded amount of work: no pauses for growth or compaction |
 | Frozen | Tables loaded once, then only read | Leaf-pushed tables, a further 1.9 to 2.7 times faster | None; freeze a new copy to change |
 
-All of them implement the same read-only interface, so code that only looks things up accepts any of them.
+Both forms implement the same read-only interface, so code that only looks things up accepts either.
+
+There is one read-write design, not a choice of write modes. A second code path is worth its cost only when it is
+clearly faster, as the frozen form is. A read-write variant that pauses for compaction is expected to be only a few
+percent faster, which the prototype has to confirm; see [Bounded writes](#bounded-writes).
 
 ## Keys
 
@@ -124,16 +127,6 @@ public sealed record BitTrieOptions
     public int IndexRootBits { get; init; } = 16;
     public int IndexTableBits { get; init; } = 8;
     public int IndexThreshold { get; init; } = 8;                       // 32: smaller index, cheaper updates
-    public CompactionPolicy Compaction { get; init; } = CompactionPolicy.Automatic;
-    public WriteMode WriteMode { get; init; } = WriteMode.Throughput;
-}
-
-public enum CompactionPolicy { Manual, Automatic }
-
-public enum WriteMode
-{
-    Throughput, // contiguous arrays: fastest on average; growth and compaction pause the writer
-    RealTime    // chunked storage and incremental cleanup: no write does work proportional to the table size
 }
 
 public readonly record struct BitTrieStatistics(int Prefixes, int Nodes, long Bytes, int GarbageNodes, int GarbageValues, int GarbageIndexEntries);
@@ -141,22 +134,23 @@ public readonly record struct BitTrieStatistics(int Prefixes, int Nodes, long By
 
 - **Construction from a sequence bulk loads**, the fastest way to fill a table. `BeginBulkLoad` returns a disposable
   scope for loading in pieces: inside it the index is not maintained, and readers walk from the root, which is slower
-  but correct. Disposing it builds the index and compacts.
-- **Compaction.** `Automatic` compacts once garbage exceeds the live size. That bounds memory to about twice the
-  compacted size, but the write that crosses the line pays for it: 0.1 to 1.4 seconds on the real tables. Readers are
-  never blocked. `Manual` leaves it to the application, which can watch `GetStatistics`. `trimExcess` drops all
-  headroom, for a table that will no longer grow.
+  but correct. Disposing it builds the index and lays the nodes out depth-first. Loading may pause; it is a load, not
+  a write.
+- **Cleanup is continuous**, so there is no compaction policy to choose. `Compact()` is still there for an application
+  with a quiet moment: it finishes the cleanup at once and restores the depth-first layout that bulk loading produces,
+  taking 0.1 to 1.4 seconds on the real tables. Readers are never blocked. `trimExcess` drops all headroom, for a table
+  that will no longer grow.
 - **Index tuning.** A threshold of 8 was fastest on the real tables. A threshold of 32 made lookups about 10% slower,
   with a smaller index and cheaper updates. The root and table widths are exposed for unusual key widths. 16 and 8
   were best for both IP families.
 - **Diagnostics** take a formatter for bits and length, because routing nodes have no prefix object. The IP layer
   supplies one.
 
-### Real-time mode
+### Bounded writes
 
-`WriteMode.RealTime` is for applications where a single slow write is a failure, such as a router following a live
-feed or a service with a latency budget per request. It keeps the same methods and the same lookup results; only the
-write path and the storage change.
+The read-write trie is designed so that no write ever stalls: a router following a live feed, or a service with a latency
+budget per request, can use it as it is. The prototype's `SnapshotTrie` does not have this property yet, so the
+storage changes from contiguous arrays to chunks.
 
 **What it removes.** Worst-case latency was measured on the real IPv4 table, with one writer making a million random
 removals and re-additions as fast as it could while one reader timed every lookup (`tail-latency` in the prototype):
@@ -173,7 +167,7 @@ writer: lookup latency had the same tail with an idle writer. Garbage collection
 
 **What changes inside.** Each source of a long write gets a bounded replacement:
 
-| Today, in one write | In real-time mode |
+| In `SnapshotTrie`, in one write | In the new design |
 | --- | --- |
 | A full array grows by copying all of it: tens of MB | Storage is a list of fixed-size chunks; growing adds a chunk and copies nothing |
 | Compaction rebuilds everything at once | Each write also moves a few live nodes out of the emptiest chunk. An empty chunk leaves the next snapshot, and the garbage collector frees it once no reader holds an older snapshot, so readers need no extra bookkeeping |
@@ -183,7 +177,7 @@ writer: lookup latency had the same tail with an idle writer. Garbage collection
 Removing a node also has to repoint the index entries whose walk starts at it. Keeping that bounded is the hardest part
 of the design and the first thing the prototype has to settle.
 
-**Targets.** These are what the prototype must show on the real tables, with the same tail-latency test:
+**Targets.** These are what the prototype must show, with the same tail-latency test:
 
 - **Bounded work.** The test should also count the nodes and index entries each write touches, which timer noise
   cannot distort. The largest count must not grow with the table.
@@ -191,19 +185,21 @@ of the design and the first thing the prototype has to settle.
   On a quiet machine the target is 1 ms.
 - **Memory** within 1.5 times the compacted size under sustained churn. Never compacting reached 4.8 times in the
   churn test.
-- **Lookups** within 10% of throughput mode. Each node and index read goes through a chunk table, one extra load from a
-  table small enough to stay in L1. On tables larger than the cache that should cost a few percent; on small tables
-  that fit in cache it costs more.
+- **Lookups** within 10% of `SnapshotTrie`, on the real tables and on a table small enough to fit in cache. Each node
+  and index read goes through a chunk table, one extra load from a table small enough to stay in L1. On tables larger
+  than the cache that should cost a few percent; on small tables it costs more, which is why both are measured.
+- **Average writes and bulk loads** within 10% of `SnapshotTrie`. Each write pays for its share of the cleanup, which
+  compaction used to do in bulk, so the total work should be similar.
 
-**How the other members behave.**
+If the prototype misses the lookup or write targets by a wide margin, a contiguous variant with compaction comes back
+as an option, and this section says by how much. Otherwise there is only this design.
 
-- `Compaction` is ignored, because cleanup is continuous. `Compact()` still runs a full compaction when called, for an
-  application that has a quiet moment and wants the memory back at once.
+Other notes:
+
 - `Capacity` allocates the chunks up front, so that even the first writes after loading allocate nothing.
-- Bulk loading is a load, not a write: it runs at full speed and may pause. A table loaded that way is in real-time
-  shape when the load finishes.
-- `Freeze` reads the whole table, so it blocks writers for its duration in either mode.
-- Average write throughput is lower than in throughput mode, because each write pays for its share of the cleanup.
+- `Freeze` reads the whole table, so it blocks writers for its duration.
+- Heavy churn scatters the nodes that changed. On the real tables that cost lookups at most about 15% in the churn
+  test; `Compact()` restores the layout.
 
 ### Frozen trie
 
@@ -395,9 +391,9 @@ vendors.TryGetMatch(new Bits64(macAddress << 16), out var oui, out var vendor);
 | Value-only lookups | Timed with a dense value array; not yet a method |
 | Exact lookups, `GetMatches`, matches for a prefix, `GetOrAdd`, `AddOrUpdate`, enumeration | In today's library, not in the prototype |
 | Frozen tries without nodes, through parent links | Design only |
-| Internal writer lock, automatic compaction | Design only |
-| Real-time mode | Design only. The `tail-latency` test that measures it runs against `SnapshotTrie` today |
-| Index entries that record only their own level's best match | Design only; would also make short-prefix updates cheaper in throughput mode |
+| Internal writer lock | Design only |
+| Bounded writes: chunked storage, continuous cleanup | Design only. The `tail-latency` test that measures it runs against `SnapshotTrie` today |
+| Index entries that record only their own level's best match | Design only |
 | IP layer | Adapters and address conversion in the prototype; the layer itself is design only |
 
 ## Open questions
@@ -406,12 +402,7 @@ vendors.TryGetMatch(new Bits64(macAddress << 16), out var oui, out var vendor);
   recommends.
 - **IPv4-mapped IPv6 addresses**, such as `::ffff:10.1.2.3`. Today they are looked up in the IPv6 table. An option could
   map them to IPv4.
-- **Automatic compaction as the default.** It bounds memory, but in throughput mode a write can occasionally take most
-  of a second. `Manual` never pauses on its own, but memory grows until the application compacts. Applications that
-  cannot accept either should use real-time mode.
-- **A cleanup budget for real-time mode.** The design picks the amount of cleanup per write internally, from how much
-  garbage there is. Exposing it as an option would let applications trade memory for write latency.
-- **Real-time mode as the default.** If the prototype meets its lookup target, real-time mode may be the better
-  default, with throughput mode an option for bulk-heavy workloads.
+- **A cleanup budget.** The design picks the amount of cleanup per write internally, from how much garbage there is.
+  Exposing it as an option would let applications trade memory for write latency.
 - **Whether `Add` should exist** next to `TryAdd`, `AddOrUpdate` and `GetOrAdd`. It is there for familiarity with
   `Dictionary`.

@@ -447,9 +447,10 @@ had the reader alone. Run `tail-latency` to repeat it. Two sessions:
 - **Garbage collection was not a factor**: at most one collection and 1 ms of pause per run, because the only
   allocations were the arrays themselves.
 
-The real-time write mode in [Interface.md](Interface.md#real-time-mode) is designed to remove these long writes.
+The read-write design in [Interface.md](Interface.md#bounded-writes) is meant to remove these long writes, with
+chunked storage and continuous cleanup instead of growth copies and compaction.
 
-For tables that change often:
+For tables that change often, until bounded writes are built:
 
 - **Use threshold 32.** Updates are cheaper and the index smaller, for lookups about 10% slower.
 - **Compact on a policy**, for example when garbage exceeds the live size. Compaction restores memory and speed, keeps
@@ -568,8 +569,10 @@ that fit in cache; storing small values directly in the answer arrays; huge page
    arrays that refer to a grown array, rebuilding only the deepest affected index entry, and compaction that builds
    privately and publishes once.
 5. **Offer bulk loading** and use it for initial loads.
-6. **Compact on a policy**, for example when replaced sub-tables or removed nodes exceed a share of the live size.
-   Compaction blocks the writer for 0.1 to 1.4 seconds on the real tables, but never blocks readers.
+6. **Make every write bounded** instead of compacting on a policy: chunked storage that grows without copying, and
+   continuous cleanup. Compaction blocks the writer for 0.1 to 1.4 seconds on the real tables, and growth for up to
+   0.4 seconds. Keep one read-write design unless the bounded one proves clearly slower; see
+   [Interface.md](Interface.md#bounded-writes).
 7. **Convert IPv4 addresses with the `Address` property**, byte-swapped, behind a warning suppression with a comment
    explaining why. It was about 30% faster end to end than `TryWriteBytes`. Use `TryWriteBytes` for IPv6, where
    `Address` throws. Do not read the private field; it is no faster and depends on runtime internals.

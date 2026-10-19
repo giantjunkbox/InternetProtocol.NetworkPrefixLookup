@@ -23,6 +23,9 @@ A redesign is planned in `Documentation/Abstraction-Study.md`: a generic core th
   bit. Key widths are fixed at compile time; widths chosen at run time are not supported.
 - Lookup results use whichever shape is fastest. All measured shapes tied, so lookups return the prefix and value
   through `out` parameters, which keep the node layout private.
+- One read-write design in which every write does bounded work, with no pauses for growth or compaction. There is no
+  separate real-time mode, because two nearly identical code paths are not worth keeping. A separate form is justified
+  only when it is clearly faster, as the frozen form is.
 
 The proposed public interface for the redesign, including frozen lookups, is in `Documentation/Interface.md`.
 

@@ -25,8 +25,8 @@ against the current library on .NET 10.
   using vector instructions was as fast as a 128-bit key. Only keys whose width is chosen at run time were expensive.
   See [Arbitrary key widths](#arbitrary-key-widths).
 - **Decided:** .NET 10 only, no backward compatibility, a dependency-free core package, a separate package for the
-  `NetworkPrefix` adapter, the `IBitKey<TSelf>` key interface with cached masks, and `out` parameters for lookup
-  results. The remaining question is under [Open questions](#open-questions).
+  `NetworkPrefix` adapter, the `IBitKey<TSelf>` key interface with cached masks, `out` parameters for lookup
+  results, and one read-write design whose writes never pause. The remaining question is under [Open questions](#open-questions).
 
 ## Decisions
 
@@ -38,6 +38,7 @@ against the current library on .NET 10.
 | `NetworkPrefix` support | A separate package containing the `NetworkPrefix` adapter. |
 | Key interface | `IBitKey<TSelf>`, with each node caching its mask and split bit. Widths are fixed at compile time; widths chosen at run time are not supported. See [Arbitrary key widths](#arbitrary-key-widths). |
 | Lookup results | Whichever shape is fastest. All measured shapes tied, so lookups use `out` parameters, which keep the node layout private. See [Lookup result shape](#lookup-result-shape). |
+| Write path | One read-write design in which every write does bounded work, with no pauses for growth or compaction. No separate real-time mode: two nearly identical code paths are not worth keeping. A pausing variant returns only if the bounded design proves clearly slower. See [Interface.md](Interface.md#bounded-writes). |
 
 ## What the library uses from NetworkPrefix today
 
@@ -419,22 +420,23 @@ pattern.
 
 ## Work plan
 
-1. **Core.** Build `BitTrie` on `IBitKey<TSelf>` with cached masks, starting from `SnapshotTrie` in the prototype: the
-   node pool, branch-free walk, multi-level index, snapshots, removal and compaction described in
-   [Optimization-Log.md](Optimization-Log.md). Bring it to feature parity: remove,
+1. **Bounded writes.** Prototype chunked storage, continuous cleanup and per-level index entries on `SnapshotTrie`,
+   and check the targets in [Interface.md](Interface.md#bounded-writes) with the tail-latency test. This comes first
+   because it decides the core's storage.
+2. **Core.** Build `BitTrie` on `IBitKey<TSelf>` with cached masks, starting from `SnapshotTrie` in the prototype: the
+   node pool, branch-free walk, multi-level index, snapshots and removal described in
+   [Optimization-Log.md](Optimization-Log.md), with the storage from step 1. Bring it to feature parity: remove,
    longest match by prefix, all matches, clear and count. Follow the concurrency rules in that log for array growth,
    removal and publishing the index. Write unit tests directly against the core, including at least one non-IP key
    width.
-2. **IP layer.** Add the dual-stack lookup, `IPAddress` conversions, both adapters and a formatter. Port `ToTextTree`
+3. **IP layer.** Add the dual-stack lookup, `IPAddress` conversions, both adapters and a formatter. Port `ToTextTree`
    and `ToDotTree` onto the formatter.
-3. **Port the tests.** Rewrite the existing 19 tests against the new API, keeping their tree-shape assertions through
+4. **Port the tests.** Rewrite the existing 19 tests against the new API, keeping their tree-shape assertions through
    the formatter.
-4. **Writer lock.** Serialize writes with an internal lock, as proposed in [Interface.md](Interface.md). That replaces
+5. **Writer lock.** Serialize writes with an internal lock, as proposed in [Interface.md](Interface.md). That replaces
    today's `Concurrence*` classes and fixes their gaps.
-5. **Frozen lookups.** Add a method that builds a read-only lookup from a loaded trie, with leaf-pushed tables and a
+6. **Frozen lookups.** Add a method that builds a read-only lookup from a loaded trie, with leaf-pushed tables and a
    value-only lookup, as described under Frozen tables in [Optimization-Log.md](Optimization-Log.md).
-6. **Real-time mode.** Prototype chunked storage, incremental cleanup and per-level index entries, then check the
-   targets in [Interface.md](Interface.md#real-time-mode) with the tail-latency test before adding the option.
 7. **Benchmarks.** Add IPv6 lookups and prefix queries to `PerformanceTest`. Compare against the current library in one
    session.
 8. **Packaging and documentation.** Set up the dependency-free core package, then update the README, the architecture
