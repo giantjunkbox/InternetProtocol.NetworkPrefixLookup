@@ -42,7 +42,7 @@ read-write core.
   design and measurements are in `Documentation/Abstraction-Study.md`, and its lookup optimizations are in
   `Documentation/Optimization-Log.md`. `SnapshotTrie.cs` is the production-style version with removal, index
   maintenance, compaction, bulk loading and lock-free readers. `PooledTrie` in `FastTrie.cs` also holds the frozen,
-  read-only lookup tables: leaf-pushed and compressed. `BartTrie.cs` is the BART-style read-write core chosen to replace
+  read-only lookup tables: leaf-pushed and compressed. `BartTrie.cs` is the BART-style read-write core recommended to replace
   `SnapshotTrie`: copy-on-write 8-bit nodes, measured in `Documentation/Bart-Comparison.md`.
 - `Prototypes/GenericTrie.Tests/` holds 65 NUnit test cases for `SnapshotTrie`, `BartTrie` and every shape of the
   frozen tables, including real routing tables and concurrency stress tests.

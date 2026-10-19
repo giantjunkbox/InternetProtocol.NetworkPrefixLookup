@@ -181,8 +181,8 @@ A simpler route has since turned up in Go's BART, described in [Bart-Comparison.
 multibit nodes, updated by copying the node that changes and linking it in with one reference write. Writes are then
 bounded, readers stay lock-free, and the garbage collector frees replaced nodes, with no chunks or cleanup at all. The
 prototype, `BartTrie`, meets the targets below on the real tables and misses two: lookups on small tables that fit in
-cache, and garbage-collection pauses of up to 38 ms under heavy churn. It is the chosen route; the chunked design above
-is the fallback.
+cache, and garbage-collection pauses of up to 38 ms under heavy churn. It is the recommended route, pending a decision;
+the chunked design above is the fallback.
 
 **Targets.** These are what the prototype must show, with the same tail-latency test:
 

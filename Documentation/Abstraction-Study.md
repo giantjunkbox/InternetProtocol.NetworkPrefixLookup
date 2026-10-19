@@ -420,8 +420,8 @@ pattern.
 
 ## Work plan
 
-1. **Bounded writes.** Done in the prototype: `BartTrie`, a BART-style core with copy-on-write nodes, beats
-   `SnapshotTrie` on the real tables and becomes the read-write core; see
+1. **Bounded writes.** Prototyped: `BartTrie`, a BART-style core with copy-on-write nodes, beats `SnapshotTrie` on the
+   real tables and is recommended as the read-write core, pending a decision; see
    [Bart-Comparison.md](Bart-Comparison.md#prototype-a-bart-style-read-write-core). Before building on it, try to close
    its two gaps: small tables that fit in cache (a rank cache per node and branch-free level steps) and allocation per
    write (copying one of a node's arrays instead of the whole node).

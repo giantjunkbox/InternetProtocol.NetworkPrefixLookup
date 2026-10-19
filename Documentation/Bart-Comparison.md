@@ -229,5 +229,6 @@ IPv4 as fast as it can while one reader times every lookup.
 
 `BartTrie` is the better read-write core for the tables this library exists for: faster lookups and builds on real
 routing tables, a quarter of the memory, bounded writes, and no compaction or growth stalls. Its two weaknesses are
-small cache-resident tables and allocation under heavy churn, and both have known remedies to try. The work plan
-adopts it as the read-write core, with those two items as the next optimization steps and the frozen tables on top.
+small cache-resident tables and allocation under heavy churn, and both have known remedies to try. The recommendation
+is to adopt it as the read-write core, with those two items as the next optimization steps and the frozen tables on
+top. That decision is still open.
