@@ -178,9 +178,11 @@ Removing a node also has to repoint the index entries whose walk starts at it. K
 of the design and the first thing the prototype has to settle.
 
 A simpler route has since turned up in Go's BART, described in [Bart-Comparison.md](Bart-Comparison.md): small
-multibit nodes, updated by copying the nodes on the path and publishing a new root with one reference write. Writes are
-then bounded by the trie's depth, readers stay lock-free, and the garbage collector frees replaced nodes, with no chunks
-or cleanup at all. The prototype tries that first; the chunked design above is the fallback.
+multibit nodes, updated by copying the node that changes and linking it in with one reference write. Writes are then
+bounded, readers stay lock-free, and the garbage collector frees replaced nodes, with no chunks or cleanup at all. The
+prototype, `BartTrie`, meets the targets below on the real tables and misses two: lookups on small tables that fit in
+cache, and garbage-collection pauses of up to 38 ms under heavy churn. It is the chosen route; the chunked design above
+is the fallback.
 
 **Targets.** These are what the prototype must show, with the same tail-latency test:
 
@@ -432,7 +434,7 @@ vendors.TryGetMatch(new Bits64(macAddress << 16), out var oui, out var vendor);
 | Exact lookups, `GetMatches`, matches for a prefix, `GetOrAdd`, `AddOrUpdate`, enumeration | In today's library, not in the prototype |
 | Frozen tries without nodes, through parent links | Design only |
 | Internal writer lock | Design only |
-| Bounded writes: chunked storage, continuous cleanup | Design only. The `tail-latency` test that measures it runs against `SnapshotTrie` today |
+| Bounded writes | Prototyped as `BartTrie`, a BART-style core with copy-on-write nodes; results in [Bart-Comparison.md](Bart-Comparison.md#prototype-a-bart-style-read-write-core) |
 | Index entries that record only their own level's best match | Design only |
 | IP layer | Adapters and address conversion in the prototype; the layer itself is design only |
 | Range lookup, and the IPNetwork2, IPAddressRange and MaxMind packages | Design only; see [Adapter-Survey.md](Adapter-Survey.md) |

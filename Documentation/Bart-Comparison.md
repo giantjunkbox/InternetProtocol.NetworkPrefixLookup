@@ -16,6 +16,10 @@ with this project's design, to decide whether the project is worth doing and wha
 - **The current Go BART is the real competitor.** Bart.NET ports an early version. The current design, written in C#
   for this comparison, holds IPv4 in 25 MB and IPv6 in 10 MB. Its lookups beat this project's read-write design on IPv6
   and lose on IPv4, and lose to the frozen design on both.
+- **A BART-style read-write core has been prototyped**, with results under
+  [Prototype](#prototype-a-bart-style-read-write-core): on the real tables it looks up 12 to 20% faster than
+  `SnapshotTrie`, uses a quarter of the memory, builds 2.5 to 3.7 times faster and never stalls a write for compaction
+  or growth. It is 2.9 times slower on a small table that fits in cache, and it allocates on every write.
 - **The project is worth doing, with a different read-write core.** No maintained .NET implementation of the current
   BART exists. Combining its node design and its way of updating with this project's frozen tables, generic keys and
   adapters would give the best memory, bounded writes and the fastest lookups. That needs a prototype; see
@@ -139,3 +143,91 @@ Measure it against `SnapshotTrie` on the real tables for lookups, inserts, remov
 If its IPv4 lookups come within about 10% of `SnapshotTrie`, adopt it as the read-write form: it is 4 to 6 times
 smaller, faster to build, faster on IPv6, and its writes are bounded by construction. Keep the frozen leaf-pushed tables
 either way; they can be built from any read-write form and remain the fastest lookups measured.
+
+## Prototype: a BART-style read-write core
+
+`BartTrie` in the prototype implements that recommendation:
+
+- **Nodes.** 8-bit strides, generic over `IBitKey<TSelf>`. Each node has four 256-bit sets, each with a
+  popcount-compressed array: prefixes inside the stride (ART base indexes), fringes, child nodes and leaves. Fringes and
+  leaves are stored as structs in their node's arrays, not as objects.
+- **Shape.** Canonical: a child node exists exactly when two or more prefixes lie below its octet, so the shape depends
+  only on the stored prefixes.
+- **Writes.** A write copies the one node it changes, finishes the copy, and links it in with one reference write.
+  Readers take no locks, and the garbage collector frees replaced nodes; there is no compaction and no array that grows
+  while readers can see it. A bulk load builds privately and publishes once.
+- **Shortcut table.** A 65,536-slot table points at the depth-1 and depth-2 nodes of each /16 block, so lookups skip
+  the first two levels. A write updates one slot, or at most 256 when it replaces a node nearer the root. This was the
+  change that made IPv4 lookups competitive; without it they were 25% slower than `SnapshotTrie`.
+- **Tests.** `BartTrieTests` checks it against the reference trie, against the current library on both real tables,
+  for canonical shape after removals and in any insertion order, for an invisible bulk load, and with a concurrency
+  stress test: 2.5 to 5.3 million writes alongside 62 to 88 million lookups, with no failures.
+
+### Results against SnapshotTrie
+
+**Lookups.** BenchmarkDotNet, one session, one million lookups, `SnapshotTrie` as the baseline. The real tables start
+from `IPAddress` objects; the random table is the 96,944-prefix benchmark table, which fits in cache, with precomputed
+keys.
+
+| Table | `SnapshotTrie` | `BartTrie` | Ratio | Frozen, for reference |
+| --- | --- | --- | --- | --- |
+| Real IPv4 | 211 ms | 169 ms | 0.80 ± 0.08 | 103 ms |
+| Real IPv6 | 410 ms | 360 ms | 0.88 ± 0.09 | 254 ms |
+| Random table in cache | 32 ms | 90 ms | 2.87 ± 0.33 | |
+
+**Building**, same session:
+
+| Table | `SnapshotTrie` bulk load | `BartTrie` bulk load | `BartTrie` one at a time, published after each |
+| --- | --- | --- | --- |
+| Real IPv4 | 758 ms, 558 MB allocated | 303 ms, 102 MB | 877 ms, 1,159 MB |
+| Real IPv6 | 340 ms, 246 MB | 91 ms, 33 MB | 230 ms, 256 MB |
+
+**Memory** retained, with the same `IPNetwork` prefixes and `int` values stored:
+
+| Table | `SnapshotTrie` | `BartTrie` | After removing and re-adding half the prefixes |
+| --- | --- | --- | --- |
+| Real IPv4 | 113.2 MB | 30.9 MB | no growth |
+| Real IPv6 | 64.0 MB | 14.6 MB | 0.4 MB growth |
+
+**Writes under churn.** The tail-latency test: one writer makes a million random removals and re-additions on real
+IPv4 as fast as it can while one reader times every lookup.
+
+| | `SnapshotTrie`, compacting when garbage exceeds live values | `BartTrie` |
+| --- | --- | --- |
+| Median write | 3.1 µs | 1.5 µs |
+| 99.99th percentile | 273 to 328 µs | 2.2 to 2.5 ms |
+| Slowest write | 378 to 804 ms, compacting or growing | 38 ms, a garbage collection |
+| Most work in one write | the whole table | 256 array elements and nodes copied |
+| Garbage collections | 0 or 1 | 195, 2.2 to 2.4 s paused in total |
+| Allocated per write | none, apart from growth | 1,434 bytes |
+| Total for a million writes | 5.5 to 6.4 s | 4.9 to 5.1 s |
+
+### Against the targets
+
+| Target, from [Interface.md](Interface.md#bounded-writes) | Result |
+| --- | --- |
+| Work per write does not grow with the table | **Met**: at most 256 elements and nodes copied |
+| Memory within 1.5 times the compacted size under churn | **Met**: no growth, and 3.7 to 4.4 times smaller to begin with |
+| Lookups within 10% of `SnapshotTrie` on the real tables | **Met**: 20% faster on IPv4, 12% faster on IPv6 |
+| Lookups within 10% on a table that fits in cache | **Missed**: 2.9 times slower |
+| Average writes and bulk loads within 10% | **Met**: bulk loads 2.5 to 3.7 times faster, churn as fast or faster |
+| No write slower than the idle control's stalls, 12 ms | **Missed**: garbage collections stall writes for up to 38 ms, against 804 ms today |
+
+### What the misses mean
+
+- **Small tables.** When the whole table fits in cache, `SnapshotTrie` resolves a lookup through its index in about one
+  node, while `BartTrie` walks down several levels, takes a data-dependent branch at each, and often backtracks to the
+  root. Mispredicted branches are the likely cost; that has not been profiled. 90 ns against 32 ns per lookup matters only for very hot small tables, which can be frozen. Go's `Fast` variant,
+  which caches child ranks per node, and branch-free level steps are the next things to try.
+- **Garbage collection.** Copy-on-write moves the cost of cleanup from rare long compactions into allocation: 1.4 KB per
+  write, mostly the copied array of the changed node. At full speed that meant a collection about every 5,000 writes,
+  each pausing for about 12 ms on average. At a thousand updates per second, a realistic rate for a routing table, that
+  works out to roughly one collection every 5 seconds; this is extrapolated, not measured. Copying smaller pieces, such as one of a node's four arrays instead of the whole node, would cut
+  the allocation further.
+
+### Verdict
+
+`BartTrie` is the better read-write core for the tables this library exists for: faster lookups and builds on real
+routing tables, a quarter of the memory, bounded writes, and no compaction or growth stalls. Its two weaknesses are
+small cache-resident tables and allocation under heavy churn, and both have known remedies to try. The work plan
+adopts it as the read-write core, with those two items as the next optimization steps and the frozen tables on top.

@@ -42,9 +42,10 @@ read-write core.
   design and measurements are in `Documentation/Abstraction-Study.md`, and its lookup optimizations are in
   `Documentation/Optimization-Log.md`. `SnapshotTrie.cs` is the production-style version with removal, index
   maintenance, compaction, bulk loading and lock-free readers. `PooledTrie` in `FastTrie.cs` also holds the frozen,
-  read-only lookup tables: leaf-pushed and compressed.
-- `Prototypes/GenericTrie.Tests/` holds 54 NUnit test cases: `SnapshotTrie`, including real routing tables and a
-  concurrency stress test, and every shape of the frozen tables.
+  read-only lookup tables: leaf-pushed and compressed. `BartTrie.cs` is the BART-style read-write core chosen to replace
+  `SnapshotTrie`: copy-on-write 8-bit nodes, measured in `Documentation/Bart-Comparison.md`.
+- `Prototypes/GenericTrie.Tests/` holds 65 NUnit test cases for `SnapshotTrie`, `BartTrie` and every shape of the
+  frozen tables, including real routing tables and concurrency stress tests.
 - The `NetworkPrefix` type comes from the `Bitvantage.InternetProtocol.NetworkPrefix` NuGet package, version `2.0.*`.
 
 ## Build and test
@@ -67,7 +68,7 @@ dotnet run -c Release --project PerformanceTest -- --filter '*Lookup*'   # a sub
 `PerformanceTest` passes its arguments to BenchmarkDotNet, so `--filter` and `--artifacts` work.
 
 The prototype's real-data tests and benchmarks use the CAIDA RouteViews tables. Download them once and point
-`ROUTEVIEWS_DIR` at them; without it the four real-table tests are skipped:
+`ROUTEVIEWS_DIR` at them; without it the six real-table tests are skipped:
 
 ```sh
 Prototypes/GenericTrie/download-routeviews.sh /tmp/routeviews

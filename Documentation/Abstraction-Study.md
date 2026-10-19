@@ -420,14 +420,13 @@ pattern.
 
 ## Work plan
 
-1. **Bounded writes.** Prototype a BART-style read-write core: 8-bit multibit nodes, updates by path copying, generic
-   over `IBitKey<TSelf>`, as recommended in [Bart-Comparison.md](Bart-Comparison.md). Compare it with `SnapshotTrie`
-   against the targets in [Interface.md](Interface.md#bounded-writes), using the tail-latency test, and fall back to
-   chunked storage with continuous cleanup only if it misses them. This comes first because it decides the core's
-   storage.
-2. **Core.** Build `BitTrie` on `IBitKey<TSelf>` with cached masks, starting from `SnapshotTrie` in the prototype: the
-   node pool, branch-free walk, multi-level index, snapshots and removal described in
-   [Optimization-Log.md](Optimization-Log.md), with the storage from step 1. Bring it to feature parity: remove,
+1. **Bounded writes.** Done in the prototype: `BartTrie`, a BART-style core with copy-on-write nodes, beats
+   `SnapshotTrie` on the real tables and becomes the read-write core; see
+   [Bart-Comparison.md](Bart-Comparison.md#prototype-a-bart-style-read-write-core). Before building on it, try to close
+   its two gaps: small tables that fit in cache (a rank cache per node and branch-free level steps) and allocation per
+   write (copying one of a node's arrays instead of the whole node).
+2. **Core.** Build `BitTrie` on `IBitKey<TSelf>` from `BartTrie` in the prototype, with the frozen tables of
+   `PooledTrie` built from it. Bring it to feature parity: remove,
    longest match by prefix, all matches, clear and count. Follow the concurrency rules in that log for array growth,
    removal and publishing the index. Write unit tests directly against the core, including at least one non-IP key
    width.
