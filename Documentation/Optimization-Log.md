@@ -360,6 +360,74 @@ The bulk load is 2 to 4.6 times faster than the current library. It is a little 
 no index. Its allocations are mostly temporary: arrays grow by doubling and compaction copies them once more. A bulk
 load that is told the number of prefixes up front could size its arrays once.
 
+## Cache behavior and the two use cases
+
+A lookup is a chain of dependent memory loads: index entries, then one or two nodes, then the prefix and value. Each load
+waits for the one before it. Speed therefore depends on how many loads a lookup makes and where the data lives. This
+machine has 32 KB of L1 data cache and 1 MB of L2 per core, and 33 MB of L3 shared by all cores, with 64-byte lines.
+
+| Table | Optimized size | Fits in | Lookup time, precomputed keys |
+| --- | --- | --- | --- |
+| Random IPv4, 96,944 prefixes | about 7 MB | L3 | about 21 ns |
+| Real IPv4, 1,054,037 prefixes | about 113 MB | main memory | about 180 ns |
+| Real IPv6, 239,603 prefixes | about 64 MB | main memory | about 360 ns |
+
+Once a table is larger than L3, nearly every load in the chain goes to main memory. That is why the index matters most
+on real tables: every node it saves is a memory round trip saved.
+
+### Load once, then only read
+
+- **Bulk load, then compact.** The result has exact-size arrays, a depth-first layout, no garbage and a full index.
+- **Use the deeper index.** Threshold 8 costs more memory but no update cost, and was the fastest.
+- **Readers scale across cores.** Three reader threads did 14.9 million lookups per second on real IPv4, about three
+  times one thread. Each core has its own L1 and L2, and the shared L3 and memory were not the limit.
+
+Untested ideas that only make sense for read-only tables:
+
+- **Smaller nodes.** Computing the mask and split bit from the prefix length would shrink an IPv4 node from 24 to 16
+  bytes. That cost 38 to 53% when the trie fit in cache, but may pay off when lookups wait on main memory.
+- **A frozen type** that drops writer-only data, such as the prefix lengths, and the snapshot indirection.
+- **Huge pages.** A 100 MB table spans 25,000 normal 4 KB pages, more than the processor's address translation cache
+  holds. This machine enables transparent huge pages only on request, and .NET supports large pages only through GC
+  configuration.
+
+### Modified throughout its life
+
+**Churn barely slows lookups, but it does inflate memory.** Each table was bulk loaded, then a share of its prefixes was
+removed and added back in random order, with the index maintained. The contents end up identical, so only layout and
+garbage differ.
+
+| Churn | Real IPv4 lookups | Real IPv4 memory | Real IPv6 lookups | Real IPv6 memory |
+| --- | --- | --- | --- | --- |
+| None, fresh bulk load | 177 ms | 113 MB | 360 ms | 64 MB |
+| 10% of prefixes removed and re-added | 203 ms | 226 MB | 330 ms | 128 MB |
+| 50% | 185 ms | 226 MB | 395 ms | 187 MB |
+| 100% | 190 ms | 307 MB | 418 ms | 305 MB |
+| 100%, then compacted | 188 ms | 113 MB | 345 ms | 64 MB |
+
+Lookups slowed by at most about 15%: once a table is larger than the cache, a scattered layout costs little extra. Memory
+grew up to 4.8 times, mostly from replaced index sub-tables and removed nodes, and compaction gave it all back.
+
+**A busy writer competes with readers for the shared cache and memory.** Three reader threads ran for 10 seconds on real
+IPv4 while the writer was idle, updating as fast as it could, or updating and compacting every 50,000 changes:
+
+| Writer activity | Reader throughput, 3 threads | Writer |
+| --- | --- | --- |
+| Idle | 14.9 M lookups/s | none |
+| Continuous updates | 11.5 M lookups/s | 177,000 changes/s |
+| Updates and compaction | 13.5 M lookups/s | 30,000 changes/s, 6 compactions |
+
+At full speed the writer cost readers 23%. Real routing tables change far more slowly; the global table sees on the
+order of thousands of updates per second at peaks, so at real rates the effect should be small. That is an
+extrapolation and has not been measured.
+
+For tables that change often:
+
+- **Use threshold 32.** Updates are cheaper and the index smaller, for lookups about 10% slower.
+- **Compact on a policy**, for example when garbage exceeds the live size. Compaction restores memory and speed, keeps
+  the writer busy for 0.1 to 1.4 seconds, and never blocks readers.
+- **Leave headroom in the arrays.** Every growth copies tens of megabytes, which also pushes readers' data out of L3.
+
 ## Recommendations for the production core
 
 1. **Use the node pool.** One struct array per address family, integer child indexes, and prefixes and values in a

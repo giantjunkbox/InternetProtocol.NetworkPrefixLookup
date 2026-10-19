@@ -185,6 +185,10 @@ public static class RealDataChecks
             "v4-snap" => SingleSnapshot(RealData.V4, BuildSnapshot(RealData.V4, 32)),
             "v6-snap" => SingleSnapshot(RealData.V6, BuildSnapshot(RealData.V6, 128)),
             "v6-snap4" => SingleSnapshot(RealData.V6, BuildSnapshot(RealData.V6, 128, 4)),
+            // churn: bulk load, remove a share of the prefixes and add them back in random order, optionally compact.
+            // The contents end up identical, so any slowdown comes from layout and garbage. Example: v4-churn50, v6-churn50c
+            _ when variant.StartsWith("v4-churn") => SingleSnapshot(RealData.V4, Churned(RealData.V4, 32, variant[8..])),
+            _ when variant.StartsWith("v6-churn") => SingleSnapshot(RealData.V6, Churned(RealData.V6, 128, variant[8..])),
             _ when variant.StartsWith("v4-ml") => Single(RealData.V4, MultiLevel(RealData.V4, variant[5..], 32)),
             _ when variant.StartsWith("v6-ml") => Single(RealData.V6, MultiLevel(RealData.V6, variant[5..], 128)),
             _ => throw new ArgumentException(variant)
@@ -199,6 +203,85 @@ public static class RealDataChecks
             best = Math.Min(best, sw.Elapsed.TotalMilliseconds);
         }
         Console.WriteLine($"{variant,-16} best of 15: {best,7:F1} ms per 1M lookups");
+    }
+
+    private static SnapshotTrie<TKey, IPNetwork, int> Churned<TKey>(RealData.Table<TKey> table, int width, string spec) where TKey : struct, IBitKey<TKey>
+    {
+        var compact = spec.EndsWith('c');
+        var percent = int.Parse(compact ? spec[..^1] : spec);
+        var trie = BulkSnapshot(table, width, 8);
+        var memoryFresh = trie.MemoryInBytes();
+
+        var random = new Random(5);
+        var chosen = Enumerable.Range(0, table.Bits.Length).Where(_ => random.Next(100) < percent).OrderBy(_ => random.Next()).ToArray();
+        var sw = Stopwatch.StartNew();
+        foreach (var i in chosen) trie.TryRemove(in table.Bits[i], table.Lengths[i]);
+        foreach (var i in chosen.OrderBy(_ => random.Next())) trie.TryAdd(in table.Bits[i], table.Lengths[i], table.Networks[i], table.Asns[i]);
+        var churnMs = sw.Elapsed.TotalMilliseconds;
+        var garbage = trie.Garbage;
+        var memoryChurned = trie.MemoryInBytes();
+        if (compact) trie.Compact();
+
+        Console.Error.WriteLine($"{percent}% churn: {chosen.Length * 2:N0} changes in {churnMs:F0} ms; garbage nodes {garbage.Nodes:N0}, values {garbage.Values:N0}, sub-table entries {garbage.SubEntries:N0}; " +
+                                $"memory {memoryFresh / 1048576.0:F0} MB fresh, {memoryChurned / 1048576.0:F0} MB churned{(compact ? $", {trie.MemoryInBytes() / 1048576.0:F0} MB compacted" : "")}");
+        return trie;
+    }
+
+    /// <summary>
+    ///     Reader throughput on the real IPv4 table with three reader threads for 10 seconds, while the writer is idle,
+    ///     makes continuous updates, or makes updates and compacts every 50,000 changes.
+    /// </summary>
+    public static void Interference()
+    {
+        var table = RealData.V4;
+        foreach (var mode in new[] { "idle writer", "continuous updates", "updates and compaction", "idle writer again" })
+        {
+            var trie = BulkSnapshot(table, 32, 8);
+            var stop = 0;
+            long writes = 0, compactions = 0;
+            var counts = new long[3];
+
+            var writer = new Thread(() =>
+            {
+                if (mode.StartsWith("idle")) return;
+                var random = new Random(9);
+                var removed = new HashSet<int>();
+                while (Volatile.Read(ref stop) == 0)
+                {
+                    var i = random.Next(table.Bits.Length);
+                    if (removed.Remove(i)) trie.TryAdd(in table.Bits[i], table.Lengths[i], table.Networks[i], table.Asns[i]);
+                    else { removed.Add(i); trie.TryRemove(in table.Bits[i], table.Lengths[i]); }
+                    if (++writes % 50_000 == 0 && mode == "updates and compaction") { trie.Compact(); compactions++; }
+                }
+            });
+
+            var readers = Enumerable.Range(0, 3).Select(r => new Thread(() =>
+            {
+                var keys = table.Keys;
+                long n = 0;
+                var k = r * 333_333;
+                while (Volatile.Read(ref stop) == 0)
+                {
+                    for (var j = 0; j < 1000; j++)
+                    {
+                        trie.TryGetMatch(in keys[k], out _, out _);
+                        if (++k == keys.Length) k = 0;
+                    }
+                    n += 1000;
+                }
+                counts[r] = n;
+            })).ToArray();
+
+            writer.Start();
+            foreach (var t in readers) t.Start();
+            Thread.Sleep(TimeSpan.FromSeconds(10));
+            Volatile.Write(ref stop, 1);
+            writer.Join();
+            foreach (var t in readers) t.Join();
+
+            var total = counts.Sum() / 10.0;
+            Console.WriteLine($"{mode,-24} readers: {total / 1e6:F2} M lookups/s in total ({total / 3e6:F2} M per thread); writer: {writes / 10.0:N0} changes/s, {compactions} compactions");
+        }
     }
 
     // spec "16-8-32": root bits, sub-table bits, threshold

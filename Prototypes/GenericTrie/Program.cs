@@ -32,6 +32,7 @@ if (args.Length > 1 && args[0] == "time") { Optimization.Time(args[1]); return; 
 if (args.Length > 0 && args[0] == "verify-real") { RealDataChecks.Verify(); return; }
 if (args.Length > 0 && args[0] == "memory") { MemoryComparison.Run(); return; }
 if (args.Length > 0 && args[0] == "snapshot-costs") { RealDataChecks.SnapshotCosts(); return; }
+if (args.Length > 0 && args[0] == "interference") { RealDataChecks.Interference(); return; }
 if (args.Length > 1 && args[0] == "time-real") { RealDataChecks.Time(args[1]); return; }
 BenchmarkSwitcher.FromTypes(new[] { typeof(Comparison), typeof(WidthComparison), typeof(CachedWidthComparison), typeof(Width192Comparison), typeof(ResultShapeComparison), typeof(LargeValueShapeComparison),
     typeof(OptimizationComparison), typeof(EndToEndComparison), typeof(BuildComparison),
