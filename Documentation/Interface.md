@@ -338,9 +338,44 @@ Concrete classes hide the generic parameters, because C# cannot infer the key an
 | --- | --- | --- | --- |
 | Core package, no dependencies | `IPNetworkLookup<TValue>` | `FrozenIPNetworkLookup<TValue>` | `IPNetworkAdapter` for `System.Net.IPNetwork` |
 | `NetworkPrefix` package | `NetworkPrefixLookup<TValue>` | `FrozenNetworkPrefixLookup<TValue>` | `NetworkPrefixAdapter` |
+| `IPNetwork2` package | `IPNetwork2Lookup<TValue>` | `FrozenIPNetwork2Lookup<TValue>` | `IPNetwork2Adapter` for `System.Net.IPNetwork2` |
+| `IPAddressRange` package | `IPAddressRangeLookup<TValue>` | `FrozenIPAddressRangeLookup<TValue>` | `IPAddressRangeAdapter`, a [range adapter](#ranges) |
+| `MaxMind` package | `MaxMindNetworkLookup<TValue>` | `FrozenMaxMindNetworkLookup<TValue>` | `MaxMindNetworkAdapter` for `MaxMind.Db.Network`, plus a database loader |
 
 Each concrete read-write class redeclares `Freeze` with `new` so that it returns its own frozen class. Today's
 value-less `NetworkPrefixLookup` becomes a lookup whose value type is an empty struct.
+
+The three third-party packages cover the most downloaded network types on NuGet that are not already
+`System.Net.IPNetwork`. [Adapter-Survey.md](Adapter-Survey.md) has the survey, including the popular types that need
+no package, such as Npgsql's `cidr` mapping.
+
+### Ranges
+
+Some libraries describe networks as ranges with a first and a last address, and a range need not be a CIDR block, as in
+`192.168.0.10-192.168.0.20`. A range adapter supplies the two ends:
+
+```csharp
+public interface IIPRangeAdapter<TRange>
+{
+    static abstract IPAddress GetFirst(TRange range);
+    static abstract IPAddress GetLast(TRange range);
+}
+
+public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<TRange, TValue>
+    where TAdapter : struct, IIPRangeAdapter<TRange>;    // same members as IPPrefixLookup, with ranges for prefixes
+```
+
+The range lookup lives in the core package and stores each range as the fewest prefixes that cover it exactly: one for
+a CIDR block, at most 62 for an IPv4 range and 254 for an IPv6 range. Every piece holds the caller's range and value, so
+lookups return the range.
+
+- **Nested ranges** work as expected: an address in both gets the inner range. When an inner range splits into a piece
+  identical to one of the outer range's pieces, that piece keeps both claims, the smaller range first, so removing the
+  inner range uncovers the outer one again.
+- **Partly overlapping ranges** have no single right answer. An address in both gets whichever range's covering piece
+  is smaller, which is well defined but rarely what a caller means, so the documentation should advise splitting them.
+- **Counting and listing** report ranges, not pieces. `TryGetValue` and `Remove` take the range, and match it exactly.
+- **Ranges are read once**, when added. Changing a range object that is already stored is not supported.
 
 ## Examples
 
@@ -395,13 +430,15 @@ vendors.TryGetMatch(new Bits64(macAddress << 16), out var oui, out var vendor);
 | Bounded writes: chunked storage, continuous cleanup | Design only. The `tail-latency` test that measures it runs against `SnapshotTrie` today |
 | Index entries that record only their own level's best match | Design only |
 | IP layer | Adapters and address conversion in the prototype; the layer itself is design only |
+| Range lookup, and the IPNetwork2, IPAddressRange and MaxMind packages | Design only; see [Adapter-Survey.md](Adapter-Survey.md) |
 
 ## Open questions
 
 - **Package names**, and whether the core, the IP layer and the `IPNetwork` adapter ship as one package, as the study
   recommends.
 - **IPv4-mapped IPv6 addresses**, such as `::ffff:10.1.2.3`. Today they are looked up in the IPv6 table. An option could
-  map them to IPv4.
+  map them to IPv4. The MaxMind loader depends on this: mapping them lets it skip the aliased copies of the IPv4 networks
+  that MaxMind databases contain.
 - **A cleanup budget.** The design picks the amount of cleanup per write internally, from how much garbage there is.
   Exposing it as an option would let applications trade memory for write latency.
 - **Whether `Add` should exist** next to `TryAdd`, `AddOrUpdate` and `GetOrAdd`. It is there for familiarity with

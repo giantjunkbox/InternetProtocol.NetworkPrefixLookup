@@ -28,6 +28,7 @@ A redesign is planned in `Documentation/Abstraction-Study.md`: a generic core th
   only when it is clearly faster, as the frozen form is.
 
 The proposed public interface for the redesign, including frozen lookups, is in `Documentation/Interface.md`.
+`Documentation/Adapter-Survey.md` surveys IP prefix types on NuGet and picks the ones that get adapter packages.
 
 ## Layout
 

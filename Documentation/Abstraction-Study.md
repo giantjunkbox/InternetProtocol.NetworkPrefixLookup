@@ -429,17 +429,19 @@ pattern.
    longest match by prefix, all matches, clear and count. Follow the concurrency rules in that log for array growth,
    removal and publishing the index. Write unit tests directly against the core, including at least one non-IP key
    width.
-3. **IP layer.** Add the dual-stack lookup, `IPAddress` conversions, both adapters and a formatter. Port `ToTextTree`
-   and `ToDotTree` onto the formatter.
+3. **IP layer.** Add the dual-stack lookup, `IPAddress` conversions, the `IPNetwork` and `NetworkPrefix` adapters, the
+   range lookup and a formatter. Port `ToTextTree` and `ToDotTree` onto the formatter.
 4. **Port the tests.** Rewrite the existing 19 tests against the new API, keeping their tree-shape assertions through
    the formatter.
 5. **Writer lock.** Serialize writes with an internal lock, as proposed in [Interface.md](Interface.md). That replaces
    today's `Concurrence*` classes and fixes their gaps.
 6. **Frozen lookups.** Add a method that builds a read-only lookup from a loaded trie, with leaf-pushed tables and a
    value-only lookup, as described under Frozen tables in [Optimization-Log.md](Optimization-Log.md).
-7. **Benchmarks.** Add IPv6 lookups and prefix queries to `PerformanceTest`. Compare against the current library in one
-   session.
-8. **Packaging and documentation.** Set up the dependency-free core package, then update the README, the architecture
+7. **Benchmarks.** Add IPv6 lookups and prefix queries to `PerformanceTest`. Compare against the current library and
+   Bart.NET in one session.
+8. **Third-party adapters.** Add the IPNetwork2, IPAddressRange and MaxMind packages listed in
+   [Adapter-Survey.md](Adapter-Survey.md). Benchmark the MaxMind loader against MaxMind's own reader first.
+9. **Packaging and documentation.** Set up the dependency-free core package, then update the README, the architecture
    document and CLAUDE.md.
 
 The core should end up about the same size as today's `NetworkPrefixLookupBase`, which it replaces. The adapters are
