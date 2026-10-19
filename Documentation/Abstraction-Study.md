@@ -20,8 +20,21 @@ against the current library on .NET 10.
   fast. It also kept less than half the memory per prefix.
 - **`System.Net.IPNetwork` works through a 4-line adapter**, for IPv4 and IPv6, with the same performance as
   `NetworkPrefix`.
-- **The main open decisions** are the package layout, how much of the v2 API to keep, and whether keys wider than 128
-  bits need to be supported. They are listed under [Decisions needed](#decisions-needed).
+- **Arbitrary key widths are cheap if the key width is fixed when the code is compiled.** Replacing the
+  `IBinaryInteger<T>` constraint with a small purpose-built key interface did not slow 32-bit keys. A 256-bit key
+  using vector instructions was as fast as a 128-bit key. Only keys whose width is chosen at run time were expensive.
+  See [Arbitrary key widths](#arbitrary-key-widths).
+- **Decided:** .NET 10 only, no backward compatibility, and a dependency-free core package. The remaining questions are
+  under [Open questions](#open-questions).
+
+## Decisions
+
+| Topic | Decision |
+| --- | --- |
+| Target framework | .NET 10 only. |
+| Backward compatibility | Not required. The v2 public types are replaced, and the existing tests are ported to the new API. |
+| Packaging | The core ships as a package with no dependency on `Bitvantage.InternetProtocol.NetworkPrefix`. |
+| Key width | Not decided yet. The recommendation is in [Arbitrary key widths](#arbitrary-key-widths). |
 
 ## What the library uses from NetworkPrefix today
 
@@ -32,7 +45,7 @@ against the current library on .NET 10.
 | Prefix arithmetic | `==`, `Contains`, `GetContainingNetwork` | Insert cases 1, 3 and 4 | Mask comparison and one leading-zero count. No objects are created. |
 | Placeholder prefixes | `new NetworkPrefix(...)` for roots and routing nodes, `new NetworkPrefixKey(...)` | Root creation, insert case 4, remove | Routing nodes hold only bits. They need no prefix object at all. |
 | Display | `ToString`, `Address`, `Length`, `IPVersion` | `ToTextTree`, `ToDotTree`, debugger display | A formatter for bits and length, supplied by the IP layer. |
-| Public API | `NetworkPrefix` parameters, `NetworkPrefixKey` and `NetworkPrefixKeyValuePair<T>` records, the `IPVersion` enum | Every public method | Generic prefix and value parameters, plus compatibility wrappers. |
+| Public API | `NetworkPrefix` parameters, `NetworkPrefixKey` and `NetworkPrefixKeyValuePair<T>` records, the `IPVersion` enum | Every public method | Generic prefix and value parameters. |
 
 `IPVersion` is defined in the NetworkPrefix package, so it is a dependency too. `IPAddress` is part of .NET and can
 stay.
@@ -71,18 +84,22 @@ Core                   BitTrie<TBits, TPrefix, TValue>: bits, lengths and nodes 
 ### Core
 
 ```csharp
-public sealed class BitTrie<TBits, TPrefix, TValue>
-    where TBits : unmanaged, IBinaryInteger<TBits>   // uint, ulong, UInt128, ...
+public sealed class BitTrie<TKey, TPrefix, TValue>
+    where TKey : struct, IBitKey<TKey>   // Bits32, Bits64, Bits128, Bits256, or your own fixed-width key
 {
-    public bool TryAdd(TBits bits, int length, TPrefix prefix, TValue value);
-    public bool TryRemove(TBits bits, int length);
-    public bool TryGetMatch(TBits key, out TPrefix prefix, out TValue value);             // longest match for a full key
-    public bool TryGetMatch(TBits bits, int length, out TPrefix prefix, out TValue value); // longest match for a prefix
-    public int GetMatches(TBits key, ICollection<KeyValuePair<TPrefix, TValue>> results);
+    public bool TryAdd(in TKey bits, int length, TPrefix prefix, TValue value);
+    public bool TryRemove(in TKey bits, int length);
+    public bool TryGetMatch(in TKey key, out TPrefix prefix, out TValue value);             // longest match for a full key
+    public bool TryGetMatch(in TKey bits, int length, out TPrefix prefix, out TValue value); // longest match for a prefix
+    public int GetMatches(in TKey key, ICollection<KeyValuePair<TPrefix, TValue>> results);
     public long Count { get; }
     public void Clear();
 }
 ```
+
+The first prototype constrained the key on `IBinaryInteger<T>`, which covers `uint`, `ulong` and `UInt128`. The
+sketch above uses the purpose-built `IBitKey<TSelf>` interface instead, because it allows any width at no cost; see
+[Arbitrary key widths](#arbitrary-key-widths).
 
 The core stores the caller's prefix object and value in the node, but never looks inside either one. It only hands
 them back from lookups.
@@ -159,8 +176,13 @@ routes.TryGetMatch(IPAddress.Parse("10.1.2.3"), out var network, out var nextHop
 IP layer, both adapters and a benchmark. It is not part of the solution or the package. To reproduce:
 
 ```sh
-dotnet run -c Release --project Prototypes/GenericTrie -- verify   # correctness and memory checks
-dotnet run -c Release --project Prototypes/GenericTrie             # benchmarks, about 7.5 minutes
+P="-c Release --project Prototypes/GenericTrie --"
+dotnet run $P verify                                    # abstraction: correctness and memory
+dotnet run $P --filter 'Comparison.*'                   # abstraction benchmarks, about 7.5 minutes
+dotnet run $P verify-width                              # key widths: correctness and memory
+dotnet run $P --filter 'WidthComparison.*'              # key widths with computed masks, about 10 minutes
+dotnet run $P --filter 'CachedWidthComparison.*'        # key widths with cached masks, about 9 minutes
+dotnet run $P isolate cached32                          # one variant in its own process, quick timing
 ```
 
 The data is the same as `PerformanceTest`: 96,944 distinct random IPv4 prefixes and 1,000,000 random addresses.
@@ -228,11 +250,97 @@ The generic variants add two more gains:
   architecture document, and here it comes from choosing a type parameter.
 - **No allocation per lookup.** This is optimization candidate 1.
 
+## Arbitrary key widths
+
+### What it takes
+
+1. **Replace the `IBinaryInteger<T>` constraint with a small key interface.** The prototype's `IBitKey<TSelf>` in
+   [`WideKeys.cs`](../Prototypes/GenericTrie/WideKeys.cs) has only `static abstract` members:
+
+   | Member | Used for |
+   | --- | --- |
+   | `Truncate(key, length)` | Clearing host bits on insert and building routing nodes |
+   | `CommonPrefixLength(a, b, max)` | The routing node for two sibling prefixes |
+   | `MaskFor(length)` and `SplitFor(length)` | Values cached in each node when it is created |
+   | `IsSet(key, split)` | Choosing a child slot |
+   | `MatchesUnderMask(key, bits, mask)` | Testing whether a node contains a key |
+
+2. **Ship a few key types.** `Bits32`, `Bits64` and `Bits128` are one-field wrappers around `uint`, `ulong` and
+   `UInt128`. `Bits256` holds four 64-bit words inline and compares them with one 256-bit vector instruction. Anyone
+   can implement the interface for another fixed width, such as 160 bits for a VRF identifier plus an IPv6 address.
+3. **Have adapters produce key types instead of raw integers.** The IP layer wraps `uint` and `UInt128` in `Bits32` and
+   `Bits128`.
+4. **Keep the cached mask and split bit in each node.** That means three copies of the key per node, so node size grows
+   with key width.
+
+A key whose width is chosen at run time, held in an array, can implement the same interface. It is the expensive
+option, as the measurements show.
+
+### Measurements
+
+The same IPv4 data was encoded in keys of each width, so every trie has the same shape and only the key representation
+differs. The keys were converted before timing, so these numbers measure only the trie walk. They are not comparable
+with the earlier tables, which include `IPAddress` conversion.
+
+For 256-bit and variable-width keys there are two layouts. In the best case, the IPv4 bits sit in the first 64-bit
+word. In the worst case, a fixed 192-bit context comes first, so every comparison has to cover all four words.
+
+Two benchmark sessions were run, one with masks computed at each node and one with masks cached in each node.
+Ratios are against the 32-bit `IBinaryInteger` reference in the same session. All variants returned identical
+results for 1,000,000 lookups.
+
+| Key type | Masks | Lookup time ratio | Retained bytes per prefix |
+| --- | --- | --- | --- |
+| 32-bit, `IBinaryInteger` reference | cached | 1.00 | 171 |
+| 32-bit, `IBitKey` | cached | 1.09 ± 0.20 | 171 |
+| 32-bit, `IBitKey` | computed | 1.38 ± 0.22 to 1.53 ± 0.25 | 157 |
+| 128-bit | cached | 1.85 ± 0.27 | 243 |
+| 128-bit | computed | 1.93 ± 0.29 | 186 |
+| 256-bit vector, best case | cached | 1.60 ± 0.27 | 328 |
+| 256-bit vector, worst case | cached | 1.82 ± 0.28 | 328 |
+| 256-bit, best case | computed | 2.07 ± 0.33 | 214 |
+| 256-bit, worst case | computed | 1.98 ± 0.31 | 214 |
+| Variable width, array-backed, worst case | computed | 2.24 ± 0.33 | 271 |
+| Variable width, array-backed, worst case | cached | 3.54 ± 0.54 | 499 |
+
+Building the trie from 97,000 prefixes, with computed masks:
+
+| 32-bit reference | 32-bit `IBitKey` | 128-bit | 256-bit | Variable width |
+| --- | --- | --- | --- | --- |
+| 57 ms | 64 ms | 86 ms | 87 to 91 ms | 109 ms |
+
+### Findings
+
+- **The interface itself costs nothing.** With masks cached in the node, 32-bit keys through `IBitKey` ran at
+  1.09 ± 0.20 of the `IBinaryInteger` reference, which is within the noise.
+- **Caching the mask matters more than expected.** Computing the mask at each node made 32-bit lookups 38 to 53%
+  slower. The machine code showed both loops fully inlined, with about five extra instructions per node. The whole
+  trie fits in this machine's 33 MiB L3 cache, so those instructions sit on the critical path.
+- **Each key type pays only for itself.** The JIT compiles separate code for each key type. An IPv4 trie stays a fast
+  32-bit trie no matter how wide the keys in other tries are.
+- **128-bit keys cost about 1.85 times as much as 32-bit keys** per lookup in this test. Real IPv6 tables have a
+  different shape, so this is a per-node cost, not a prediction for IPv6.
+- **256-bit keys with vector instructions are about as fast as 128-bit keys.** One vector instruction covers all four
+  words, while each `UInt128` operation takes two scalar instructions. A 128-bit key built on 128-bit vectors might
+  therefore beat `UInt128` for IPv6. That has not been tested.
+- **Run-time widths are the expensive option.** An array-backed key adds a pointer load per node, and caching masks
+  adds two more arrays per node. That made lookups 2.2 to 3.5 times slower and used up to 2.9 times the memory.
+
+### Recommendation
+
+- Constrain the core on `IBitKey<TSelf>` rather than `IBinaryInteger<T>`. It is equally fast and allows any fixed
+  width.
+- Ship `Bits32`, `Bits64` and `Bits128`, and add `Bits256` if a use for it appears. Try a vector-based `Bits128` and
+  keep whichever benchmarks faster.
+- Cache the mask and split bit in each node.
+- Do not support widths chosen at run time. Shorter keys already fit in a wider key type, because bits are
+  left-aligned and each prefix carries its own length. If keys from different families share one trie, put a few tag
+  bits in front so they cannot collide, the way IPv4-mapped IPv6 addresses do.
+
 ## Other consequences of the design
 
 1. **Stored items.** Today `TValue` must derive from `NetworkPrefixKey`, so every item carries its own prefix. The core
-   instead stores the prefix and the value in separate node fields. That saves one object per prefix. A compatibility
-   wrapper can still return `NetworkPrefixKeyValuePair` records by storing the record as the value.
+   instead stores the prefix and the value in separate node fields. That saves one object per prefix.
 2. **Routing nodes and roots need no prefix object.** They are just bits and a length.
 3. **The known `Count` bugs disappear** in the rewrite. The prototype's count is exact.
 4. **Concurrency needs a different writer rule.** Today stored items are references, which are written atomically. A
@@ -242,45 +350,37 @@ The generic variants add two more gains:
    as the current library does. The production version must not. This rule also removes today's
    `InvalidCastException` race.
 5. **Diagnostics need a formatter.** `ToTextTree` and `ToDotTree` print routing nodes, which have no prefix object. The
-   IP layer can format bits and length through `IPAddress`. The existing tests compare exact text, so the formatter must
-   reproduce `NetworkPrefix.ToString`, including IPv6 and IPv4-embedded forms. That has not been verified yet.
+   IP layer can format bits and length through `IPAddress`. The ported tests can keep asserting the tree shape through
+   this text, so the output format should be settled before the tests are ported.
 6. **Some behavior becomes stricter.** Bug fixes such as `TryRemove` returning `false` for a routing node are
-   observable changes. They belong in a major version.
+   observable changes. The redesign is a new major version without backward compatibility, so that is acceptable.
 
-## Decisions needed
+## Open questions
 
-- **Package layout.** The options are:
-  - One package with the core, IP layer and both adapters. It keeps the NetworkPrefix dependency.
-  - A dependency-free package with the core, the IP layer and the `IPNetwork` adapter, plus a second package with the
-    `NetworkPrefix` adapter and the v2 compatibility API.
-
-  The second option is the recommendation, because it fully meets the goal of not depending on NetworkPrefix.
-- **Compatibility.** The options are to keep the v2 types `NetworkPrefixLookup`, `NetworkPrefixLookup<TValue>` and
-  the `Concurrence*` classes as thin wrappers, or to make a clean break. Wrappers are the recommendation. They let the
-  existing 19 tests run unchanged against the new core, which is the strongest correctness check available.
+- **The `NetworkPrefix` adapter.** It could ship as a separate optional package, as sample code, or not at all. Without
+  backward compatibility, nothing requires it.
+- **Package contents.** The recommendation is one dependency-free package containing the core, the IP layer and the
+  `IPNetwork` adapter, because `IPNetwork` is part of .NET.
 - **Result shape.** Lookups can return the prefix and value through `out` parameters, as in the prototype, or through
   a small readonly struct. Both avoid allocation.
-- **Keys wider than 128 bits.** `IBinaryInteger<T>` covers `uint`, `ulong` and `UInt128` for free. A custom wider key
-  type would have to implement that large interface. If wider keys matter, for example a VRF identifier plus an IPv6
-  address, the core could instead require a small purpose-built interface with only the operations it uses: and, xor,
-  shifts, leading-zero count and equality. The recommendation is `IBinaryInteger<T>` now, revisited only if a real use
-  case appears.
-- **Target frameworks.** Static abstract interface members need .NET 7 or later. `IPNetwork` needs .NET 8 or later.
-  The projects already target .NET 10. Multi-targeting `net8.0` as well would keep .NET 8 and .NET 9 users.
+- **Key interface.** The recommendation is `IBitKey<TSelf>` with cached masks, as described in
+  [Arbitrary key widths](#arbitrary-key-widths).
 
 ## Work plan
 
-1. **Core.** Bring `BitTrie` to feature parity: remove, longest match by prefix, all matches, clear and count. Use node
-   replacement for in-place changes, and write unit tests directly against the core.
+1. **Core.** Build `BitTrie` on `IBitKey<TSelf>` with cached masks, and bring it to feature parity: remove, longest
+   match by prefix, all matches, clear and count. Use node replacement for in-place changes. Write unit tests directly
+   against the core, including at least one non-IP key width.
 2. **IP layer.** Add the dual-stack lookup, `IPAddress` conversions, both adapters and a formatter. Port `ToTextTree`
    and `ToDotTree` onto the formatter.
-3. **Compatibility layer.** Re-implement the v2 public types on top of the IP layer. Run the existing tests unchanged.
+3. **Port the tests.** Rewrite the existing 19 tests against the new API, keeping their tree-shape assertions through
+   the formatter.
 4. **Locking variants.** Add locking wrappers that cover every write method, which also fixes the gaps in today's
    `Concurrence*` classes.
-5. **Benchmarks.** Add the generic variants, IPv6 lookups and prefix queries to `PerformanceTest`. Compare against the
-   current library in one session.
-6. **Packaging and documentation.** Apply the package decision, then update the README, the architecture document and
-   CLAUDE.md.
+5. **Benchmarks.** Add IPv6 lookups and prefix queries to `PerformanceTest`. Compare against the current library in one
+   session.
+6. **Packaging and documentation.** Set up the dependency-free core package, then update the README, the architecture
+   document and CLAUDE.md.
 
 The core should end up about the same size as today's `NetworkPrefixLookupBase`, which it replaces. The adapters are
 a few lines each.
@@ -288,7 +388,8 @@ a few lines each.
 ## Risks
 
 - **Verbose generic signatures.** These are mitigated with concrete classes such as `IPNetworkLookup<TValue>`.
-- **Formatting differences** in IPv6 diagnostics would break the text-tree tests until the formatter matches.
+- **Ported test expectations.** If the new formatter writes prefixes differently, the expected trees in the ported tests
+  must be regenerated. Each regenerated string should differ only in formatting, never in shape.
 - **Concurrency bugs** if the node-replacement rule is not followed for struct prefixes and values. That deserves a
   dedicated stress test like `Add_IPv4_12`, using `IPNetwork` keys.
 - **Measurement noise.** This container varies by about 10% between sessions. Every comparison should run in a single

@@ -440,10 +440,10 @@ implemented in the library yet. [Abstraction-Study.md](Abstraction-Study.md) mea
 
 Changes that should be decided deliberately:
 
-- **Target framework.** The projects now target .NET 10. A package built only for `net10.0` cannot be used by
-  applications on .NET 8 or .NET 9. Multi-targeting, for example `net8.0;net10.0`, would keep them, at the cost of
-  testing and benchmarking each target.
-- **Public API.** The package is published on NuGet at version 2.0.0. Signature changes are breaking.
+- **Target framework.** The projects target .NET 10 only, by decision. Applications on .NET 8 or .NET 9 cannot use
+  new versions of the package.
+- **Public API.** The package is published on NuGet at version 2.0.0. Backward compatibility is not required for the
+  planned redesign in [Abstraction-Study.md](Abstraction-Study.md), but signature changes still need to be deliberate.
 
 Whatever the change, keep the [invariants](#invariants) and the [concurrency rules](#concurrency-model), run the unit
 tests, and compare benchmarks before and after on the same machine.

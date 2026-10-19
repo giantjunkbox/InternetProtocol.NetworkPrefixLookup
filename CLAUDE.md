@@ -9,6 +9,13 @@ lookups of IPv4 and IPv6 network prefixes. It stores prefixes in a path-compress
 The current goal is to prepare for performance optimization of the lookup path.
 
 Read `Documentation/Architecture.md` before changing anything under `Bitvantage.InternetProtocol.NetworkPrefixLookup/`.
+
+A redesign is planned in `Documentation/Abstraction-Study.md`: a generic core that works on bits only, so it can store
+`System.Net.IPNetwork` or any other network type. Decisions made by the user:
+
+- Target .NET 10 only.
+- Backward compatibility with the v2 public API is not required.
+- The core ships as a package with no dependency on `Bitvantage.InternetProtocol.NetworkPrefix`.
 It covers the trie invariants, the lock-free reader rules, measured baseline numbers, optimization candidates, and
 known bugs.
 
@@ -66,8 +73,8 @@ The library build has 4 pre-existing nullable warnings (CS8618, CS8625). Do not 
   assert the exact `ToTextTree` output, so do not change that format.
 - Readers take no locks. A writer must fully build any new node before linking it in with one reference write, and must
   never leave a node that readers can reach in a half-updated state.
-- Public API changes are breaking changes for NuGet consumers. Raise them with the user first.
-- Do not retarget the framework or bump package versions unless asked.
+- Backward compatibility with the v2 API is not required, but keep public API changes deliberate and documented.
+- Target .NET 10 only. Do not add other target frameworks or bump package versions unless asked.
 
 ## Performance work
 
