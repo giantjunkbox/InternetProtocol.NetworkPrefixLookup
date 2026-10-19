@@ -33,9 +33,10 @@ A redesign is planned in `Documentation/Abstraction-Study.md`: a generic core th
 - `Prototypes/GenericTrie/` is a standalone prototype of a key-type-agnostic core. It is not in the solution. Its
   design and measurements are in `Documentation/Abstraction-Study.md`, and its lookup optimizations are in
   `Documentation/Optimization-Log.md`. `SnapshotTrie.cs` is the production-style version with removal, index
-  maintenance, compaction, bulk loading and lock-free readers.
-- `Prototypes/GenericTrie.Tests/` holds 17 NUnit tests for `SnapshotTrie`, including real routing tables and a
-  concurrency stress test.
+  maintenance, compaction, bulk loading and lock-free readers. `PooledTrie` in `FastTrie.cs` also holds the frozen,
+  read-only lookup tables: leaf-pushed and compressed.
+- `Prototypes/GenericTrie.Tests/` holds 54 NUnit test cases: `SnapshotTrie`, including real routing tables and a
+  concurrency stress test, and every shape of the frozen tables.
 - The `NetworkPrefix` type comes from the `Bitvantage.InternetProtocol.NetworkPrefix` NuGet package, version `2.0.*`.
 
 ## Build and test
@@ -58,11 +59,11 @@ dotnet run -c Release --project PerformanceTest -- --filter '*Lookup*'   # a sub
 `PerformanceTest` passes its arguments to BenchmarkDotNet, so `--filter` and `--artifacts` work.
 
 The prototype's real-data tests and benchmarks use the CAIDA RouteViews tables. Download them once and point
-`ROUTEVIEWS_DIR` at them; without it the two real-table tests are skipped:
+`ROUTEVIEWS_DIR` at them; without it the four real-table tests are skipped:
 
 ```sh
 Prototypes/GenericTrie/download-routeviews.sh /tmp/routeviews
-ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 2 minutes
+ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 3 minutes
 ```
 
 **Test baseline:** all 19 tests pass on Linux and Windows. The expected trees in the tests are raw string literals, so

@@ -382,11 +382,13 @@ on real tables: every node it saves is a memory round trip saved.
 - **Readers scale across cores.** Three reader threads did 14.9 million lookups per second on real IPv4, about three
   times one thread. Each core has its own L1 and L2, and the shared L3 and memory were not the limit.
 
+- **Freeze it.** Read-only lookup tables were 1.9 to 2.7 times faster again; see [Frozen tables](#frozen-tables).
+
 Untested ideas that only make sense for read-only tables:
 
 - **Smaller nodes.** Computing the mask and split bit from the prefix length would shrink an IPv4 node from 24 to 16
-  bytes. That cost 38 to 53% when the trie fit in cache, but may pay off when lookups wait on main memory.
-- **A frozen type** that drops writer-only data, such as the prefix lengths, and the snapshot indirection.
+  bytes. That cost 38 to 53% when the trie fit in cache, but may pay off when lookups wait on main memory. Frozen
+  tables take the nodes off the lookup path entirely, so this matters only for tables that keep changing.
 - **Huge pages.** A 100 MB table spans 25,000 normal 4 KB pages, more than the processor's address translation cache
   holds. This machine enables transparent huge pages only on request, and .NET supports large pages only through GC
   configuration.
@@ -428,6 +430,105 @@ For tables that change often:
   the writer busy for 0.1 to 1.4 seconds, and never blocks readers.
 - **Leave headroom in the arrays.** Every growth copies tens of megabytes, which also pushes readers' data out of L3.
 
+## Frozen tables
+
+A table that is loaded once and then only read can use lookup structures that are too costly to keep current under
+updates. Two were built on `PooledTrie`; `SnapshotTrie` does not have them. Both returned the same match as the node
+walk for every key of both real tables, and `FrozenTableTests` checks every shape against the reference trie, at edge
+cases and on the real tables.
+
+**Leaf-pushed tables.** As in the multi-level index, a root table covers the first bits, and child tables cover further
+bits wherever a block still contains a more specific prefix. The difference is what an entry holds. A multi-level entry
+names the node where the walk continues. A leaf-pushed entry holds the final answer for its whole block, so a lookup
+reads only tables and never a node. With a 24-bit root and 8-bit child tables, this is the DIR-24-8 layout used in
+routers.
+
+**Compressed tables**, after Poptrie (Asai and Ohara, SIGCOMM 2015). A direct root covers the first 16 to 20 bits, and
+each node below it decides 6 more. Instead of 64 entries, a node holds two 64-bit masks and two offsets, 24 bytes in
+all. One mask marks the slots that lead to another node; the other marks the slots where a run of equal answers starts.
+A popcount of a mask up to the slot gives the position among the node's children or answers. Leaf pushing leaves long
+runs of equal answers, and each run is stored once.
+
+Size, reads per lookup and build time, on top of a trie that is already built:
+
+| Structure | Real IPv4 | Real IPv6 |
+| --- | --- | --- |
+| Multi-level index, 16/8, threshold 8, for comparison | 36.7 MB, then 1.04 nodes | 26.8 MB, then 1.51 nodes |
+| Leaf-pushed, 16-bit root, 8-bit tables | 27.8 MB, 1.99 reads, 0.8 s | 50.9 MB, 4.56 reads, 1.5 s |
+| Leaf-pushed, 20-bit root, 4-bit tables | 13.6 MB, 1.92 reads, 0.5 s | |
+| Leaf-pushed, 24-bit root, 8-bit tables | 65.7 MB, 1.00 reads, 2.6 s | |
+| Leaf-pushed, 20-bit root, 8-bit tables | | 85.8 MB, 4.33 reads, 2.0 s |
+| Leaf-pushed, 16-bit root, 16-bit tables | | 4,064 MB, 183 s: impractical |
+| Compressed, 16-bit root | 12.1 MB, 3.76 reads, 1.2 s | 4.6 MB, 7.00 reads, 0.9 s |
+| Compressed, 18-bit root | 7.0 MB, 2.95 reads, 0.5 s | 4.5 MB, 6.41 reads, 0.5 s |
+| Compressed, 20-bit root | 11.8 MB, 2.84 reads, 1.0 s | 7.7 MB, 6.20 reads, 0.8 s |
+
+For compressed tables, the reads include the answer array.
+
+**Lookups.** BenchmarkDotNet, one session, one million precomputed keys (`RealFrozenLookup`). The "finding only" rows
+stop at the value index and skip reading the prefix and value. This session ran slower than earlier ones, so compare
+ratios rather than times.
+
+| Variant | Real IPv4 | Ratio | Real IPv6 | Ratio |
+| --- | --- | --- | --- | --- |
+| Read-write design: `SnapshotTrie`, multi-level, threshold 8 | 228 ms | 1.00 | 424 ms | 1.00 |
+| Leaf-pushed 16/8 | 95 ms | 0.42 ± 0.07 | 225 ms | 0.55 ± 0.09 |
+| Leaf-pushed 24/8 | 83 ms | 0.37 ± 0.06 | | |
+| Compressed, 18-bit root | 153 ms | 0.69 ± 0.12 | 296 ms | 0.72 ± 0.13 |
+| Compressed, 20-bit root | | | 325 ms | 0.79 ± 0.16 |
+| Multi-level index, finding only | 148 ms | 0.66 ± 0.13 | 342 ms | 0.83 ± 0.15 |
+| Leaf-pushed 16/8, finding only | 44 ms | 0.20 ± 0.04 | 117 ms | 0.28 ± 0.06 |
+| Leaf-pushed 24/8, finding only | 30 ms | 0.13 ± 0.02 | | |
+| Compressed 18, finding only | 59 ms | 0.26 ± 0.05 | 125 ms | 0.30 ± 0.09 |
+
+- **Leaf-pushed tables are the fastest**: 2.4 to 2.7 times faster than the read-write design on IPv4, and 1.9 times on
+  IPv6. The 16/8 shape is the better default. The 24/8 shape is only a little faster, for 2.4 times the memory and 3
+  times the build time, and suits only IPv4.
+- **Finding the answer is no longer the main cost.** Leaf-pushed 16/8 finds the value index in 44 ms of its 95 ms on
+  IPv4. The rest is reading the prefix and value from a 24 MB array at a random position, which misses the cache
+  whichever index found it.
+- **Compressed tables find answers nearly as fast, in a quarter to a tenth of the memory, but full lookups gain less.**
+  Finding took 59 against 44 ms on IPv4 and 125 against 117 ms on IPv6. The likely cause, not measured, is that each
+  compressed node takes a branch on the key, child or answer, and a mispredicted branch discards the work the processor
+  had already started on the next lookup, including its wait for the prefix and value. The finding-only rows have no
+  such wait to lose.
+
+**Reading only the value.** Many callers want only the value, such as the origin AS. Quick timings of a value-only lookup
+that reads from a dense array of values, 4 bytes each here, instead of the 24-byte prefix-and-value entries:
+
+| Variant | Real IPv4 | Real IPv6 |
+| --- | --- | --- |
+| Leaf-pushed 16/8, prefix and value | 85 to 87 ms | 188 to 212 ms |
+| Leaf-pushed 16/8, value only | 51 to 65 ms | 144 to 147 ms |
+| Leaf-pushed 16/8, finding only | 34 to 37 ms | 89 to 98 ms |
+| Compressed 18, prefix and value | 103 to 114 ms | 246 to 279 ms |
+| Compressed 18, value only | 76 to 91 ms | 128 to 197 ms |
+| Compressed 18, finding only | 33 to 43 ms | 65 to 73 ms |
+
+The value-only lookup was 12 to 54% faster, about 28% in the median pair of runs. Separate arrays would make a full lookup read two places instead of one, so
+a frozen type should keep the prefix-and-value array and add the dense value array beside it.
+
+**Memory.** Lookups read only the tables and the prefix-and-value array, so a frozen type can drop the nodes and prefix
+lengths. Computed from the array sizes:
+
+| Design | Real IPv4 | Real IPv6 |
+| --- | --- | --- |
+| `SnapshotTrie`, multi-level, threshold 8, measured | 113.2 MB | 64.0 MB |
+| Frozen, leaf-pushed 16/8 | 51.9 MB | 56.4 MB |
+| Frozen, leaf-pushed 24/8 | 89.8 MB | |
+| Frozen, compressed, 18-bit root | 31.1 MB | 10.0 MB |
+
+Without the nodes, a frozen type can still list its prefixes, but cannot answer queries that need the trie, such as
+every prefix that contains an address. Offering those means keeping the nodes too.
+
+**Updates.** Neither structure strictly requires freezing. Poptrie updates by rebuilding the part of the structure under
+the changed prefix and publishing it with one reference write, which fits the snapshot rules here. A prefix at least as
+long as the root rebuilds what lies under one root entry. A shorter one covers up to 2^(root bits − length) root
+entries: the short-prefix cost in [Open issues](#open-issues) again. This has not been built.
+
+**Not tried:** batch lookups that prefetch the prefix-and-value entry, since batching failed earlier only on a table
+that fit in cache; storing small values directly in the answer arrays; huge pages, as above.
+
 ## Recommendations for the production core
 
 1. **Use the node pool.** One struct array per address family, integer child indexes, and prefixes and values in a
@@ -447,6 +548,9 @@ For tables that change often:
    explaining why. It was about 30% faster end to end than `TryWriteBytes`. Use `TryWriteBytes` for IPv6, where
    `Address` throws. Do not read the private field; it is no faster and depends on runtime internals.
 8. **Do not add batch lookups or the other ideas** in [What did not help](#what-did-not-help).
+9. **Offer a frozen lookup** built from a loaded trie, with leaf-pushed 16/8 tables, which were 1.9 to 2.7 times faster
+   than the read-write design on the real tables. Offer compressed tables as the low-memory choice, and a value-only
+   lookup backed by a dense value array. See [Frozen tables](#frozen-tables).
 
 ## Open issues
 

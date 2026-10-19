@@ -428,9 +428,11 @@ pattern.
    the formatter.
 4. **Locking variants.** Add locking wrappers that cover every write method, which also fixes the gaps in today's
    `Concurrence*` classes.
-5. **Benchmarks.** Add IPv6 lookups and prefix queries to `PerformanceTest`. Compare against the current library in one
+5. **Frozen lookups.** Add a method that builds a read-only lookup from a loaded trie, with leaf-pushed tables and a
+   value-only lookup, as described under Frozen tables in [Optimization-Log.md](Optimization-Log.md).
+6. **Benchmarks.** Add IPv6 lookups and prefix queries to `PerformanceTest`. Compare against the current library in one
    session.
-6. **Packaging and documentation.** Set up the dependency-free core package, then update the README, the architecture
+7. **Packaging and documentation.** Set up the dependency-free core package, then update the README, the architecture
    document and CLAUDE.md.
 
 The core should end up about the same size as today's `NetworkPrefixLookupBase`, which it replaces. The adapters are
