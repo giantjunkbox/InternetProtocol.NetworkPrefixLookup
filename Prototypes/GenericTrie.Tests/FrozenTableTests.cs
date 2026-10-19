@@ -136,15 +136,27 @@ public class FrozenTableTests
     }
 
     [Test]
-    public void Real_IPv4_table_matches_the_node_walk() => RealTable(RealData.V4, 32);
+    public void Real_IPv4_table_matches_the_node_walk()
+    {
+        RequireRealData(); // before touching RealData, which throws without the data
+        RealTable(RealData.V4, 32);
+    }
 
     [Test]
-    public void Real_IPv6_table_matches_the_node_walk() => RealTable(RealData.V6, 128);
+    public void Real_IPv6_table_matches_the_node_walk()
+    {
+        RequireRealData(); // before touching RealData, which throws without the data
+        RealTable(RealData.V6, 128);
+    }
 
-    private static void RealTable<TKey>(RealData.Table<TKey> table, int width) where TKey : struct, IBitKey<TKey>
+    private static void RequireRealData()
     {
         if (Environment.GetEnvironmentVariable("ROUTEVIEWS_DIR") == null)
             Assert.Ignore("Set ROUTEVIEWS_DIR to run the real-data tests; see Prototypes/GenericTrie/download-routeviews.sh.");
+    }
+
+    private static void RealTable<TKey>(RealData.Table<TKey> table, int width) where TKey : struct, IBitKey<TKey>
+    {
 
         // the node walk was checked against the current library in SnapshotTrieTests and RealDataChecks
         var trie = Build(table.Bits, table.Lengths);

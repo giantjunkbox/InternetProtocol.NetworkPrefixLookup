@@ -258,6 +258,17 @@ public struct BitSet256
 
     public void Set(int bit) => Unsafe.Add(ref W0, bit >> 6) |= 1UL << (bit & 63);
 
+    public void Clear(int bit) => Unsafe.Add(ref W0, bit >> 6) &= ~(1UL << (bit & 63));
+
+    public readonly bool IsEmpty => (W0 | W1 | W2 | W3) == 0;
+
+    public readonly int PopCount() => BitOperations.PopCount(W0) + BitOperations.PopCount(W1) + BitOperations.PopCount(W2) + BitOperations.PopCount(W3);
+
+    /// <summary>The lowest set bit, or 256 when the set is empty.</summary>
+    public readonly int First() =>
+        W0 != 0 ? BitOperations.TrailingZeroCount(W0) : W1 != 0 ? 64 + BitOperations.TrailingZeroCount(W1)
+        : W2 != 0 ? 128 + BitOperations.TrailingZeroCount(W2) : W3 != 0 ? 192 + BitOperations.TrailingZeroCount(W3) : 256;
+
     /// <summary>The number of set bits at or below <paramref name="bit" />.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public readonly int Rank(int bit)

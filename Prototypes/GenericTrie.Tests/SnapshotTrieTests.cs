@@ -217,10 +217,18 @@ public class SnapshotTrieTests
     }
 
     [Test]
-    public void Real_IPv4_table_matches_the_current_library() => RealTable(RealData.V4, 32);
+    public void Real_IPv4_table_matches_the_current_library()
+    {
+        RequireRealData(); // before touching RealData, which throws without the data
+        RealTable(RealData.V4, 32);
+    }
 
     [Test]
-    public void Real_IPv6_table_matches_the_current_library() => RealTable(RealData.V6, 128);
+    public void Real_IPv6_table_matches_the_current_library()
+    {
+        RequireRealData(); // before touching RealData, which throws without the data
+        RealTable(RealData.V6, 128);
+    }
 
     private static void RealTable<TKey>(RealData.Table<TKey> table, int width) where TKey : struct, IBitKey<TKey>
     {
