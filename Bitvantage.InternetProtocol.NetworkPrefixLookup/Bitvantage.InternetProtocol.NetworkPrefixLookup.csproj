@@ -10,24 +10,16 @@
 		<PackageProjectUrl>https://github.com/Bitvantage/InternetProtocol.NetworkPrefixLookup</PackageProjectUrl>
 		<PackageIcon>icon.png</PackageIcon>
 		<RepositoryType>git</RepositoryType>
-		<PackageTags>network;networking;ip network;route;routes;routing;prefix;prefix table</PackageTags>
+		<PackageTags>network;networking;ip network;cidr;route;routes;routing;prefix;prefix table;longest prefix match;trie</PackageTags>
 		<VersionPrefix>2.0.0</VersionPrefix>
 		<FileVersion>2.0.0</FileVersion>
 		<AssemblyVersion>2.0.0</AssemblyVersion>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 		<PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
-		<Description>High-performance variable length network prefix lookup</Description>
+		<Description>High-performance longest-prefix-match lookups for IP networks and other fixed-width bit-string keys, with no dependencies</Description>
 		<Copyright>Copyright © Michael Crino 2024</Copyright>
 		<RepositoryUrl>https://github.com/Bitvantage/InternetProtocol.NetworkPrefixLookup.git</RepositoryUrl>
 	</PropertyGroup>
-
-	<ItemGroup>
-	  <Compile Remove="NetworkKey.cs" />
-	</ItemGroup>
-
-	<ItemGroup>
-	  <PackageReference Include="Bitvantage.InternetProtocol.NetworkPrefix" Version="2.0.*" />
-	</ItemGroup>
 
 	<ItemGroup>
 		<None Include="../README.md" Pack="true" PackagePath="" />
