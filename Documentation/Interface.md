@@ -1,9 +1,10 @@
-# Proposed Public Interface
+# Public Interface
 
 This document describes the public interface of the redesigned library: the generic core from
 [Abstraction-Study.md](Abstraction-Study.md), the frozen lookups from [Optimization-Log.md](Optimization-Log.md), and
-the IP layer on top. It is a design for review. Names are proposals, and [Status](#status) says which parts the
-prototype already implements.
+the IP layer on top. It began as a design for review; version 3 of the library now implements it, and
+[Status](#status) lists where the shipped interface differs from the proposal below. The XML documentation in the code
+is the reference for the shipped interface.
 
 ## Overview
 
@@ -185,8 +186,8 @@ A simpler route has since turned up in Go's BART, described in [Bart-Comparison.
 multibit nodes, updated by copying the node that changes and linking it in with one reference write. Writes are then
 bounded, readers stay lock-free, and the garbage collector frees replaced nodes, with no chunks or cleanup at all. The
 prototype, `BartTrie`, meets the targets below on the real tables and misses two: lookups on small tables that fit in
-cache, and garbage-collection pauses of up to 38 ms under heavy churn. It is the recommended route, pending a decision;
-the chunked design above is the fallback.
+cache, and garbage-collection pauses of up to 38 ms under heavy churn. It was the recommended route, and version 3 is
+built on it; the chunked design above was not built.
 
 **Targets.** These are what the prototype must show, with the same tail-latency test:
 
@@ -429,28 +430,28 @@ vendors.TryGetMatch(new Bits64(macAddress << 16), out var oui, out var vendor);
 
 ## Status
 
-| Part | State |
+Version 3 implements this interface. Where it differs from the proposal above:
+
+| Part | Shipped |
 | --- | --- |
-| `IBitKey<TSelf>` and the key types | In the prototype, `WideKeys.cs`, except `Bits64` and the new `Width` member |
-| Read-write lookups, `TryAdd`, removal, bulk load, `Compact`, garbage counts | In the prototype, `SnapshotTrie.cs` |
-| Frozen leaf-pushed and compressed lookups | In the prototype, `PooledTrie` in `FastTrie.cs` |
-| Value-only lookups | Timed with a dense value array; not yet a method |
-| Exact lookups, `GetMatches`, matches for a prefix, `GetOrAdd`, `AddOrUpdate`, enumeration | In today's library, not in the prototype |
-| Frozen tries without nodes, through parent links | Design only |
-| Internal writer lock | Design only |
-| Bounded writes | Prototyped as `BartTrie`, a BART-style core with copy-on-write nodes; results in [Bart-Comparison.md](Bart-Comparison.md#prototype-a-bart-style-read-write-core) |
-| Index entries that record only their own level's best match | Design only |
-| IP layer | Adapters and address conversion in the prototype; the layer itself is design only |
-| Range lookup, and the IPNetwork2, IPAddressRange and MaxMind packages | Design only; see [Adapter-Survey.md](Adapter-Survey.md) |
+| Read-write core | `BitTrie` is built on the BART-style design measured as `BartTrie`, not on chunks, so there is nothing to tune or compact: no `BitTrieOptions`, no `Compact`, and `BitTrieStatistics` has no garbage counts. Its constructor throws `NotSupportedException` for widths that are not a multiple of 8 |
+| Read-only core interface | Adds `TryGetValue(bits, length, out prefix, out value)`, an exact lookup that also returns the prefix object |
+| Frozen core | `FrozenBitTrie` keeps no nodes; parent links answer the other queries, as proposed. It exposes `Options` and `Bytes` |
+| IP layer options | `IPLookupOptions.MapIPv4MappedAddresses`, on by default, answers the open question below |
+| IP layer batches | `IPPrefixLookup.BeginBatch` returns a `Batch` that publishes each family atomically, IPv4 first |
+| Frozen IP lookups | A frozen class's protected constructor takes the read-write lookup to copy, so adapter packages can define their own pairs |
+| Value-less lookups | `NoValueLookupExtensions` adds `TryAdd(prefix)`, `Add(prefix)`, `TryGetMatch(address, out prefix)` and `ContainsMatch(address)` |
+| Ranges | As proposed, in `IPRangeLookup` and `FrozenIPRangeLookup`. `GetMatches` returns ranges smallest first and, with overlapping ranges, can need more than 129 entries |
+| Adapter packages | As in the table above. The MaxMind loader is `MaxMindDatabase.Load<T>`, which skips MaxMind's three IPv4 alias networks unless `IncludeAliasedNetworks` is set |
+| Package versions | Left at 2.0.0 in every project, for the owner to set |
 
 ## Open questions
 
-- **Package names**, and whether the core, the IP layer and the `IPNetwork` adapter ship as one package, as the study
-  recommends.
-- **IPv4-mapped IPv6 addresses**, such as `::ffff:10.1.2.3`. Today they are looked up in the IPv6 table. An option could
-  map them to IPv4. The MaxMind loader depends on this: mapping them lets it skip the aliased copies of the IPv4 networks
-  that MaxMind databases contain.
-- **A cleanup budget.** The design picks the amount of cleanup per write internally, from how much garbage there is.
-  Exposing it as an option would let applications trade memory for write latency.
+- **Package names.** Version 3 ships the core, the IP layer and the `IPNetwork` adapter as one package, as the study
+  recommends, and names each adapter package after the core with a suffix, such as
+  `Bitvantage.InternetProtocol.NetworkPrefixLookup.MaxMind`. Open to review.
+- **IPv4-mapped IPv6 addresses**, such as `::ffff:10.1.2.3`. Version 3 looks them up as IPv4 by default, through
+  `IPLookupOptions.MapIPv4MappedAddresses`, and the MaxMind loader skips the aliased copies of the IPv4 networks. The
+  default is open to review.
 - **Whether `Add` should exist** next to `TryAdd`, `AddOrUpdate` and `GetOrAdd`. It is there for familiarity with
   `Dictionary`.

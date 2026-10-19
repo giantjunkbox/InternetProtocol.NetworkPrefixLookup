@@ -420,33 +420,31 @@ pattern.
 
 ## Work plan
 
-1. **Bounded writes.** Prototyped: `BartTrie`, a BART-style core with copy-on-write nodes, beats `SnapshotTrie` on the
-   real tables and is recommended as the read-write core, pending a decision; see
-   [Bart-Comparison.md](Bart-Comparison.md#prototype-a-bart-style-read-write-core). Before building on it, try to close
-   its two gaps: small tables that fit in cache (a rank cache per node and branch-free level steps) and allocation per
-   write (copying one of a node's arrays instead of the whole node).
-2. **Core.** Build `BitTrie` on `IBitKey<TSelf>` from `BartTrie` in the prototype, with the frozen tables of
-   `PooledTrie` built from it. Bring it to feature parity: remove,
-   longest match by prefix, all matches, clear and count. Follow the concurrency rules in that log for array growth,
-   removal and publishing the index. Write unit tests directly against the core, including at least one non-IP key
-   width.
-3. **IP layer.** Add the dual-stack lookup, `IPAddress` conversions, the `IPNetwork` and `NetworkPrefix` adapters, the
-   range lookup and a formatter. Port `ToTextTree` and `ToDotTree` onto the formatter.
-4. **Port the tests.** Rewrite the existing 19 tests against the new API, keeping their tree-shape assertions through
-   the formatter.
-5. **Writer lock.** Serialize writes with an internal lock, as proposed in [Interface.md](Interface.md). That replaces
-   today's `Concurrence*` classes and fixes their gaps.
-6. **Frozen lookups.** Add a method that builds a read-only lookup from a loaded trie, with leaf-pushed tables and a
-   value-only lookup, as described under Frozen tables in [Optimization-Log.md](Optimization-Log.md).
-7. **Benchmarks.** Add IPv6 lookups and prefix queries to `PerformanceTest`. Compare against the current library and
-   Bart.NET in one session, as `RealBartBenchmarks` in the prototype does.
-8. **Third-party adapters.** Add the IPNetwork2, IPAddressRange and MaxMind packages listed in
-   [Adapter-Survey.md](Adapter-Survey.md). Benchmark the MaxMind loader against MaxMind's own reader first.
-9. **Packaging and documentation.** Set up the dependency-free core package, then update the README, the architecture
-   document and CLAUDE.md.
+Status after building version 3 of the library:
 
-The core should end up about the same size as today's `NetworkPrefixLookupBase`, which it replaces. The adapters are
-a few lines each.
+1. **Bounded writes.** Done. The library's `BitTrie` follows the `BartTrie` prototype, a BART-style core with
+   copy-on-write nodes; see [Bart-Comparison.md](Bart-Comparison.md#prototype-a-bart-style-read-write-core). Of the
+   remedies for small tables, a rank cache per node and pruned backtracking were measured and did not help; see
+   [Remedies tried](Bart-Comparison.md#remedies-tried). Branch-free level steps and copying one of a node's arrays
+   instead of the whole node are still untried.
+2. **Core.** Done: `Core/BitTrie.cs` and `Core/FrozenBitTrie.cs`, with remove, longest match by prefix, all matches,
+   exact lookups, clear, count, batches and a version number. The tests run every query against a reference for 16-,
+   32-, 64-, 128- and 192-bit keys.
+3. **IP layer.** Done, with the dual-stack lookup, `IPAddress` conversions, the `IPNetwork` adapter, the range lookup
+   and address formatting for `ToTextTree` and `ToDotTree`. The `NetworkPrefix` adapter is its own package.
+4. **Port the tests.** Done. The 19 tests of version 2 asserted the shape of the binary trie, which no longer exists;
+   their scenarios became lookup assertions, and shape is checked by comparing `ToTextTree` output between insertion
+   orders and after removals.
+5. **Writer lock.** Done: an internal re-entrant lock replaces the `Concurrence*` classes.
+6. **Frozen lookups.** Done: leaf-pushed and compressed tables, a value-only lookup, and parent links instead of nodes
+   for the other queries.
+7. **Benchmarks.** Done in `PerformanceTest`: the version 2 benchmarks on the same data, and IPv4 and IPv6 lookups and
+   builds on the real tables. Version 2 cannot run in the same process, because the two assemblies share a name, so
+   that comparison spans two runs. The Bart.NET comparison stays in the prototype.
+8. **Third-party adapters.** Done: the IPNetwork2, IPAddressRange and MaxMind packages, with a MaxMind loader that is
+   checked against MaxMind's reader.
+9. **Packaging and documentation.** Done: four adapter packages beside the dependency-free core, and an updated README,
+   [Architecture.md](Architecture.md) and CLAUDE.md. The package versions were left at 2.0.0 for the owner to set.
 
 ## Risks
 

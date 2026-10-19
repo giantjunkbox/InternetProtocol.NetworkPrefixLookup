@@ -280,8 +280,14 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
         /// <summary>Discards the batch's changes unless it was committed.</summary>
         public void Dispose()
         {
-            _v6.Dispose();
-            _v4.Dispose();
+            try
+            {
+                _v6.Dispose();
+            }
+            finally
+            {
+                _v4.Dispose();
+            }
         }
     }
 

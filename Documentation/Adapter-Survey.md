@@ -35,6 +35,9 @@ that take strings, or has fewer than 70,000 downloads.
 
 ## Recommended packages
 
+All three are built in version 3, as `Bitvantage.InternetProtocol.NetworkPrefixLookup.IPNetwork2`,
+`….IPAddressRange` and `….MaxMind`, beside `….NetworkPrefix` for this project's own prefix type.
+
 ### IPNetwork2
 
 `System.Net.IPNetwork2` is a class with `Network` (an `IPAddress`), `Cidr` (a `byte`) and `AddressFamily`. Version 3.0
@@ -42,11 +45,11 @@ renamed the class from `System.Net.IPNetwork`, which clashes with the built-in t
 on .NET 10. The adapter is four lines, like the `IPNetwork` one:
 
 ```csharp
-public struct IPNetwork2Adapter : IIPPrefixAdapter<IPNetwork2>
+public readonly struct IPNetwork2Adapter : IIPPrefixAdapter<IPNetwork2>
 {
     public static bool IsIPv4(IPNetwork2 prefix) => prefix.AddressFamily == AddressFamily.InterNetwork;
-    public static uint GetIPv4Bits(IPNetwork2 prefix) => IPBits.V4(prefix.Network);
-    public static UInt128 GetIPv6Bits(IPNetwork2 prefix) => IPBits.V6(prefix.Network);
+    public static uint GetIPv4Bits(IPNetwork2 prefix) => IPAddressBits.ToIPv4Bits(prefix.Network);
+    public static UInt128 GetIPv6Bits(IPNetwork2 prefix) => IPAddressBits.ToIPv6Bits(prefix.Network);
     public static int GetLength(IPNetwork2 prefix) => prefix.Cidr;
 }
 ```
@@ -79,14 +82,16 @@ a time and decodes the record on every lookup, while a frozen lookup returns an 
 few table entries. That should be much faster, but it is not measured, and it costs memory for every decoded record.
 Two details need care:
 
-- **Aliases.** In a database with an IPv6 tree, the IPv4 networks are also reachable under `::ffff:0:0/96` and
-  `2002::/16`, and `FindAll` returns each of those copies as an IPv6 network. Keeping them roughly doubles the IPv4
-  part of the table. Skipping them is smaller, but then IPv4-mapped addresses must be looked up as IPv4, which is an
-  open question in [Interface.md](Interface.md#open-questions).
+- **Aliases.** In a database with an IPv6 tree, MaxMind's writer makes the IPv4 networks reachable under
+  `::ffff:0:0/96`, `2001::/32` and `2002::/16` too, and `FindAll` returns each of those copies as an IPv6 network.
+  Keeping them stores the IPv4 part of the table four times. The loader skips them by default and looks up
+  IPv4-mapped addresses as IPv4; see [Interface.md](Interface.md#open-questions).
 - **Shared records.** `FindAll` caches decoded records by their position in the file, up to its `cacheSize`
   argument, so many networks share one object. The loader should pass a cache large enough for the database.
 
-Benchmark the loader against MaxMind's own reader on a GeoLite2 database before publishing it.
+`MaxMindBenchmarks` in `PerformanceTest` compares the loader with MaxMind's reader on MaxMind's small GeoIP2 Country
+test database; [Architecture.md](Architecture.md#performance) has the numbers. A GeoLite2 database, which needs a
+MaxMind account to download, has not been measured.
 
 ## No package needed
 

@@ -440,9 +440,15 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
             _lookup = null;
             try
             {
-                _v4.Commit();
-                _v6.Commit();
-                lookup._batch = false;
+                try
+                {
+                    _v4.Commit();
+                }
+                finally
+                {
+                    _v6.Commit();
+                }
+
                 Volatile.Write(ref lookup._published, lookup._pending);
             }
             finally
@@ -460,8 +466,15 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
             _lookup = null;
             try
             {
-                _v6.Dispose();
-                _v4.Dispose();
+                try
+                {
+                    _v6.Dispose();
+                }
+                finally
+                {
+                    _v4.Dispose();
+                }
+
                 lookup._pending = lookup._published;
             }
             finally

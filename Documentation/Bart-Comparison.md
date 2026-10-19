@@ -256,4 +256,7 @@ routing tables, a quarter of the memory, bounded writes, and no compaction or gr
 small cache-resident tables and allocation under heavy churn. The lookup remedies tried did not help; copying smaller
 pieces of a node is still untried for the allocation. The recommendation
 is to adopt it as the read-write core, with those two items as the next optimization steps and the frozen tables on
-top. That decision is still open.
+top.
+
+Version 3 of the library follows this recommendation: its `BitTrie` is a production version of `BartTrie`, described in
+[Architecture.md](Architecture.md).

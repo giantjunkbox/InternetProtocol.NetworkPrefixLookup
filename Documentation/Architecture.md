@@ -1,0 +1,352 @@
+# Architecture
+
+This document describes how version 3 of `Bitvantage.InternetProtocol.NetworkPrefixLookup` stores prefixes and answers
+longest-prefix-match queries. It is written for people who want to change the internals. For usage see the
+[README](../README.md); for the design history see [Abstraction-Study.md](Abstraction-Study.md),
+[Bart-Comparison.md](Bart-Comparison.md) and [Interface.md](Interface.md). Version 2 is described in
+[Architecture-v2.md](Architecture-v2.md).
+
+## Contents
+
+1. [Purpose and packages](#purpose-and-packages)
+2. [Repository layout](#repository-layout)
+3. [Layers](#layers)
+4. [Keys](#keys)
+5. [The read-write trie](#the-read-write-trie)
+6. [Writes, batches and readers](#writes-batches-and-readers)
+7. [The frozen trie](#the-frozen-trie)
+8. [The IP layer](#the-ip-layer)
+9. [Ranges](#ranges)
+10. [Adapter packages](#adapter-packages)
+11. [Diagnostics](#diagnostics)
+12. [Performance](#performance)
+13. [Testing and benchmarking](#testing-and-benchmarking)
+14. [Limitations](#limitations)
+
+## Purpose and packages
+
+The library answers one question quickly: given a key such as an IP address, which stored prefix is the most specific
+one that contains it? It can also return every stored prefix that contains a key, find the longest stored prefix that
+contains a given prefix, and look prefixes up exactly.
+
+| Package | Contents | Depends on |
+| --- | --- | --- |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup` | The keys, the core tries, the IP layer, range lookups, and `IPNetworkLookup` for `System.Net.IPNetwork` | Nothing |
+| `….NetworkPrefixLookup.NetworkPrefix` | `NetworkPrefixLookup<TValue>` and the value-less `NetworkPrefixLookup` | `Bitvantage.InternetProtocol.NetworkPrefix` |
+| `….NetworkPrefixLookup.IPNetwork2` | `IPNetwork2Lookup<TValue>` | `IPNetwork2` |
+| `….NetworkPrefixLookup.IPAddressRange` | `IPAddressRangeLookup<TValue>`, a range lookup | `IPAddressRange` |
+| `….NetworkPrefixLookup.MaxMind` | `MaxMindNetworkLookup<TValue>` and `MaxMindDatabase.Load` | `MaxMind.Db` |
+
+[Adapter-Survey.md](Adapter-Survey.md) explains why these libraries get packages. All projects target .NET 10 only.
+
+## Repository layout
+
+| Path | Contents |
+| --- | --- |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup/Keys/` | `IBitKey<TSelf>` and `Bits32`, `Bits64`, `Bits128`, `Bits192` |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup/Core/` | `BitTrie`, `FrozenBitTrie`, `IReadOnlyBitTrie`, `BitSet256` and the ART tables, `PrefixEntry`, `NoValue` |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup/IP/` | Adapter interfaces, `IPAddressBits`, `IPPrefixLookup`, `IPRangeLookup`, their frozen forms, `IPNetworkLookup` |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup.*/` | One adapter package each |
+| `Test/` | NUnit tests: `Core/`, `IP/`, `Adapters/`, and MaxMind test databases in `Data/` |
+| `PerformanceTest/` | BenchmarkDotNet benchmarks and a memory report |
+| `Prototypes/GenericTrie/` | The prototypes the design was measured with; not part of the solution |
+
+`IPPrefixLookup` and `FrozenIPPrefixLookup` share their read-only members word for word, as do `IPRangeLookup` and
+`FrozenIPRangeLookup`. The classes differ only in the type of their two cores, and keeping concrete field types lets
+the JIT call the cores directly instead of through an interface. A change to one class's lookups must be made to the
+other too; a comment in each says so.
+
+## Layers
+
+| Layer | Types | Knows about |
+| --- | --- | --- |
+| IP layer | `IPPrefixLookup`, `IPRangeLookup`, `IPNetworkLookup`, the adapter packages, their frozen forms | `IPAddress`, address families, the caller's prefix or range type |
+| Core | `BitTrie<TKey, TPrefix, TValue>`, `FrozenBitTrie<TKey, TPrefix, TValue>` | Bits and lengths only |
+| Keys | `IBitKey<TSelf>` and the four key types | Bit arithmetic for one fixed width |
+
+The core stores a *prefix object* and a *value* with each prefix. The prefix object is whatever the caller wants back
+from a lookup: the IP layer stores the caller's `IPNetwork`, `NetworkPrefix` or range. Routing tables and the core
+never create prefix objects, so diagnostics take a formatter for bits and lengths instead.
+
+Both forms of every layer implement one read-only interface, `IReadOnlyBitTrie` in the core and
+`IReadOnlyIPPrefixLookup` in the IP layer, so code that only reads accepts either. Lookups return the prefix and value
+through `out` parameters, as decided in [Abstraction-Study.md](Abstraction-Study.md).
+
+## Keys
+
+A key is a fixed-width bit string, left-aligned: bit 0 is the most significant bit. `IBitKey<TSelf>` has only static
+members, so each key type is a struct the JIT compiles into plain instructions. Widths must be multiples of 8 from 8
+to 256, because the trie consumes 8 bits per level. The shipped types are `Bits32` (IPv4), `Bits64`, `Bits128` (IPv6)
+and `Bits192` (IPv6 plus 64 bits of context). A user type needs nine members; `GetTopBits` and `FromTopBits` have
+default implementations. The test project's `Bits16` is written that way.
+
+Operations past the end of the key read zeros. The frozen tables rely on that: a last table narrower than the others
+reads padding bits as zeros.
+
+## The read-write trie
+
+`BitTrie` follows Go's BART (Balanced ART): a multibit trie with 8-bit strides, where each node keeps its contents in
+popcount-compressed arrays indexed through 256-bit sets.
+
+### A node
+
+```text
+Node
+  BitSet256 Prefixes   PrefixEntries[]   prefixes that end inside this node's stride, relative length 0 to 7
+  BitSet256 Fringes    FringeEntries[]   prefixes that end exactly at the end of the stride, relative length 8
+  BitSet256 Kids       KidNodes[]        child nodes, one per octet that leads to two or more longer prefixes
+  BitSet256 Leaves     LeafEntries[]     lone longer prefixes, stored whole with their bits, mask and length
+  int Count, int Stamp, byte Shared      writer bookkeeping
+```
+
+A node at depth `d` covers key bits `8d` to `8d + 7`. An array holds one element per set bit, in bit order, so the
+element for bit `b` is at `Rank(b) - 1`, where `Rank` counts the set bits at or below `b` with four popcounts.
+
+**Prefixes inside a stride** use Knuth's ART base indexes: the prefixes of relative length 0 to 7 form a complete
+binary tree numbered 1 to 255, where index `i` has children `2i` and `2i + 1`. The longest prefix inside a stride that
+contains octet `o` is index `(o >> 1) + 128`. `ArtTables.Ancestors[i]` is the set of `i` and all its ancestors, so the
+longest stored prefix containing an octet is the highest set bit of `Prefixes AND Ancestors[(o >> 1) + 128]`: one AND
+and a leading-zero count per word.
+
+**Fringes** are prefixes of relative length 8: they cover one whole octet. Storing them in the parent, as BART does,
+saves a node per fringe.
+
+**Leaves** are path compression. A prefix longer than the stride whose octet leads to no other prefix is stored
+whole in a leaf, instead of in a chain of nodes. A lookup that reaches a leaf checks the key against it with one masked
+comparison.
+
+### The canonical shape
+
+The shape depends only on the set of stored prefixes, never on the order of writes:
+
+- A child node exists at an octet exactly when two or more stored prefixes lie below that octet, longer than the
+  stride.
+- A single prefix below an octet is a leaf.
+- Prefixes of relative length 0 to 7 are base indexes, and length 8 is a fringe, in the node of their stride.
+
+Insertion turns a leaf into a child node when a second prefix arrives below its octet. Removal reverses it: a child
+left with one prefix becomes a leaf in its parent, an empty child disappears, and the check repeats upward. The tests
+compare `ToTextTree` output after shuffled, reversed and batched insertion, and after removal against never adding.
+
+### Lookup
+
+`Find` walks down while the key's next octet has a child node, pushing each node on a stack (an inline array of 17
+nodes for keys up to 128 bits, 33 above that). If the last node has a leaf at the key's octet and the leaf matches, that
+is the answer. Otherwise it backtracks from the deepest node up: in each node a fringe at the key's octet beats any
+prefix inside the stride, then the `Prefixes AND Ancestors` test finds the longest base index. The first hit is the
+longest match.
+
+For keys of 16 bits or more, a 65,536-slot **shortcut table** holds, for every value of the first 16 bits, the node at
+depth 1 and the node at depth 2 on that path, or null. A lookup starts there and skips the first two levels. Writes that
+replace a node at depth 1 refresh the 256 slots under its first octet; writes at depth 2 refresh one slot.
+
+The other queries reuse the walk:
+
+| Query | How |
+| --- | --- |
+| `TryGetMatch(bits, length)` | As `Find`, but only prefixes no longer than `length` count, so the walk stops descending at the node that holds `length` |
+| `TryGetValue`, `ContainsPrefix` | Descend to the node of the prefix's stride and test one base index, fringe or leaf |
+| `GetMatches` | As `Find`, but collects every hit while backtracking, walking each node's base indexes `i, i/2, …, 1` |
+| Enumeration | Depth-first, in address order: at each octet the base indexes that start there, shortest first, then the fringe, the leaf and the child |
+
+## Writes, batches and readers
+
+### Copy-on-write
+
+A write never changes a node that readers can reach, with one exception: storing a child reference in a parent's
+`KidNodes` array, which is a single reference write. To change a node, the writer copies it (`MemberwiseClone`, so the
+copy shares the four arrays), changes the copy, and links the copy into the parent with `Volatile.Write`. The garbage
+collector frees the replaced node once no reader holds it, so there is no compaction, no growth step and no free list.
+Every write therefore does bounded work: one node and one array of at most 256 elements copied at the level that
+changes, and one more node per level when a canonical collapse moves a prefix up. The number of levels is at most the
+key width divided by 8, whatever the table's size.
+
+Two fields make the copying cheap:
+
+- **`Stamp`** names the write or batch that created a node. A node whose stamp is the current one is private to the
+  writer and changes in place. Every single write and every batch takes a new stamp.
+- **`Shared`** has one bit per array. A copied node starts with all four set, because it shares its arrays with the
+  original. In a private node, an array marked shared is replaced by an exact-size copy before its first change, and
+  an array that is not shared changes in place, growing by doubling. A node that is not private is never changed, so
+  its bits do not matter until the next copy sets them all again.
+
+`Count` on each node is the number of prefixes in its subtree, used by removal to find nodes that must collapse. Only
+the writer reads it; the root's count is the trie's `Count`.
+
+### What readers see
+
+`_published` holds an object with the root and the shortcut table. Readers read it once per call. A single write
+outside a batch updates the root reference or a child reference, and then the table slots, in place. A batch commit and
+`Clear` build a new root and a new table privately and publish both with one reference write.
+
+- Each lookup sees the trie as it was before or after any single write. A write changes one prefix and touches one
+  path, so a reader that combines a newer table slot with an older root, or the reverse, still gets an answer that was
+  correct before or after that write. Slots are written in an order that never shows a depth-2 node without its depth-1
+  node.
+- A batch is all or nothing. Readers keep seeing the published root and table until the commit replaces both at once.
+- Enumeration during writes sees each entry whole, but is not a snapshot of the whole trie at one instant.
+
+### The writer lock
+
+Writes take an internal `System.Threading.Lock`, so there is no separate concurrent class. The lock is re-entrant,
+which batches rely on: `BeginBatch` holds it until `Commit` or `Dispose`, and writes made in the batch enter it again.
+A batch must therefore end on the thread that started it.
+
+### Batches
+
+During a batch the writer works on `_w`, a root that readers cannot see. A change copies every node on its path up to
+that root, because changing a published parent in place would be visible. Subtree counts are adjusted only after those
+copies exist, so an abandoned batch leaves the published nodes untouched. `Commit` trims the private nodes' arrays to
+exact size, marks them shared, builds the new shortcut table and publishes. `Dispose` without `Commit` points `_w`
+back at the published root. Constructing a trie from a sequence is a batch.
+
+`Version` counts published changes: one per write outside a batch, one per commit, one per `Clear`.
+
+## The frozen trie
+
+`BitTrie.Freeze` builds a `FrozenBitTrie`, read-only, with lookup tables that would be too costly to keep current
+under writes. It holds no nodes:
+
+| Array | Contents |
+| --- | --- |
+| `_entries` | The prefix object and value of each prefix, in address order |
+| `_values` | A dense copy of the values, for `TryGetMatchValue`, unless `ValueOnlyLookups` is off |
+| `_lengths` | Each prefix's length |
+| `_parents` | For each prefix, the nearest shorter stored prefix that contains it, or -1 |
+| `_root` and `_tables`, or `_root`, `_nodes` and `_answers` | The lookup tables of one of two layouts |
+
+A table entry is an entry index + 1, 0 for no match, or, with the top bit set, the start of a child table or the index
+of a compressed node.
+
+**Leaf-pushed**, the default: a root table over the first 16 bits and child tables of 8 bits wherever a block still
+holds a longer prefix. Every other entry holds the final answer for its whole block, so a lookup reads only tables.
+`RootBits` and `TableBits` choose other shapes, such as 24/8 for IPv4.
+
+**Compressed**, after Poptrie: a root over the first 18 bits, then nodes that each decide 6 bits. A node is two 64-bit
+masks and two offsets: one mask marks the slots that lead to a child node, the other the slots where a run of equal
+answers starts. A popcount up to the slot finds the child or the answer.
+
+**Building** reads the entries in address order, where a containing prefix always comes before the prefixes inside
+it. For a block of keys, `FillAnswers` writes each entry that ends within the next table's bits over the slots it
+covers; because of that order, a later entry that overlaps an earlier one lies inside it and rightly wins. The entries
+longer than that form one contiguous run per slot (`Runs`), and each run becomes a child table or node, built the same
+way. The `_parents` links come from one pass with a stack of open containing prefixes.
+
+**Queries without nodes.** Every stored prefix that contains a prefix also contains its first address, so it lies on
+the parent chain from that address's longest match:
+
+- `GetMatches` follows the chain from the longest match.
+- `TryGetMatch(bits, length)` follows it to the first entry no longer than `length`.
+- `TryGetValue` and `ContainsPrefix` do the same and check that the length is equal.
+
+Freezing holds the source trie's writer lock while it reads, so writes wait; readers of the source are not affected.
+
+## The IP layer
+
+`IPPrefixLookup<TPrefix, TAdapter, TValue>` holds a `BitTrie<Bits32, …>` for IPv4 and a `BitTrie<Bits128, …>` for IPv6
+and routes each call by family. `TAdapter` is a struct implementing `IIPPrefixAdapter<TPrefix>`, whose static members
+read a prefix's family, network bits and length. Generic code over a struct is specialized by the JIT, so reading the
+caller's type costs no indirection.
+
+- **Addresses** convert without allocating: IPv4 through the obsolete `IPAddress.Address` property, which was about
+  30% faster end to end than `TryWriteBytes`, and IPv6 through `TryWriteBytes` into a stack buffer. The span, `uint` and
+  `UInt128` overloads skip `IPAddress` entirely. `IPAddressBits` exposes the conversions for adapter authors.
+- **IPv4-mapped addresses** such as `::ffff:10.1.2.3` are looked up as IPv4 when `IPLookupOptions.MapIPv4MappedAddresses`
+  is on, the default. Prefixes are always stored and looked up as given.
+- **Batches** begin a batch on both tries. On commit each family publishes atomically, IPv4 first.
+- **`Version`** is the sum of the two tries' versions, which changes whenever either does.
+- **Concrete classes** such as `IPNetworkLookup<TValue>` fix the prefix and adapter types, and redeclare `Freeze` with
+  `new` to return their own frozen class. A frozen class's protected constructor takes the read-write lookup, so
+  adapter packages can define their own pairs.
+- Null prefixes are rejected without boxing struct prefixes.
+
+## Ranges
+
+`IPRangeLookup<TRange, TAdapter, TValue>` stores ranges with a first and a last address. `IIPRangeAdapter<TRange>`
+reads the two ends.
+
+- **Pieces.** A range is stored as the fewest prefixes that cover it exactly: from the first address, repeatedly the
+  largest aligned block that fits. That is one prefix for a CIDR block, at most 62 for IPv4 and 254 for IPv6.
+- **Claims.** Each piece's prefix object is the winning range, and its value is a `RangePiece`: the winner's value and,
+  rarely, the other ranges that split into exactly the same piece, smallest first. A lookup reads the winner directly,
+  as fast as a prefix lookup.
+- **Nesting.** An address in nested ranges gets the inner range, because the inner range's covering piece is longer or,
+  when the pieces are identical, the inner range is the smaller claim. Removing a range removes its claims, uncovering
+  the others. Partly overlapping ranges get whichever range's covering piece is longer.
+- **The range list.** An `ImmutableSortedDictionary` keyed by family, first and last address answers `Count`,
+  enumeration, `TryGetValue`, `ContainsPrefix` and `Remove`. The writer keeps its own view, which runs ahead of the
+  published one during a batch.
+- **`TryGetMatch(range)`** returns the smallest stored range that contains the whole range. Every stored range that
+  contains it has a piece containing its first address, so the candidates are the claims on that address's matches.
+- **Writes** take the range lookup's own lock, then the tries' locks. A range of several pieces changes them one at a
+  time; a batch publishes them together.
+
+## Adapter packages
+
+Each package defines an adapter struct and a read-write and frozen class pair. Two need more than that:
+
+- **NetworkPrefix** adds the value-less `NetworkPrefixLookup`, deriving from `NetworkPrefixLookup<NoValue>`.
+  `NoValueLookupExtensions` in the core adds `TryAdd(prefix)`, `Add(prefix)`, `TryGetMatch(address, out prefix)` and
+  `ContainsMatch(address)` for any value-less lookup.
+- **MaxMind** adds `MaxMindDatabase.Load<T>`, which reads every network through `Reader.FindAll<T>` into one batch.
+  MaxMind's IPv6 databases point `::ffff:0:0/96`, `2001::/32` and `2002::/16` at the IPv4 networks, so a full walk
+  returns every IPv4 network four times. The loader skips the three aliases by default; with IPv4-mapped addresses
+  mapped, `::ffff:` addresses still find their IPv4 network. `IncludeAliasedNetworks` loads them for exact agreement
+  with `Reader.Find`, which the tests check at every network boundary of two MaxMind test databases.
+
+## Diagnostics
+
+`ToTextTree(format)` prints one line per base-index prefix, fringe, leaf and child node, indented by depth, with each
+node's prefix count. Equal text means equal shape, which the tests use to check the canonical shape. The IP layer's
+`ToTextTree(AddressFamily)` formats bits as addresses:
+
+```text
+prefix 0.0.0.0/0
+fringe 10.0.0.0/8
+node 10.0.0.0/8, 3 prefixes
+  fringe 10.1.0.0/16
+  node 10.1.0.0/16, 2 prefixes
+    fringe 10.1.1.0/24
+    fringe 10.1.2.0/24
+leaf 192.168.0.0/16
+```
+
+`ToDotTree` writes Graphviz DOT. `GetStatistics` counts prefixes and nodes and estimates bytes; `FrozenBitTrie.Bytes`
+sums its arrays.
+
+## Performance
+
+Measurements are being taken and will be added here.
+
+## Testing and benchmarking
+
+```sh
+dotnet test Test -c Release                                    # all tests, about 2 minutes
+dotnet run -c Release --project PerformanceTest                # all benchmarks
+dotnet run -c Release --project PerformanceTest -- --filter '*RandomTable*'
+dotnet run -c Release --project PerformanceTest -- --memory    # memory per form and bytes allocated per lookup
+```
+
+Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it only `RandomTableBenchmarks` runs.
+
+| Test class | What it checks |
+| --- | --- |
+| `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 16-, 32-, 64-, 128- and 192-bit keys, before and after removals; canonical shape; batches commit and discard; `Version`; lock-free readers during churn; concurrent writers |
+| `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; IPv4-mapped addresses; writes and batches; a reader during churn |
+| `IP/IPRangeLookupTests` | Exact coverage, the fewest pieces, nested ranges and removal, random nested ranges against brute force, batches, the frozen form |
+| `Adapters/AdapterTests` | Each adapter package in both forms; MaxMind databases against `Reader.Find` |
+
+## Limitations
+
+- **Garbage under heavy churn.** Copy-on-write allocates about 1.4 KB per write on the real IPv4 table, mostly the copied
+  array of the changed node. In the prototype a million writes at full speed caused 195 collections and pauses of up to
+  38 ms. At ordinary routing-table update rates this is rare; copying smaller pieces would reduce it.
+- **Small tables that fit in cache** look up about three times slower than in the prototype's binary trie with a
+  16-bit index, because a lookup walks several levels and backtracks. Freeze such tables.
+- **Freezing blocks writers** for its duration: 0.2 to 1 second on the real tables.
+- **Batches are atomic per address family**, not across both.
+- **Range writes** outside a batch change a range's pieces one at a time.
+- **Enumeration is not a snapshot** while writes run.
+
+The known issues of version 2, listed in [Architecture-v2.md](Architecture-v2.md#known-issues), do not apply: the code
+they describe is gone, and the tests cover `Count`, removal of absent prefixes, `Clear`, `GetOrAdd` and enumeration.

@@ -22,7 +22,8 @@ from the master branch of torvalds/linux on 2026-10-19:
   atomically, or aborts it. `BartTrie`'s bulk load is now such a batch; an aborted one leaves no trace.
 - **Worth borrowing next:** a version number for validating cached results, as IPv6 routes have; a per-node "shortest
   prefix below" for pruning lookups, as `fib_trie` keeps; and shared values, as routes share their attributes. The
-  version number is now in `BartTrie`. Pruning was tried and made lookups slower.
+  version number is now in `BartTrie` and the library. Pruning was tried and made lookups slower. Shared values save
+  too little in .NET to be worth their code.
 
 ## What Linux does
 
@@ -100,7 +101,7 @@ ranges, used for virtual memory areas, with lock-free readers and locked writers
 | Atomic batches with commit and abort | nftables | **Borrowed**: `BartTrie.AbortBulkLoad` discards a bulk load that readers never saw; tested |
 | A version number for validating cached results | IPv6 `fn_sernum` | **Borrowed**: `BartTrie.Version` counts published changes |
 | Shortest prefix below each node, to prune lookups | IPv4 suffix length | **Tried, slower**: pruned backtracking in `BartTrie` made lookups 6 to 26% slower; see [Bart-Comparison.md](Bart-Comparison.md#remedies-tried) |
-| Shared values | `fib_info`, nexthop objects | **Recommended for frozen tables**: the real IPv4 table has 1,054,037 prefixes but only 78,196 distinct origin values, so a frozen table can store a small index per prefix into a deduplicated value array |
+| Shared values | `fib_info`, nexthop objects | **Evaluated, not adopted**; see [Shared values](#shared-values) |
 | Two-step lookups, such as destination then source | IPv6 subtrees, ipset `hash:net,net` | **Later**: composes from today's API, a lookup whose values are lookups |
 | One comparison per step on path-compressed binary nodes | IPv4 `get_cindex` | **Not now**: would help `SnapshotTrie`, which the BART-style core is set to replace |
 | Adaptive node width | IPv4 `resize()` | **No**: fixed 8-bit strides with popcount compression get the memory benefit without resize logic |
@@ -113,3 +114,22 @@ ranges, used for virtual memory areas, with lock-free readers and locked writers
 One lesson from Linux's history also supports this project's direction. The IPv4 routing cache, a hash table of
 recent results in front of the trie, was removed in Linux 3.6, in part because a flood of distinct destinations could
 fill it. Making the lookup itself fast, as this project does, avoids that exposure.
+
+## Shared values
+
+Linux shares route attributes because each route would otherwise own a copy of a structure of a hundred bytes or more.
+In .NET the question is different. A value of a reference type is already a shared reference; only equal but distinct
+objects could be merged, and the caller can merge those while loading, as `MaxMindDatabase.Load` gets for free from
+MaxMind's record cache. That leaves small value types, the common case for routing tables, where the frozen table's
+dense value array is the only copy that sharing could shrink. On the real IPv4 table, with `int` origin AS numbers
+(1 MB = 2^20 bytes):
+
+| Layout of the values | Size |
+| --- | --- |
+| Dense array, one `int` per prefix, as shipped | 4.0 MB |
+| One `int` index per prefix into 78,196 distinct values | 4.3 MB |
+| One 3-byte index per prefix into 78,196 distinct values | 3.3 MB |
+
+The best case saves 0.7 MB of a 62 MB frozen table, about 1%, and costs a second dependent load on every value-only
+lookup, which is the lookup the dense array exists to speed up. Sharing pays only for large struct values, and a caller
+with those can store an index or a reference instead. So the library does not share values.

@@ -1,4 +1,7 @@
-# Architecture
+# Architecture of version 2
+
+> This document describes version 2, the path-compressed binary trie that version 3 replaced. It is kept for its
+> measurements and as the record of what changed. The current design is in [Architecture.md](Architecture.md).
 
 This document describes how `Bitvantage.InternetProtocol.NetworkPrefixLookup` stores network prefixes and answers
 longest-prefix-match queries. It is written for people who want to change the internals, in particular to make

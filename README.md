@@ -1,68 +1,176 @@
-# Bitvantage.Networking.NetworkLookup
-High-performance variable length network prefix lookup
+# Bitvantage.InternetProtocol.NetworkPrefixLookup
 
-## Installing via NuGet Package Manager
+Fast longest-prefix-match lookups for IPv4 and IPv6 networks, and for any other fixed-width bit-string key.
+
+- **Lookups that allocate nothing**, from `IPAddress`, byte spans or integers.
+- **Read-write tables** where any number of threads read without locks while one writes, and every write does a bounded
+  amount of work: no pauses for growth or compaction.
+- **Frozen tables** for data that is loaded once and then only read, about twice as fast again.
+- **Your network type**: `System.Net.IPNetwork` is built in, and small packages add `NetworkPrefix`, `IPNetwork2`,
+  `IPAddressRange` ranges and MaxMind databases.
+- **No dependencies** in the core package. .NET 10.
+
+## Packages
+
+| Package | For |
+| --- | --- |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup` | `System.Net.IPNetwork`, address ranges of your own type, and custom keys |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix` | `Bitvantage.InternetProtocol.NetworkPrefix` |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup.IPNetwork2` | `System.Net.IPNetwork2` from the IPNetwork2 package |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup.IPAddressRange` | `NetTools.IPAddressRange` from the IPAddressRange package |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup.MaxMind` | `MaxMind.Db` networks, and loading a whole GeoIP2 or GeoLite2 database |
+
 ```sh
-PM> NuGet\Install-Package Bitvantage.InternetProtocol.NetworkPrefixLookup
+dotnet add package Bitvantage.InternetProtocol.NetworkPrefixLookup
 ```
 
-## Quick Start
-```csharp
-var prefixLookup = new NetworkPrefixLookup();
-prefixLookup.Add("69.0.0.0/8");
-prefixLookup.Add("9.213.0.0/21");
-prefixLookup.Add("52.137.186.232/30");
-prefixLookup.Add("59.168.0.0/13");
-prefixLookup.Add("59.168.83.0/24");
-prefixLookup.Add("69.169.125.128/30");
-prefixLookup.Add("69.15.21.0/25");
-prefixLookup.Add("69.248.13.0/26");
-prefixLookup.Add("109.114.42.64/28");
-prefixLookup.Add("109.195.0.0/17");
-```
-
-### Longest Matching Prefix
-Routers typically work by finding the best route to the destination address. It does so by searching through its routing table to find the longest, or most specific, prefix to a particular destination.
+## Quick start
 
 ```csharp
-prefixLookup.GetMatch(IPAddress.Parse("69.248.13.12");
+using System.Net;
+using Bitvantage.InternetProtocol;
+
+var routes = new IPNetworkLookup<int>();
+routes.Add(IPNetwork.Parse("10.0.0.0/8"), 64512);
+routes.Add(IPNetwork.Parse("10.1.0.0/16"), 64513);
+routes.Add(IPNetwork.Parse("2001:db8::/32"), 64514);
+
+// the most specific stored network that contains the address
+if (routes.TryGetMatch(IPAddress.Parse("10.1.2.3"), out var network, out var asn))
+    Console.WriteLine($"{network} -> AS{asn}"); // 10.1.0.0/16 -> AS64513
+
+// every stored network that contains it, most specific first
+foreach (var match in routes.GetMatches(IPAddress.Parse("10.1.2.3")))
+    Console.WriteLine(match.Prefix);
 ```
 
-### All Matching Prefixes
+`TryGetMatchValue` skips the network when only the value is needed. `TryGetMatchIPv4(uint)`, `TryGetMatchIPv6(UInt128)`
+and `TryGetMatch(ReadOnlySpan<byte>)` serve callers such as packet parsers that never build an `IPAddress`.
+`TryGetValue` and `ContainsPrefix` match a network exactly, as a dictionary does, and `TryGetMatch(network, …)` finds
+the most specific stored network that contains another network.
+
+IPv4-mapped IPv6 addresses such as `::ffff:10.1.2.3`, which dual-mode sockets report, are looked up as IPv4. Turn this
+off with `new IPLookupOptions { MapIPv4MappedAddresses = false }`.
+
+## Tables that change
+
+Writes follow dictionary rules: `TryAdd`, `Add`, `AddOrUpdate`, `GetOrAdd`, `Remove` and `Clear`. Any number of threads
+can look up while writes happen; lookups take no locks, and each sees the table before or after any write, never in
+between. Writes are serialized by an internal lock.
+
+A batch publishes many changes at once, and is the fastest way to load a table:
+
 ```csharp
-prefixLookup.GetMatchs(IPAddress.Parse("69.248.13.12");
+using (var batch = routes.BeginBatch())
+{
+    foreach (var (prefix, asn) in feed)
+        routes.AddOrUpdate(prefix, asn);
+    batch.Commit(); // readers see all of it from here; disposing without Commit discards it
+}
 ```
 
-## Internals
+Constructing a lookup from a sequence loads it as one batch. `Version` changes with every published change, so cached
+results can be checked with one comparison.
 
-### Variable Stride Trie
-Prefixes are organized into a wide, shallow tree structure. The maximum depth of the tree is 33 levels for IPv4 or 129 levels for IPv6. The actual depth largely depends on how closely related the networks are; however for most applications the depth is generally in the single digits. The depth of the tree is directly proportional to lookup performance.
+## Tables that are only read
 
-Below is a visualization of a small tree that contains 10 prefixes. The orange node is the root node, the green nodes are container nodes, and the blue nodes are prefix objects and their associated values.
+`Freeze` builds a read-only copy with faster lookups:
 
-Prefix nodes have between zero and two children, container nodes have exactly two nodes. The child that is contained in the first half of the parent's address space is on the left side, and the child that is contained in the last half of the parent's address space is on the right side. Container nodes are automatically added and removed to maintain the correct parent-child relationship.
-
-![Small Prefix Tree](https://raw.githubusercontent.com/Bitvantage/InternetProtocol.NetworkPrefixLookup/main/Documentation/Media/NetworkPrefixLookup-Tree-Small.svg)
-
-As more prefixes are added to the tree, the tree tends to grow in width far more quickly than depth. Since the depth of the tree is directly proportional to the search performance, it is possible to rapidly search a tree with millions of prefixes while only examining a relatively small number of the nodes.
-
-![Wide Prefix Tree](https://raw.githubusercontent.com/Bitvantage/InternetProtocol.NetworkPrefixLookup/main/Documentation/Media/NetworkPrefixLookup-Tree-Wide.png)
-
-### Tree Visualization 
-A Graphviz DOT diagram can generated, and optionally rendered. In order to render the DOT diagram into a SVG you must have [Graphviz](https://graphviz.org/) installed.
 ```csharp
-prefixLookup.ToDotSvgTree(@"c:\temp\graph.svg", IPVersion.IPv4);
+FrozenIPNetworkLookup<int> origins = new IPNetworkLookup<int>(LoadPrefixes()).Freeze();
+
+// on many threads
+if (origins.TryGetMatchValue(packet.SourceAddress, out var asn)) Count(asn);
 ```
 
-A text representation of the tree can also be generated.
+To change a frozen table, change the read-write one and freeze again, then swap the reference; readers switch on their
+next lookup. The default layout is the fastest. The compressed layout uses a fraction of the memory:
+
 ```csharp
-prefixLookup.ToTextTree(IPVersion.IPv4);
+var small = routes.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });
 ```
 
-### Performance
-On a AMD Ryzen 7 7800X3D processor single thread longest match prefix lookup speed of a tree with 100,000 prefxies is about 3.38 million lookups per second. As a reference point, a Dictionary used for exact IP matches is can do around 35.5 million lookups per second.
+## Ranges
 
-Performance will vary based on many factors.
+A range lookup stores ranges with a first and a last address, which need not be CIDR blocks, and finds the smallest
+stored range that contains an address. Nested ranges work as expected.
 
-### Thread Safety
-The standard NetworkPrefixLookup class is lock-free and thread-safe for multiple-readers and a single writer. A ConcurrentPrefixNetworkLookup class is provided that uses locks on write operations and should be used where there are concurrent writers. 
+```csharp
+using NetTools;
+
+var ranges = new IPAddressRangeLookup<string>();
+ranges.Add(IPAddressRange.Parse("192.168.0.0/24"), "office");
+ranges.Add(IPAddressRange.Parse("192.168.0.10-192.168.0.20"), "printers");
+
+ranges.TryGetMatchValue(IPAddress.Parse("192.168.0.15"), out var name); // "printers"
+```
+
+For a range type of your own, implement `IIPRangeAdapter<TRange>` on a struct and use
+`IPRangeLookup<TRange, TAdapter, TValue>`.
+
+## MaxMind databases
+
+```csharp
+using Bitvantage.InternetProtocol;
+using MaxMind.Db;
+
+var countries = MaxMindDatabase.Load<Dictionary<string, object>>("GeoLite2-Country.mmdb").Freeze();
+countries.TryGetMatchValue(IPAddress.Parse("81.2.69.160"), out var record);
+```
+
+## Other network types
+
+Implement `IIPPrefixAdapter<TPrefix>` on an empty struct, and use `IPPrefixLookup<TPrefix, TAdapter, TValue>`:
+
+```csharp
+public readonly struct MyNetworkAdapter : IIPPrefixAdapter<MyNetwork>
+{
+    public static bool IsIPv4(MyNetwork n) => n.Address.AddressFamily == AddressFamily.InterNetwork;
+    public static uint GetIPv4Bits(MyNetwork n) => IPAddressBits.ToIPv4Bits(n.Address);
+    public static UInt128 GetIPv6Bits(MyNetwork n) => IPAddressBits.ToIPv6Bits(n.Address);
+    public static int GetLength(MyNetwork n) => n.Length;
+}
+
+var lookup = new IPPrefixLookup<MyNetwork, MyNetworkAdapter, string>();
+```
+
+## Keys other than IP addresses
+
+The core works on bits only. `BitTrie<TKey, TPrefix, TValue>` takes any key type implementing `IBitKey<TKey>`;
+`Bits32`, `Bits64`, `Bits128` and `Bits192` are included. A 48-bit MAC address prefix, left-aligned in a `Bits64`:
+
+```csharp
+var vendors = new BitTrie<Bits64, string, string>();
+vendors.Add(new Bits64(0x001A2BUL << 40), 24, "00:1A:2B", "Example vendor");
+vendors.TryGetMatch(new Bits64(macAddress << 16), out var oui, out var vendor);
+```
+
+## Performance
+
+Measurements are being taken and will be added here.
+
+## How it works
+
+The read-write table is a multibit trie in the style of Go's BART: each node decides 8 bits of the key and keeps its
+prefixes, children and lone longer prefixes in arrays compressed with 256-bit sets and popcounts. A write copies the
+one node it changes and links the copy in with a single reference write, so readers never see a half-made change and
+the garbage collector frees replaced nodes. A 65,536-entry table skips the first two levels of every lookup. Frozen
+tables push every answer down into flat lookup tables, so a lookup reads only tables. The shape of the trie depends
+only on what it holds, never on the order of the writes.
+
+`ToTextTree` and `ToDotTree` show the structure. [Documentation/Architecture.md](Documentation/Architecture.md)
+describes the design in detail, and the other documents in [Documentation](Documentation) record how it was chosen and
+measured.
+
+## Upgrading from version 2
+
+Version 3 is a new design with a new interface:
+
+| Version 2 | Version 3 |
+| --- | --- |
+| `NetworkPrefixLookup<TValue>`, `NetworkPrefixLookup` | Same names, in the `….NetworkPrefixLookup.NetworkPrefix` package |
+| `ConcurrenceNetworkPrefixLookup` | Not needed: every lookup serializes its writes |
+| `GetMatch(address)` returning an item | `TryGetMatch(address, out prefix, out value)` |
+| `GetMatches` | `GetMatches`, returning `PrefixEntry` records |
+| `TryRemove` | `Remove` |
+| `ToTextTree(IPVersion)`, `ToDotSvgTree` | `ToTextTree(AddressFamily)`, `ToDotTree(AddressFamily)`; render DOT with Graphviz |

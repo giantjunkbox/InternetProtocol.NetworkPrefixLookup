@@ -5,48 +5,57 @@ Guidance for Claude Code when working in this repository.
 ## Project
 
 `Bitvantage.InternetProtocol.NetworkPrefixLookup` is a .NET library, published on NuGet, for fast longest-prefix-match
-lookups of IPv4 and IPv6 network prefixes. It stores prefixes in a path-compressed binary trie, one per address family.
-The current goal is to prepare for performance optimization of the lookup path.
+lookups of IPv4 and IPv6 network prefixes and of any other fixed-width bit-string key. Version 3, on this branch, is a
+redesign: a generic core that works on bits only, an IP layer on top, and adapter packages for other libraries'
+network types.
 
 Read `Documentation/Architecture.md` before changing anything under `Bitvantage.InternetProtocol.NetworkPrefixLookup/`.
-It covers the trie invariants, the lock-free reader rules, measured baseline numbers, optimization candidates, and
-known bugs.
+It covers the node layout, the canonical-shape and copy-on-write rules, the frozen tables, the IP and range layers,
+measured numbers and limitations. `Documentation/Architecture-v2.md` describes the version 2 binary trie that version 3
+replaced.
 
-A redesign is planned in `Documentation/Abstraction-Study.md`: a generic core that works on bits only, so it can store
-`System.Net.IPNetwork` or any other network type. Decisions made by the user:
+Decisions made by the user:
 
 - Target .NET 10 only.
 - Backward compatibility with the v2 public API is not required.
 - The core ships as a package with no dependency on `Bitvantage.InternetProtocol.NetworkPrefix`.
 - The `NetworkPrefix` adapter ships as a separate package.
-- The core is constrained on a purpose-built key interface, `IBitKey<TSelf>`, with each node caching its mask and split
-  bit. Key widths are fixed at compile time; widths chosen at run time are not supported.
+- The core is constrained on a purpose-built key interface, `IBitKey<TSelf>`. Key widths are fixed at compile time;
+  widths chosen at run time are not supported.
 - Lookup results use whichever shape is fastest. All measured shapes tied, so lookups return the prefix and value
   through `out` parameters, which keep the node layout private.
 - One read-write design in which every write does bounded work, with no pauses for growth or compaction. There is no
   separate real-time mode, because two nearly identical code paths are not worth keeping. A separate form is justified
   only when it is clearly faster, as the frozen form is.
 
-The proposed public interface for the redesign, including frozen lookups, is in `Documentation/Interface.md`.
-`Documentation/Adapter-Survey.md` surveys IP prefix types on NuGet and picks the ones that get adapter packages.
-`Documentation/Bart-Comparison.md` compares Bart.NET and Go's BART with this design and recommends a BART-style
-read-write core. `Documentation/Linux-Survey.md` reviews the Linux kernel's prefix-matching code for ideas.
+Choices made while building version 3 that the user has not yet reviewed: the read-write core follows the BART-style
+prototype (`Documentation/Bart-Comparison.md`); IPv4-mapped IPv6 addresses are looked up as IPv4 by default; the MaxMind
+loader skips MaxMind's IPv4 alias networks by default; package names; and the package versions, left at 2.0.0.
+
+The public interface is described in `Documentation/Interface.md`, whose Status section lists where the shipped
+interface differs from the proposal. `Documentation/Adapter-Survey.md` explains which libraries get adapter packages.
+`Documentation/Abstraction-Study.md`, `Documentation/Optimization-Log.md`, `Documentation/Bart-Comparison.md` and
+`Documentation/Linux-Survey.md` record how the design was chosen and measured.
 
 ## Layout
 
-- `Bitvantage.InternetProtocol.NetworkPrefixLookup/NetworkPrefixLookupBase.cs` holds nearly all logic: the trie nodes,
-  lookup, insert, remove and the text and Graphviz renderers.
-- `NetworkPrefixLookup.cs`, `NetworkPrefixKey.cs` and `ConcurrenceNetworkPrefixLookup.cs` are thin public wrappers.
-- `Test/` contains NUnit tests. `PerformanceTest/` contains BenchmarkDotNet benchmarks.
-- `Prototypes/GenericTrie/` is a standalone prototype of a key-type-agnostic core. It is not in the solution. Its
-  design and measurements are in `Documentation/Abstraction-Study.md`, and its lookup optimizations are in
-  `Documentation/Optimization-Log.md`. `SnapshotTrie.cs` is the production-style version with removal, index
-  maintenance, compaction, bulk loading and lock-free readers. `PooledTrie` in `FastTrie.cs` also holds the frozen,
-  read-only lookup tables: leaf-pushed and compressed. `BartTrie.cs` is the BART-style read-write core recommended to replace
-  `SnapshotTrie`: copy-on-write 8-bit nodes, measured in `Documentation/Bart-Comparison.md`.
-- `Prototypes/GenericTrie.Tests/` holds 65 NUnit test cases for `SnapshotTrie`, `BartTrie` and every shape of the
-  frozen tables, including real routing tables and concurrency stress tests.
-- The `NetworkPrefix` type comes from the `Bitvantage.InternetProtocol.NetworkPrefix` NuGet package, version `2.0.*`.
+- `Bitvantage.InternetProtocol.NetworkPrefixLookup/`: the core package.
+  - `Keys/`: `IBitKey<TSelf>` and `Bits32`, `Bits64`, `Bits128`, `Bits192`.
+  - `Core/`: `BitTrie` (the read-write trie), `FrozenBitTrie`, `IReadOnlyBitTrie`, `BitSet256` with the ART tables,
+    `PrefixEntry`, `NoValue`.
+  - `IP/`: the adapter interfaces, `IPAddressBits`, `IPPrefixLookup`, `IPRangeLookup`, their frozen forms, and
+    `IPNetworkLookup` for `System.Net.IPNetwork`.
+- `Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix/`, `.IPNetwork2/`, `.IPAddressRange/`, `.MaxMind/`: the
+  adapter packages, each an adapter struct and a read-write and frozen class pair. The MaxMind package also has
+  `MaxMindDatabase.Load`.
+- `IPPrefixLookup.cs` and `FrozenIPPrefixLookup.cs` share their read-only members word for word, as do
+  `IPRangeLookup.cs` and `FrozenIPRangeLookup.cs`. Change both of a pair together.
+- `Test/` contains NUnit tests in `Core/`, `IP/` and `Adapters/`, and two MaxMind test databases in `Data/MaxMind/`
+  (Apache-2.0 or MIT, notice included). `PerformanceTest/` contains BenchmarkDotNet benchmarks and a memory report.
+- `Prototypes/GenericTrie/` holds the prototypes the design was measured with. It is not in the solution and references
+  the v2 library from NuGet, so it builds independently of the library. `BartTrie.cs` is the prototype of `BitTrie`;
+  `PooledTrie` in `FastTrie.cs` holds the prototype frozen tables; `SnapshotTrie.cs` is the earlier binary-trie core.
+  `Prototypes/GenericTrie.Tests/` holds 66 test cases for the prototypes.
 
 ## Build and test
 
@@ -59,63 +68,71 @@ export PATH="$HOME/.dotnet:$PATH" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 
 ```sh
 dotnet build -c Release                                   # whole solution
-dotnet test Test -c Release                               # all unit tests
-dotnet test Test -c Release --filter "Name~Delete_IPv4"   # a subset
-dotnet run -c Release --project PerformanceTest           # all benchmarks, about 3.5 minutes
-dotnet run -c Release --project PerformanceTest -- --filter '*Lookup*'   # a subset
+dotnet test Test -c Release                               # all unit tests, about 2 minutes
+dotnet test Test -c Release --filter "FullyQualifiedName~Test.IP"   # a subset
+dotnet run -c Release --project PerformanceTest           # all benchmarks
+dotnet run -c Release --project PerformanceTest -- --filter '*RandomTable*'   # a subset
+dotnet run -c Release --project PerformanceTest -- --memory                   # memory per form, bytes per lookup
 ```
 
 `PerformanceTest` passes its arguments to BenchmarkDotNet, so `--filter` and `--artifacts` work.
 
-The prototype's real-data tests and benchmarks use the CAIDA RouteViews tables. Download them once and point
-`ROUTEVIEWS_DIR` at them; without it the six real-table tests are skipped:
+The real-table benchmarks and the prototype's real-data tests use the CAIDA RouteViews tables. Download them once and
+point `ROUTEVIEWS_DIR` at them; without it those benchmarks are left out and the prototype's six real-table tests are
+skipped:
 
 ```sh
 Prototypes/GenericTrie/download-routeviews.sh /tmp/routeviews
+ROUTEVIEWS_DIR=/tmp/routeviews dotnet run -c Release --project PerformanceTest
 ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 3 minutes
 ```
 
-**Test baseline:** all 19 tests pass on Linux and Windows. The expected trees in the tests are raw string literals, so
-they use the line endings of the checked-out file, and `ToTextTree` uses `Environment.NewLine`. Keep `.gitattributes`
-at `text=auto` so those stay in agreement.
+**Test baseline:** all tests pass. The one test that asserts exact `ToTextTree` output builds its expected
+text with `Environment.NewLine`, so it passes with either line ending. Keep `.gitattributes` at `text=auto`.
 
-The library build has 4 pre-existing nullable warnings (CS8618, CS8625). Do not add new warnings.
+The whole solution builds with no warnings. Do not add any.
 
 ## Conventions
 
 - Every `.cs` file starts with the AGPL license header in `Bitvantage.InternetProtocol.NetworkPrefixLookup.sln.licenseheader`.
-- C# source files are UTF-8 with a byte order mark and use 4-space indentation. Project files use tabs.
-- The library project sets `GenerateDocumentationFile`, so every public member needs an XML doc comment. A build
+- C# source files are UTF-8 with a byte order mark and use 4-space indentation. Project files use tabs, except
+  `Test/Test.csproj`, which uses spaces.
+- The library projects set `GenerateDocumentationFile`, so every public member needs an XML doc comment. A build
   must produce no CS1591, CS1570 or CS1574 warnings.
 - Comment tags in the code:
   - `PERF:` marks a known cost on a hot path.
   - `KNOWN ISSUE:` marks a confirmed bug that was intentionally left unchanged.
   - `TODO:` marks the author's open ideas.
-- Terminology: a *value node* holds an added item (`HasValue == true`); a *routing node* only joins two subtrees. The
-  README calls routing nodes "container nodes".
+- Terminology for the trie: a node's *prefixes* end inside its 8-bit stride and are stored as ART base indexes;
+  *fringes* end exactly at the end of the stride; *leaves* are lone longer prefixes stored whole; *child nodes* exist
+  where two or more longer prefixes share an octet. The core stores a *prefix object* and a *value* with each prefix.
 
 ## Rules for changing the trie
 
-- Keep the trie canonical: its shape must depend only on the set of stored prefixes, not on insertion order. Most tests
-  assert the exact `ToTextTree` output, so do not change that format.
-- Readers take no locks. A writer must fully build any new node before linking it in with one reference write, and must
-  never leave a node that readers can reach in a half-updated state.
-- Backward compatibility with the v2 API is not required, but keep public API changes deliberate and documented.
+- Keep the trie canonical: its shape must depend only on the set of stored prefixes, not on insertion order. A child
+  node exists at an octet exactly when two or more prefixes lie below it; one prefix below an octet is a leaf. The
+  tests compare `ToTextTree` output across insertion orders and removals, and one test asserts the exact format.
+- Readers take no locks. A writer must never change a node that readers can reach, except to store one child reference
+  with `Volatile.Write`. Copy the node, finish the copy, then link it in. A node is private only when its `Stamp` is
+  the current one, and an array may change in place only when its `Shared` bit is clear.
+- During a batch nothing readers can see may change: copy every node on the path to the private root, and adjust
+  counts only on private nodes. A batch commit and `Clear` publish the root and the shortcut table together.
+- Every write must do bounded work: no step may grow with the table's size.
+- Backward compatibility with the v2 API is not required, but keep public API changes deliberate and documented in
+  `Documentation/Interface.md`.
 - Target .NET 10 only. Do not add other target frameworks or bump package versions unless asked.
 
 ## Performance work
 
 - Measure before and after on the same machine. Use BenchmarkDotNet for timings and
   `GC.GetAllocatedBytesForCurrentThread` for allocations.
-- The baseline in `Documentation/Architecture.md` shows about 16 nodes visited per lookup with the benchmark data, and
-  64 bytes allocated per `TryGetMatch(IPAddress)` call in `ToUInt128`.
-- Search for `PERF:` to find the hot spots that are already identified.
-- `Documentation/Optimization-Log.md` lists what made the prototype core faster, what did not help, the memory
-  comparison, and results on real routing tables. Check it before trying an idea again.
-- Random benchmark data fits in cache and flatters the design; confirm results on the real RouteViews tables.
+- The current baseline is in the Performance section of `Documentation/Architecture.md`. Lookups allocate nothing.
+- `Documentation/Optimization-Log.md` and the Remedies tried section of `Documentation/Bart-Comparison.md` list what
+  made the prototypes faster and what did not help. Check them before trying an idea again.
+- Random benchmark data fits in cache and flatters some designs; confirm results on the real RouteViews tables.
 - Cloud containers drift by about 10% between benchmark sessions. Compare variants in one BenchmarkDotNet session, as
-  separate jobs, rather than across separate runs.
-- On .NET 10 the insert benchmarks are dominated by garbage collection, because the Gen0 budget is much smaller than
-  on .NET 7. Watch the Gen0 and Gen1 columns, and prefer allocation reductions over GC settings, which belong to the
-  application.
-- Update the measured baseline and the optimization list in `Documentation/Architecture.md` when a change lands.
+  separate jobs, rather than across separate runs. Version 2 cannot share a process with version 3, because the two
+  assemblies have the same name, so comparisons with it span two runs.
+- On .NET 10 write-heavy benchmarks are dominated by garbage collection. Watch the Gen0 and Gen1 columns, and prefer
+  allocation reductions over GC settings, which belong to the application.
+- Update the measured baseline and the limitations in `Documentation/Architecture.md` when a change lands.
