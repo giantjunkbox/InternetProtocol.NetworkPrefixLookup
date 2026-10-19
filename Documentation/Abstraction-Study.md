@@ -420,9 +420,11 @@ pattern.
 
 ## Work plan
 
-1. **Bounded writes.** Prototype chunked storage, continuous cleanup and per-level index entries on `SnapshotTrie`,
-   and check the targets in [Interface.md](Interface.md#bounded-writes) with the tail-latency test. This comes first
-   because it decides the core's storage.
+1. **Bounded writes.** Prototype a BART-style read-write core: 8-bit multibit nodes, updates by path copying, generic
+   over `IBitKey<TSelf>`, as recommended in [Bart-Comparison.md](Bart-Comparison.md). Compare it with `SnapshotTrie`
+   against the targets in [Interface.md](Interface.md#bounded-writes), using the tail-latency test, and fall back to
+   chunked storage with continuous cleanup only if it misses them. This comes first because it decides the core's
+   storage.
 2. **Core.** Build `BitTrie` on `IBitKey<TSelf>` with cached masks, starting from `SnapshotTrie` in the prototype: the
    node pool, branch-free walk, multi-level index, snapshots and removal described in
    [Optimization-Log.md](Optimization-Log.md), with the storage from step 1. Bring it to feature parity: remove,
@@ -438,7 +440,7 @@ pattern.
 6. **Frozen lookups.** Add a method that builds a read-only lookup from a loaded trie, with leaf-pushed tables and a
    value-only lookup, as described under Frozen tables in [Optimization-Log.md](Optimization-Log.md).
 7. **Benchmarks.** Add IPv6 lookups and prefix queries to `PerformanceTest`. Compare against the current library and
-   Bart.NET in one session.
+   Bart.NET in one session, as `RealBartBenchmarks` in the prototype does.
 8. **Third-party adapters.** Add the IPNetwork2, IPAddressRange and MaxMind packages listed in
    [Adapter-Survey.md](Adapter-Survey.md). Benchmark the MaxMind loader against MaxMind's own reader first.
 9. **Packaging and documentation.** Set up the dependency-free core package, then update the README, the architecture

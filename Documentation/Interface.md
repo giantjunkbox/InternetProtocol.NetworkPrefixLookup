@@ -177,6 +177,11 @@ writer: lookup latency had the same tail with an idle writer. Garbage collection
 Removing a node also has to repoint the index entries whose walk starts at it. Keeping that bounded is the hardest part
 of the design and the first thing the prototype has to settle.
 
+A simpler route has since turned up in Go's BART, described in [Bart-Comparison.md](Bart-Comparison.md): small
+multibit nodes, updated by copying the nodes on the path and publishing a new root with one reference write. Writes are
+then bounded by the trie's depth, readers stay lock-free, and the garbage collector frees replaced nodes, with no chunks
+or cleanup at all. The prototype tries that first; the chunked design above is the fallback.
+
 **Targets.** These are what the prototype must show, with the same tail-latency test:
 
 - **Bounded work.** The test should also count the nodes and index entries each write touches, which timer noise

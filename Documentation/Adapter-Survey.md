@@ -99,10 +99,9 @@ Benchmark the loader against MaxMind's own reader on a GeoLite2 database before 
 
 ## Competitors to benchmark
 
-IpMatcher, IPRangeLookup and Bart.NET solve the same problem. Bart.NET is a port of the Go BART routing table, a
-multibit trie with popcount-compressed nodes, close to the compressed frozen tables in
-[Optimization-Log.md](Optimization-Log.md#frozen-tables). It is the most interesting comparison and should be added to
-the real-table benchmarks.
+IpMatcher, IPRangeLookup and Bart.NET solve the same problem. Bart.NET, a port of an early version of the Go BART
+routing table, is compared in detail in [Bart-Comparison.md](Bart-Comparison.md), together with the current BART
+design.
 
 ## Your other package
 
