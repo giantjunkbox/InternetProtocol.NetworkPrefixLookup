@@ -278,6 +278,121 @@ public static class RealDataChecks
     }
 
     /// <summary>
+    ///     Worst-case latency on the real IPv4 table: one writer makes a million changes as fast as it can while one
+    ///     reader times every lookup. Runs once with an idle writer as a control for timer and scheduling noise, once
+    ///     without compaction, and once compacting whenever garbage values exceed live ones. Reports write and lookup
+    ///     percentiles, garbage collections, and the slowest writes with what they did.
+    /// </summary>
+    public static void TailLatency()
+    {
+        TailLatency(RealData.V4, 32, compact: false, changes: 0);
+        foreach (var compact in new[] { false, true })
+            TailLatency(RealData.V4, 32, compact, 1_000_000);
+    }
+
+    private static void TailLatency<TKey>(RealData.Table<TKey> table, int width, bool compact, int changes) where TKey : struct, IBitKey<TKey>
+    {
+        var trie = BulkSnapshot(table, width, 8);
+        var writeNs = new long[changes];
+        var slowest = new List<(long Ns, string What)>();
+        var readHistogram = new long[LatencyBuckets];
+        long readMax = 0, reads = 0;
+        var stop = 0;
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        var gcBefore = (GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2));
+        var pauseBefore = GC.GetTotalPauseDuration();
+
+        var reader = new Thread(() =>
+        {
+            var keys = table.Keys;
+            var k = 0;
+            while (Volatile.Read(ref stop) == 0)
+            {
+                var t0 = Stopwatch.GetTimestamp();
+                trie.TryGetMatch(in keys[k], out _, out _);
+                var ns = ToNanoseconds(Stopwatch.GetTimestamp() - t0);
+                readHistogram[LatencyBucket(ns)]++;
+                if (ns > readMax) readMax = ns;
+                reads++;
+                if (++k == keys.Length) k = 0;
+            }
+        });
+        reader.Start();
+
+        var random = new Random(9);
+        var removed = new HashSet<int>();
+        int compactions = 0, growths = 0;
+        if (changes == 0)
+            Thread.Sleep(TimeSpan.FromSeconds(6)); // about as long as the runs with writes
+        for (var c = 0; c < changes; c++)
+        {
+            var i = random.Next(table.Bits.Length);
+            var memory = trie.MemoryInBytes();
+            var adding = removed.Remove(i);
+            var t0 = Stopwatch.GetTimestamp();
+            if (adding) trie.TryAdd(in table.Bits[i], table.Lengths[i], table.Networks[i], table.Asns[i]);
+            else trie.TryRemove(in table.Bits[i], table.Lengths[i]);
+            var compacted = compact && trie.Garbage.Values > trie.Count;
+            if (compacted) trie.Compact();
+            writeNs[c] = ToNanoseconds(Stopwatch.GetTimestamp() - t0);
+            if (!adding) removed.Add(i);
+
+            var grew = !compacted && trie.MemoryInBytes() != memory;
+            compactions += compacted ? 1 : 0;
+            growths += grew ? 1 : 0;
+            if (slowest.Count < 8 || writeNs[c] > slowest[^1].Ns)
+            {
+                var what = $"{(adding ? "add" : "remove")} /{table.Lengths[i]}{(grew ? ", arrays grew" : "")}{(compacted ? ", compacted" : "")}";
+                slowest.Add((writeNs[c], what));
+                slowest.Sort((a, b) => b.Ns.CompareTo(a.Ns));
+                if (slowest.Count > 8) slowest.RemoveAt(8);
+            }
+        }
+
+        Volatile.Write(ref stop, 1);
+        reader.Join();
+        var pause = GC.GetTotalPauseDuration() - pauseBefore;
+        var gc = (GC.CollectionCount(0) - gcBefore.Item1, GC.CollectionCount(1) - gcBefore.Item2, GC.CollectionCount(2) - gcBefore.Item3);
+
+        Array.Sort(writeNs);
+        string W(double q) => Format(writeNs[(int)Math.Min(writeNs.Length - 1, q * writeNs.Length)]);
+        string R(double q) => Format(Percentile(readHistogram, reads, q));
+        var mode = changes == 0 ? "idle writer" : compact ? "compacting when garbage exceeds live values" : "never compacting";
+        Console.WriteLine($"{mode}: {changes:N0} changes, {growths} growths, {compactions} compactions, memory at end {trie.MemoryInBytes() / 1048576.0:F0} MB");
+        if (changes > 0)
+            Console.WriteLine($"  writes:  p50 {W(0.5)}, p99 {W(0.99)}, p99.9 {W(0.999)}, p99.99 {W(0.9999)}, max {Format(writeNs[^1])}, total {writeNs.Sum() / 1e9:F1} s");
+        Console.WriteLine($"  lookups: p50 {R(0.5)}, p99 {R(0.99)}, p99.9 {R(0.999)}, p99.99 {R(0.9999)}, max {Format(readMax)}, {reads:N0} lookups");
+        Console.WriteLine($"  garbage collections: {gc.Item1} gen0, {gc.Item2} gen1, {gc.Item3} gen2, {pause.TotalMilliseconds:F0} ms paused in total");
+        Console.WriteLine("  slowest writes: " + string.Join("; ", slowest.Select(w => $"{Format(w.Ns)} {w.What}")));
+    }
+
+    // lookup latencies: 10 ns buckets up to 10 us, then buckets 5% apart
+    private const int LatencyBuckets = 1400;
+
+    private static long ToNanoseconds(long ticks) => ticks * 1_000_000_000L / Stopwatch.Frequency;
+
+    private static int LatencyBucket(long ns) =>
+        ns < 10_000 ? (int)(ns / 10) : Math.Min(LatencyBuckets - 1, 1000 + (int)(Math.Log(ns / 10_000.0) / Math.Log(1.05)));
+
+    private static long BucketUpperBound(int bucket) =>
+        bucket < 1000 ? (bucket + 1) * 10L : (long)(10_000 * Math.Pow(1.05, bucket - 1000 + 1));
+
+    private static long Percentile(long[] histogram, long total, double q)
+    {
+        var target = (long)Math.Ceiling(q * total);
+        long seen = 0;
+        for (var b = 0; b < histogram.Length; b++)
+            if ((seen += histogram[b]) >= target)
+                return BucketUpperBound(b);
+        return BucketUpperBound(histogram.Length - 1);
+    }
+
+    private static string Format(long ns) =>
+        ns < 10_000 ? $"{ns:N0} ns" : ns < 10_000_000 ? $"{ns / 1000.0:N0} us" : $"{ns / 1e6:N0} ms";
+
+    /// <summary>
     ///     Reader throughput on the real IPv4 table with three reader threads for 10 seconds, while the writer is idle,
     ///     makes continuous updates, or makes updates and compacts every 50,000 changes.
     /// </summary>

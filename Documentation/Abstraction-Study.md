@@ -429,13 +429,15 @@ pattern.
    and `ToDotTree` onto the formatter.
 3. **Port the tests.** Rewrite the existing 19 tests against the new API, keeping their tree-shape assertions through
    the formatter.
-4. **Locking variants.** Add locking wrappers that cover every write method, which also fixes the gaps in today's
-   `Concurrence*` classes.
+4. **Writer lock.** Serialize writes with an internal lock, as proposed in [Interface.md](Interface.md). That replaces
+   today's `Concurrence*` classes and fixes their gaps.
 5. **Frozen lookups.** Add a method that builds a read-only lookup from a loaded trie, with leaf-pushed tables and a
    value-only lookup, as described under Frozen tables in [Optimization-Log.md](Optimization-Log.md).
-6. **Benchmarks.** Add IPv6 lookups and prefix queries to `PerformanceTest`. Compare against the current library in one
+6. **Real-time mode.** Prototype chunked storage, incremental cleanup and per-level index entries, then check the
+   targets in [Interface.md](Interface.md#real-time-mode) with the tail-latency test before adding the option.
+7. **Benchmarks.** Add IPv6 lookups and prefix queries to `PerformanceTest`. Compare against the current library in one
    session.
-7. **Packaging and documentation.** Set up the dependency-free core package, then update the README, the architecture
+8. **Packaging and documentation.** Set up the dependency-free core package, then update the README, the architecture
    document and CLAUDE.md.
 
 The core should end up about the same size as today's `NetworkPrefixLookupBase`, which it replaces. The adapters are

@@ -423,6 +423,32 @@ At full speed the writer cost readers 23%. Real routing tables change far more s
 order of thousands of updates per second at peaks, so at real rates the effect should be small. That is an
 extrapolation and has not been measured.
 
+**Worst-case write latency is set by growth and compaction.** One writer made a million random removals and
+re-additions on real IPv4 as fast as it could, timing every write, while one reader timed every lookup. A control run
+had the reader alone. Run `tail-latency` to repeat it. Two sessions:
+
+| Run | Median write | 99.9th percentile | 99.99th percentile | Slowest writes |
+| --- | --- | --- | --- | --- |
+| Never compacting | 3.0 to 3.4 µs | 103 to 110 µs | 425 to 535 µs | 162 to 434 ms, when arrays grew |
+| Compacting when garbage values exceed live ones | 3.1 µs | 68 to 85 µs | 273 to 328 µs | 378 to 804 ms compacting; 29 to 315 ms growing |
+
+| Run | Median lookup | 99.9th percentile | 99.99th percentile | Slowest lookup |
+| --- | --- | --- | --- | --- |
+| Idle writer | 590 ns | 13 µs | 67 µs | 12 ms |
+| Never compacting | 600 to 660 ns | 18 to 23 µs | 58 µs | 3.2 to 3.4 ms |
+| Compacting | 550 to 630 ns | 16 to 21 µs | 48 to 50 µs | 2.0 to 4.3 ms |
+
+- **Growth and compaction are the long writes.** Each copies or rebuilds tens of megabytes inside one write.
+- **The next slowest writes took 4 to 12 ms**, after changes to prefixes from /8 to /24. Short-prefix index refresh is
+  one cause, but the idle control shows stalls of up to 12 ms, so this container cannot separate them from noise.
+- **Readers were not held up by the writer.** The lookup tail was the same with an idle writer, so it is timer and
+  scheduling noise. The median is about three times the per-lookup cost in the throughput tests, probably because
+  timing each lookup alone stops the processor from overlapping consecutive lookups, and adds the timer's own cost.
+- **Garbage collection was not a factor**: at most one collection and 1 ms of pause per run, because the only
+  allocations were the arrays themselves.
+
+The real-time write mode in [Interface.md](Interface.md#real-time-mode) is designed to remove these long writes.
+
 For tables that change often:
 
 - **Use threshold 32.** Updates are cheaper and the index smaller, for lookups about 10% slower.
