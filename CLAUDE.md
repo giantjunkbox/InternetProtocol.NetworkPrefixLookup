@@ -21,6 +21,8 @@ A redesign is planned in `Documentation/Abstraction-Study.md`: a generic core th
 - The `NetworkPrefix` adapter ships as a separate package.
 - The core is constrained on a purpose-built key interface, `IBitKey<TSelf>`, with each node caching its mask and split
   bit. Key widths are fixed at compile time; widths chosen at run time are not supported.
+- Lookup results use whichever shape is fastest. All measured shapes tied, so lookups return the prefix and value
+  through `out` parameters, which keep the node layout private.
 
 ## Layout
 

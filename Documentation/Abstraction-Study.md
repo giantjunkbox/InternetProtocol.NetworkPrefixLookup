@@ -25,8 +25,8 @@ against the current library on .NET 10.
   using vector instructions was as fast as a 128-bit key. Only keys whose width is chosen at run time were expensive.
   See [Arbitrary key widths](#arbitrary-key-widths).
 - **Decided:** .NET 10 only, no backward compatibility, a dependency-free core package, a separate package for the
-  `NetworkPrefix` adapter, and the `IBitKey<TSelf>` key interface with cached masks. The remaining questions are under
-  [Open questions](#open-questions).
+  `NetworkPrefix` adapter, the `IBitKey<TSelf>` key interface with cached masks, and `out` parameters for lookup
+  results. The remaining question is under [Open questions](#open-questions).
 
 ## Decisions
 
@@ -37,6 +37,7 @@ against the current library on .NET 10.
 | Packaging | The core ships as a package with no dependency on `Bitvantage.InternetProtocol.NetworkPrefix`. |
 | `NetworkPrefix` support | A separate package containing the `NetworkPrefix` adapter. |
 | Key interface | `IBitKey<TSelf>`, with each node caching its mask and split bit. Widths are fixed at compile time; widths chosen at run time are not supported. See [Arbitrary key widths](#arbitrary-key-widths). |
+| Lookup results | Whichever shape is fastest. All measured shapes tied, so lookups use `out` parameters, which keep the node layout private. See [Lookup result shape](#lookup-result-shape). |
 
 ## What the library uses from NetworkPrefix today
 
@@ -185,6 +186,9 @@ dotnet run $P verify-width                              # key widths: correctnes
 dotnet run $P --filter 'WidthComparison.*'              # key widths with computed masks, about 10 minutes
 dotnet run $P --filter 'CachedWidthComparison.*'        # key widths with cached masks, about 9 minutes
 dotnet run $P --filter 'Width192Comparison.*'           # 192-bit keys against 128-bit and 256-bit, about 6 minutes
+dotnet run $P verify-shapes                             # result shapes: correctness
+dotnet run $P --filter 'ResultShapeComparison.*'        # result shapes on the large and small tables, about 6 minutes
+dotnet run $P --filter 'LargeValueShapeComparison.*'    # result shapes with string and 64-byte values, about 5 minutes
 dotnet run $P isolate cached32                          # one variant in its own process, quick timing
 ```
 
@@ -356,6 +360,37 @@ Building the trie from 97,000 prefixes, with computed masks:
   left-aligned and each prefix carries its own length. If keys from different families share one trie, put a few tag
   bits in front so they cannot collide, the way IPv4-mapped IPv6 addresses do.
 
+## Lookup result shape
+
+The decision was to use whichever shape is fastest. Four shapes were measured, all sharing one trie walk and one node
+layout in [`ResultShapes.cs`](../Prototypes/GenericTrie/ResultShapes.cs):
+
+| Shape | Signature |
+| --- | --- |
+| A. Out parameters | `bool TryGetMatch(in TKey key, out TPrefix prefix, out TValue value)` |
+| B. One out struct | `bool TryGetMatch(in TKey key, out PrefixMatch<TPrefix, TValue> match)` |
+| C. Returned struct | `PrefixMatch<TPrefix, TValue> GetMatch(in TKey key)`, with a `Found` flag |
+| D. Returned entry | `PrefixEntry<TPrefix, TValue>? FindEntry(in TKey key)`, the node itself through a read-only base type |
+
+Prefixes were `IPNetwork` values, so results contain object references, and every benchmark read both the prefix and
+the value of every result. The small table has 1,000 prefixes plus `0.0.0.0/0`. Its lookups are short enough that the
+cost of returning the result would show if it mattered. Ratios are against shape A in the same session.
+
+| Scenario | A | B | C | D |
+| --- | --- | --- | --- | --- |
+| Large table, string values | 1.00 | 0.92 ± 0.23 | 0.88 ± 0.20 | 1.06 ± 0.23 |
+| Small table, string values, first session | 1.00 | 0.99 ± 0.06 | 1.01 ± 0.07 | 1.03 ± 0.06 |
+| Small table, string values, second session | 1.00 | 0.97 ± 0.06 | 0.99 ± 0.08 | 0.97 ± 0.07 |
+| Small table, 64-byte struct values | 1.00 | 1.02 ± 0.06 | 1.00 ± 0.06 | 1.04 ± 0.07 |
+
+All four shapes are equally fast, within the noise, even when every result copies a 64-byte value. Copying a result
+costs nothing measurable next to the walk.
+
+**Decision: shape A, `out` parameters.** With speed tied, the deciding factor is future speed. Shape D would make the
+internal node part of the public API, which would rule out later layout changes such as storing nodes in arrays instead
+of separate objects. Shape A keeps the layout private and adds no result type. It is also the familiar `TryGetValue`
+pattern.
+
 ## Other consequences of the design
 
 1. **Stored items.** Today `TValue` must derive from `NetworkPrefixKey`, so every item carries its own prefix. The core
@@ -378,8 +413,6 @@ Building the trie from 97,000 prefixes, with computed masks:
 
 - **Package contents.** The recommendation is one dependency-free package containing the core, the IP layer and the
   `IPNetwork` adapter, because `IPNetwork` is part of .NET.
-- **Result shape.** Lookups can return the prefix and value through `out` parameters, as in the prototype, or through
-  a small readonly struct. Both avoid allocation.
 
 ## Work plan
 
