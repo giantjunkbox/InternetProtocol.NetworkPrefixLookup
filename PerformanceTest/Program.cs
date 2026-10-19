@@ -26,6 +26,7 @@ namespace PerformanceTest;
 
 public class Program
 {
+    [MemoryDiagnoser]
     public class MyTests
     {
         private static readonly NetworkPrefixLookup<string> NetworkPrefixLookup = new();
@@ -97,7 +98,8 @@ public class Program
 
     static void Main(string[] args)
     {
-        var summary = BenchmarkRunner.Run<MyTests>();
+        // pass the command line through so BenchmarkDotNet options such as --filter and --runtimes work
+        var summary = BenchmarkRunner.Run<MyTests>(args: args);
         Console.WriteLine(summary);
     }
 
