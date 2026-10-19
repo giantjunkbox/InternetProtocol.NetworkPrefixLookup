@@ -37,6 +37,7 @@ The library depends on one package, `Bitvantage.InternetProtocol.NetworkPrefix`.
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup/ConcurrenceNetworkPrefixLookup.cs` | Variants that lock around writes. |
 | `Test/` | NUnit tests. Most compare the text rendering of the trie with an expected string. |
 | `PerformanceTest/` | BenchmarkDotNet benchmarks for lookup and insert. |
+| `Prototypes/GenericTrie/` | A prototype of a trie core that does not depend on `NetworkPrefix`. It is not in the solution; see [Abstraction-Study.md](Abstraction-Study.md). |
 | `Documentation/Media/` | Tree images used by the README. |
 
 ## Public types
@@ -409,7 +410,8 @@ The code marks known costs with `PERF:` comments. Search for `PERF:` to find the
 ### Optimization candidates
 
 These are ideas for the planned performance work, roughly ordered from least to most invasive. None of them has been
-implemented or measured yet.
+implemented in the library yet. [Abstraction-Study.md](Abstraction-Study.md) measured candidates 1 and 5, and part of
+7, in a prototype.
 
 1. **Remove the allocations in `ToUInt128`.** Use `IPAddress.TryWriteBytes` into a stack buffer and
    `BinaryPrimitives.ReadUInt32BigEndian` or `ReadUInt64BigEndian`. This removes 64 bytes of garbage per lookup and

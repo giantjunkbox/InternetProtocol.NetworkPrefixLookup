@@ -18,6 +18,8 @@ known bugs.
   lookup, insert, remove and the text and Graphviz renderers.
 - `NetworkPrefixLookup.cs`, `NetworkPrefixKey.cs` and `ConcurrenceNetworkPrefixLookup.cs` are thin public wrappers.
 - `Test/` contains NUnit tests. `PerformanceTest/` contains BenchmarkDotNet benchmarks.
+- `Prototypes/GenericTrie/` is a standalone prototype of a key-type-agnostic core. It is not in the solution. Its
+  design and measurements are in `Documentation/Abstraction-Study.md`.
 - The `NetworkPrefix` type comes from the `Bitvantage.InternetProtocol.NetworkPrefix` NuGet package, version `2.0.*`.
 
 ## Build and test
