@@ -32,7 +32,10 @@ A redesign is planned in `Documentation/Abstraction-Study.md`: a generic core th
 - `Test/` contains NUnit tests. `PerformanceTest/` contains BenchmarkDotNet benchmarks.
 - `Prototypes/GenericTrie/` is a standalone prototype of a key-type-agnostic core. It is not in the solution. Its
   design and measurements are in `Documentation/Abstraction-Study.md`, and its lookup optimizations are in
-  `Documentation/Optimization-Log.md`.
+  `Documentation/Optimization-Log.md`. `SnapshotTrie.cs` is the production-style version with removal, index
+  maintenance, compaction, bulk loading and lock-free readers.
+- `Prototypes/GenericTrie.Tests/` holds 17 NUnit tests for `SnapshotTrie`, including real routing tables and a
+  concurrency stress test.
 - The `NetworkPrefix` type comes from the `Bitvantage.InternetProtocol.NetworkPrefix` NuGet package, version `2.0.*`.
 
 ## Build and test
@@ -53,6 +56,14 @@ dotnet run -c Release --project PerformanceTest -- --filter '*Lookup*'   # a sub
 ```
 
 `PerformanceTest` passes its arguments to BenchmarkDotNet, so `--filter` and `--artifacts` work.
+
+The prototype's real-data tests and benchmarks use the CAIDA RouteViews tables. Download them once and point
+`ROUTEVIEWS_DIR` at them; without it the two real-table tests are skipped:
+
+```sh
+Prototypes/GenericTrie/download-routeviews.sh /tmp/routeviews
+ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 2 minutes
+```
 
 **Test baseline:** all 19 tests pass on Linux and Windows. The expected trees in the tests are raw string literals, so
 they use the line endings of the checked-out file, and `ToTextTree` uses `Environment.NewLine`. Keep `.gitattributes`
@@ -89,8 +100,9 @@ The library build has 4 pre-existing nullable warnings (CS8618, CS8625). Do not 
 - The baseline in `Documentation/Architecture.md` shows about 16 nodes visited per lookup with the benchmark data, and
   64 bytes allocated per `TryGetMatch(IPAddress)` call in `ToUInt128`.
 - Search for `PERF:` to find the hot spots that are already identified.
-- `Documentation/Optimization-Log.md` lists what made the prototype core about 30 times faster, what did not help, and
-  the concurrency rules the production version must follow. Check it before trying an idea again.
+- `Documentation/Optimization-Log.md` lists what made the prototype core faster, what did not help, the memory
+  comparison, and results on real routing tables. Check it before trying an idea again.
+- Random benchmark data fits in cache and flatters the design; confirm results on the real RouteViews tables.
 - Cloud containers drift by about 10% between benchmark sessions. Compare variants in one BenchmarkDotNet session, as
   separate jobs, rather than across separate runs.
 - On .NET 10 the insert benchmarks are dominated by garbage collection, because the Gen0 budget is much smaller than

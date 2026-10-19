@@ -416,8 +416,9 @@ pattern.
 
 ## Work plan
 
-1. **Core.** Build `BitTrie` on `IBitKey<TSelf>` with cached masks, using the node pool, branch-free walk, depth-first
-   relayout and top-level index from [Optimization-Log.md](Optimization-Log.md). Bring it to feature parity: remove,
+1. **Core.** Build `BitTrie` on `IBitKey<TSelf>` with cached masks, starting from `SnapshotTrie` in the prototype: the
+   node pool, branch-free walk, multi-level index, snapshots, removal and compaction described in
+   [Optimization-Log.md](Optimization-Log.md). Bring it to feature parity: remove,
    longest match by prefix, all matches, clear and count. Follow the concurrency rules in that log for array growth,
    removal and publishing the index. Write unit tests directly against the core, including at least one non-IP key
    width.

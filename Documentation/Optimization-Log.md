@@ -321,7 +321,44 @@ The multi-level index costs more than the flat one: 25 to 37 MB on real IPv4. Th
 
 ## Results on real tables
 
-The BenchmarkDotNet results for the real tables are being collected and will be added here.
+BenchmarkDotNet, one session per table. Lookups start from `IPAddress` objects, so they include converting each address:
+the `Address` property for IPv4 and `TryWriteBytes` for IPv6. The optimized rows are `SnapshotTrie`, bulk loaded, with
+the multi-level index.
+
+**One million lookups against the real IPv4 table.**
+
+| Variant | Time | Ratio | Allocated |
+| --- | --- | --- | --- |
+| Current library | 3,466 ms | 1.00 | 61 MB |
+| Baseline: the decided design | 2,341 ms | 0.68 ± 0.06 | 0 |
+| Optimized, threshold 8 | 243 ms | 0.07 ± 0.01 | 0 |
+| Optimized, threshold 32 | 264 ms | 0.08 ± 0.01 | 0 |
+
+**One million lookups against the real IPv6 table.**
+
+| Variant | Time | Ratio | Allocated |
+| --- | --- | --- | --- |
+| Current library | 2,632 ms | 1.00 | 99 MB |
+| Baseline: the decided design | 2,040 ms | 0.78 ± 0.07 | 0 |
+| Optimized, threshold 8 | 541 ms | 0.21 ± 0.03 | 0 |
+| Optimized, threshold 32 | 601 ms | 0.23 ± 0.03 | 0 |
+
+On real tables the optimized design is about 14 times faster than the current library for IPv4 and about 5 times faster
+for IPv6. The gains are smaller than on the random benchmark data because real tables do not fit in cache. IPv6 gains
+least: its prefixes are deeper, its walk below the index is longer, and converting a 16-byte address costs more.
+
+**Building each table from scratch.**
+
+| Variant | Real IPv4 | Real IPv6 |
+| --- | --- | --- |
+| Current library | 3,246 ms, 966 MB allocated | 700 ms, 244 MB allocated |
+| Baseline: the decided design, no index | 727 ms, 191 MB | 198 ms, 65 MB |
+| Optimized bulk load, threshold 8 | 836 ms, 532 MB | 369 ms, 234 MB |
+| Optimized bulk load, threshold 32 | 706 ms, 452 MB | 245 ms, 182 MB |
+
+The bulk load is 2 to 4.6 times faster than the current library. It is a little slower than the baseline, which builds
+no index. Its allocations are mostly temporary: arrays grow by doubling and compaction copies them once more. A bulk
+load that is told the number of prefixes up front could size its arrays once.
 
 ## Recommendations for the production core
 
