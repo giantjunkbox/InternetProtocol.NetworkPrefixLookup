@@ -136,6 +136,33 @@ public class BartTrieTests
     }
 
     [Test]
+    public void An_aborted_bulk_load_leaves_no_trace()
+    {
+        var all = Enumerable.Range(0, WidthData.Prefix32.Length).ToArray();
+        var first = all.Where(i => i % 2 == 0).ToArray();
+        var keys = WidthData.Key32.Take(100_000).ToArray();
+        var trie = Build(first);
+        var shape = trie.Dump(Format);
+
+        trie.BeginBulkLoad();
+        foreach (var i in all.Where(i => i % 2 == 1))
+            trie.TryAdd(in WidthData.Prefix32[i], WidthData.PrefixLengths[i], i, i * 7);
+        foreach (var i in first.Where(i => i % 3 == 0))
+            trie.TryRemove(in WidthData.Prefix32[i], WidthData.PrefixLengths[i]);
+        trie.AbortBulkLoad();
+
+        Assert.That(trie.Count, Is.EqualTo(first.Length));
+        Assert.That(trie.Dump(Format), Is.EqualTo(shape), "shape and subtree counts after the abort");
+        AssertMatches(trie, ReferenceMatches(first, keys), keys, "after the abort");
+
+        // ordinary writes afterwards rely on the subtree counts being intact
+        var kept = first.Where(i => i % 5 != 0).ToArray();
+        foreach (var i in first.Where(i => i % 5 == 0))
+            Assert.That(trie.TryRemove(in WidthData.Prefix32[i], WidthData.PrefixLengths[i]), Is.True);
+        Assert.That(trie.Dump(Format), Is.EqualTo(Build(kept).Dump(Format)), "shape after later removals");
+    }
+
+    [Test]
     public void Edge_cases()
     {
         var trie = new BartTrie<Bits32, string, int>(32);

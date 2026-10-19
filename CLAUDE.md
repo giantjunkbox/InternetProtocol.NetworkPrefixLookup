@@ -30,7 +30,7 @@ A redesign is planned in `Documentation/Abstraction-Study.md`: a generic core th
 The proposed public interface for the redesign, including frozen lookups, is in `Documentation/Interface.md`.
 `Documentation/Adapter-Survey.md` surveys IP prefix types on NuGet and picks the ones that get adapter packages.
 `Documentation/Bart-Comparison.md` compares Bart.NET and Go's BART with this design and recommends a BART-style
-read-write core.
+read-write core. `Documentation/Linux-Survey.md` reviews the Linux kernel's prefix-matching code for ideas.
 
 ## Layout
 

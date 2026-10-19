@@ -112,9 +112,10 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     public bool Remove(in TKey bits, int length);                                 // false for a routing node
     public void Clear();
 
-    public BulkLoad BeginBulkLoad();               // dispose to finish
+    public Batch BeginBatch();                     // Commit() publishes it all at once; disposing without Commit discards it
     public void Compact(bool trimExcess = false);
     public BitTrieStatistics GetStatistics();
+    public long Version { get; }                   // renewed on every published change, for validating cached results
     public FrozenBitTrie<TKey, TPrefix, TValue> Freeze(FrozenBitTrieOptions? options = null);
 
     public string ToTextTree(Func<TKey, int, string> format);
@@ -132,10 +133,13 @@ public sealed record BitTrieOptions
 public readonly record struct BitTrieStatistics(int Prefixes, int Nodes, long Bytes, int GarbageNodes, int GarbageValues, int GarbageIndexEntries);
 ```
 
-- **Construction from a sequence bulk loads**, the fastest way to fill a table. `BeginBulkLoad` returns a disposable
-  scope for loading in pieces: inside it the index is not maintained, and readers walk from the root, which is slower
-  but correct. Disposing it builds the index and lays the nodes out depth-first. Loading may pause; it is a load, not
-  a write.
+- **Construction from a sequence bulk loads**, the fastest way to fill a table.
+- **Batches** are atomic, as nftables transactions are. Changes made after `BeginBatch` build privately; readers keep
+  seeing the table as it was. `Commit` publishes them all with one reference write, and disposing the batch without
+  committing discards them. A bulk load into an existing table is a batch. `BartTrie` implements this as
+  `BeginBulkLoad`, `EndBulkLoad` and `AbortBulkLoad`; see [Linux-Survey.md](Linux-Survey.md).
+- **`Version`** changes with every published change, so a caller can cache lookup results and check them with one
+  comparison, as Linux's IPv6 routes do with serial numbers.
 - **Cleanup is continuous**, so there is no compaction policy to choose. `Compact()` is still there for an application
   with a quiet moment: it finishes the cleanup at once and restores the depth-first layout that bulk loading produces,
   taking 0.1 to 1.4 seconds on the real tables. Readers are never blocked. `trimExcess` drops all headroom, for a table
@@ -326,7 +330,7 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     public bool Remove(TPrefix prefix);
     public void Clear();
 
-    public BulkLoad BeginBulkLoad();
+    public Batch BeginBatch();                     // each family publishes atomically when the batch commits
     public void Compact(bool trimExcess = false);
     public IPLookupStatistics GetStatistics();     // per family
     public FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> Freeze(FrozenBitTrieOptions? ipv4 = null, FrozenBitTrieOptions? ipv6 = null);

@@ -219,14 +219,27 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
 
     // ---- writing ---------------------------------------------------------------------------------------------------
 
+    private long _countBeforeBulk;
+
     /// <summary>
-    ///     Builds the following changes privately, and publishes them all at once in <see cref="EndBulkLoad" />.
-    ///     Readers keep seeing the table as it was until then.
+    ///     Builds the following changes privately, and publishes them all at once in <see cref="EndBulkLoad" />, or
+    ///     discards them in <see cref="AbortBulkLoad" />. Readers keep seeing the table as it was until then, so a bulk
+    ///     load is also an atomic batch, like an nftables transaction.
     /// </summary>
     public void BeginBulkLoad()
     {
         _stamp++;
         _bulk = true;
+        _countBeforeBulk = Count;
+    }
+
+    /// <summary>Discards every change since <see cref="BeginBulkLoad" />. Readers never saw any of them.</summary>
+    public void AbortBulkLoad()
+    {
+        _w = _root;
+        Count = _countBeforeBulk;
+        _bulk = false;
+        _stamp++;
     }
 
     /// <summary>Trims the arrays of the nodes the bulk load created, then publishes them with one write.</summary>
@@ -306,8 +319,9 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
         }
 
         changed.Count++;
-        for (var i = 0; i < depth; i++) path[i].Count++;
+        if (!_bulk) for (var i = 0; i < depth; i++) path[i].Count++;
         Link(changed, n, ref path, octets, depth);
+        if (_bulk) AdjustCounts(in item.Bits, depth, 1);
         UpdateTable(in item.Bits, depth);
         Count++;
         return true;
@@ -388,11 +402,24 @@ public sealed class BartTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey
             depth--;
         }
 
-        for (var i = 0; i < depth; i++) path[i].Count--;
+        if (!_bulk) for (var i = 0; i < depth; i++) path[i].Count--;
         Link(changed, original, ref path, octets, depth);
+        if (_bulk) AdjustCounts(in key, depth, -1);
         UpdateTable(in key, depth);
         Count--;
         return true;
+    }
+
+    // During a bulk load the counts of the nodes above a change are adjusted only after Link has made them private, so
+    // that an aborted bulk load leaves the published nodes untouched. A private node's parents are always private.
+    private void AdjustCounts(in TKey key, int depth, int delta)
+    {
+        var n = _w;
+        for (var i = 0; i < depth; i++)
+        {
+            n.Count += delta;
+            n = n.KidNodes[n.Kids.Rank(TKey.GetBits(key, i << 3, 8)) - 1];
+        }
     }
 
     // after a write that replaced the node at the given depth on the path of key
