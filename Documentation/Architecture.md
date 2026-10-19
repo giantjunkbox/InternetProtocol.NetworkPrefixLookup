@@ -312,9 +312,10 @@ must never be observed half updated, and any change that mutates nodes in place 
 
 ### Measured baseline
 
-These numbers come from a throwaway probe run against the code at the time of writing. It used the same seeded data
-as `PerformanceTest/Program.cs`: random IPv4 prefixes from seed 11 and random addresses from seed 12. Node counts and
-path lengths are deterministic. Allocation figures come from `GC.GetAllocatedBytesForCurrentThread`.
+These numbers come from a throwaway probe run on .NET 7 against the code at the time of writing. It used the same
+seeded data as `PerformanceTest/Program.cs`: random IPv4 prefixes from seed 11 and random addresses from seed 12. Node
+counts and path lengths are deterministic and do not depend on the runtime. Allocation figures come from
+`GC.GetAllocatedBytesForCurrentThread`.
 
 | Measure | Value |
 | --- | --- |
@@ -335,10 +336,52 @@ Distribution of nodes visited per lookup, including the root:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Lookups | 2,375 | 68,643 | 293,417 | 387,060 | 195,762 | 46,362 | 5,931 | 440 | 9 | 1 |
 
-A rough Stopwatch timing in a 4-core x64 cloud container on .NET 7 gave about 0.7 million lookups per second for
-`TryGetMatch(IPAddress)` and about 0.8 million for `TryGetMatch(NetworkPrefix)`. The README reports 3.38 million per
-second on an AMD Ryzen 7 7800X3D. Use timings only for relative comparisons on the same machine, and use
-BenchmarkDotNet for real measurements.
+In a 4-core cloud container, BenchmarkDotNet measured between 0.84 and 0.86 million lookups per second on both
+.NET 7 and .NET 10; see the next section. The README reports 3.38 million per second on an AMD Ryzen 7 7800X3D. Use timings only
+for relative comparisons on the same machine.
+
+### .NET 7 versus .NET 10
+
+The projects were moved from .NET 7 to .NET 10. Both runtimes were measured with BenchmarkDotNet 0.15.8 on the same
+machine: a 4-core Intel Xeon 2.80 GHz cloud container running Ubuntu 24.04, with .NET 7.0.20 and .NET 10.0.13.
+
+This container drifts by about 10% between sessions. The .NET 7 lookup benchmark measured 1,048 ms in one session and
+1,160 ms in another. The authoritative comparison therefore ran all runtimes in one BenchmarkDotNet session, using a
+scratch project that compiled the library source for both runtimes. The third job is .NET 10 with the environment
+variable `DOTNET_GCgen0size=0x10000000`, which raises the Gen0 budget to 256 MB.
+
+| Benchmark | .NET 7 | .NET 10 | .NET 10, 256 MB Gen0 budget |
+| --- | --- | --- | --- |
+| `IpNetworkLookupX1M`, mean | 1,160 ms | 1,194 ms | 1,040 ms |
+| `IpNetworkLookupX1M`, ratio to .NET 7 | 1.00 | 1.04 ± 0.10 | 0.90 ± 0.09 |
+| `AddX100K`, mean | 157 ms | 339 ms | 196 ms |
+| `AddX100K`, ratio to .NET 7 | 1.00 | 2.18 ± 0.19 | 1.26 ± 0.13 |
+| `AddX100K`, garbage collections per build | none | 5.5 Gen0, 5 Gen1 | 0.3 Gen0 |
+| `AddX100K`, allocated per build | 99.6 MB | 94.6 MB | 94.6 MB |
+
+Separate full runs of `PerformanceTest`, one per runtime, also covered the other two benchmarks:
+
+| Benchmark | .NET 7 | .NET 10 |
+| --- | --- | --- |
+| `ConcurrenceAddX100K` | 176 ms | 316 ms |
+| `HashTableLookup` | 128 ms | 75 ms |
+
+Findings:
+
+- **Lookups did not get faster.** The difference is within the noise. Lookups are dominated by dependent memory loads,
+  which a newer JIT cannot remove.
+- **Inserts are about twice as slow on .NET 10, because of garbage collection.** On this machine .NET 10 reports
+  `GCGen0MaxBudget = 17301504` from `GC.GetConfigurationVariables()`, which is 16.5 MB, exactly half of the 33 MiB L3
+  cache. .NET 7 reports no such setting and never collected during a build, so its effective Gen0 budget here was over
+  100 MB. A build allocates about 95 MB, so .NET 10 runs several Gen0 and Gen1 collections per build. Each Gen1
+  collection has to trace the half-built trie, which is almost entirely live.
+- **The Gen0 budget explains most of the insert gap, not all of it.** With a 256 MB budget, .NET 10 is still about
+  25% slower than .NET 7 on inserts. The cause of the remainder is unknown.
+- **Other code did get faster.** The `Dictionary` baseline ran 41% faster on .NET 10.
+
+The Gen0 budget is a process-wide setting that belongs to the application, not the library. Applications can raise it
+with `GCgen0size` in `runtimeconfig.json` or the `DOTNET_GCgen0size` environment variable. The library-level remedy
+is to allocate less per insert and per lookup; see the candidates below.
 
 ### Why paths are about 16 nodes deep
 
@@ -354,8 +397,8 @@ Each visited node costs:
 
 1. A load of `node.Children`, a separate array object, plus a bounds check.
 2. A load of the child `Node` object.
-3. Two 128-bit operations: an AND for the slot test and a masked compare for containment. In .NET 7 `UInt128`
-   arithmetic is done in software as pairs of 64-bit operations, even for IPv4 keys that fit in 32 bits.
+3. Two 128-bit operations: an AND for the slot test and a masked compare for containment. `UInt128` arithmetic is
+   done as pairs of 64-bit operations, even for IPv4 keys that fit in 32 bits.
 
 Steps 1 and 2 are dependent memory loads. With about 173,000 nodes the trie does not fit in the L1 or L2 caches, so
 the lookup is dominated by pointer chasing. The two `TryGetMatch` overloads run at similar speed even though one
@@ -386,13 +429,18 @@ implemented or measured yet.
    deepest trie node under it and the best value node above it, and every insert and remove would have to keep the
    table in step. This is the largest potential win and the largest change. Layering it over the existing binary trie
    keeps `ToTextTree` and the shape tests valid.
-7. **Avoid allocating in `WalkTree`.** Inserts and removes allocate a `List<NodeHistory>`. A pooled or stack-allocated
-   buffer of at most 129 entries would do. This only affects writes.
+7. **Allocate less per insert.** An insert allocates about 1 KB: the caller's item record, the `Node`, its separate
+   two-slot `Children` array, sometimes a routing node with its own array and key record, and the
+   `List<NodeHistory>` that `WalkTree` grows on every insert and remove. A pooled or stack-allocated path buffer of at
+   most 129 entries would replace the list, and candidate 3 removes the arrays. On .NET 10 this matters more than on
+   .NET 7, because the smaller Gen0 budget turns these allocations into Gen1 collections; see
+   [.NET 7 versus .NET 10](#net-7-versus-net-10).
 
 Changes that should be decided deliberately:
 
-- **Target framework.** The projects target .NET 7, which is out of support. Newer runtimes improve `UInt128` code
-  generation and enable dynamic PGO by default, so benchmark before and after any retargeting.
+- **Target framework.** The projects now target .NET 10. A package built only for `net10.0` cannot be used by
+  applications on .NET 8 or .NET 9. Multi-targeting, for example `net8.0;net10.0`, would keep them, at the cost of
+  testing and benchmarking each target.
 - **Public API.** The package is published on NuGet at version 2.0.0. Signature changes are breaking.
 
 Whatever the change, keep the [invariants](#invariants) and the [concurrency rules](#concurrency-model), run the unit
@@ -421,8 +469,10 @@ the checked-out file, while `ToTextTree` uses `Environment.NewLine`. The reposit
 
 ### Benchmarks
 
-`PerformanceTest/Program.cs` uses BenchmarkDotNet 0.13.3. Each benchmark method is one operation over a full data
-set:
+`PerformanceTest/Program.cs` uses BenchmarkDotNet 0.15.8 with `[MemoryDiagnoser]`, so results include allocations
+and garbage collection counts. Command-line arguments are passed to BenchmarkDotNet, so options such as `--filter` and
+`--artifacts` work. The `--runtimes` option needs a project that targets every requested runtime, which this one does
+not. Each benchmark method is one operation over a full data set:
 
 | Benchmark | One operation |
 | --- | --- |
@@ -431,8 +481,8 @@ set:
 | `ConcurrenceAddX100K` | The same build with `ConcurrenceNetworkPrefixLookup<string?>`. |
 | `HashTableLookup` | Baseline: 1,000,000 exact-match `Dictionary<IPAddress, object>` lookups. |
 
-There is no IPv6 benchmark, no prefix-query benchmark and no `[MemoryDiagnoser]`. Adding them would make the planned
-performance work easier to judge.
+There is no IPv6 benchmark and no prefix-query benchmark. Adding them would make the planned performance work easier
+to judge.
 
 ## Known issues
 

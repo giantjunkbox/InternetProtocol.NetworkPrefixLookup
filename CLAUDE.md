@@ -22,10 +22,10 @@ known bugs.
 
 ## Build and test
 
-All projects target .NET 7. Cloud containers do not ship the SDK; install it into the home directory:
+All projects target .NET 10. Cloud containers do not ship the SDK; install it into the home directory:
 
 ```sh
-curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 7.0 --install-dir "$HOME/.dotnet"
+curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 --install-dir "$HOME/.dotnet"
 export PATH="$HOME/.dotnet:$PATH" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 ```
 
@@ -33,10 +33,11 @@ export PATH="$HOME/.dotnet:$PATH" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 dotnet build -c Release                                   # whole solution
 dotnet test Test -c Release                               # all unit tests
 dotnet test Test -c Release --filter "Name~Delete_IPv4"   # a subset
-dotnet run -c Release --project PerformanceTest           # benchmarks; slow, runs every benchmark
+dotnet run -c Release --project PerformanceTest           # all benchmarks, about 3.5 minutes
+dotnet run -c Release --project PerformanceTest -- --filter '*Lookup*'   # a subset
 ```
 
-`PerformanceTest` ignores command-line arguments, so BenchmarkDotNet filters do not work without changing `Main`.
+`PerformanceTest` passes its arguments to BenchmarkDotNet, so `--filter` and `--artifacts` work.
 
 **Test baseline:** all 19 tests pass on Linux and Windows. The expected trees in the tests are raw string literals, so
 they use the line endings of the checked-out file, and `ToTextTree` uses `Environment.NewLine`. Keep `.gitattributes`
@@ -73,4 +74,9 @@ The library build has 4 pre-existing nullable warnings (CS8618, CS8625). Do not 
 - The baseline in `Documentation/Architecture.md` shows about 16 nodes visited per lookup with the benchmark data, and
   64 bytes allocated per `TryGetMatch(IPAddress)` call in `ToUInt128`.
 - Search for `PERF:` to find the hot spots that are already identified.
+- Cloud containers drift by about 10% between benchmark sessions. Compare variants in one BenchmarkDotNet session, as
+  separate jobs, rather than across separate runs.
+- On .NET 10 the insert benchmarks are dominated by garbage collection, because the Gen0 budget is much smaller than
+  on .NET 7. Watch the Gen0 and Gen1 columns, and prefer allocation reductions over GC settings, which belong to the
+  application.
 - Update the measured baseline and the optimization list in `Documentation/Architecture.md` when a change lands.
