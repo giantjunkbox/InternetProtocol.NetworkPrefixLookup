@@ -51,6 +51,60 @@ public static class RealDataChecks
         return t;
     }
 
+    public static SnapshotTrie<TKey, IPNetwork, int> BuildSnapshot<TKey>(RealData.Table<TKey> table, int width, int threshold = 8, bool compact = true)
+        where TKey : struct, IBitKey<TKey>
+    {
+        var t = new SnapshotTrie<TKey, IPNetwork, int>(width, 16, 8, threshold);
+        for (var i = 0; i < table.Bits.Length; i++) t.TryAdd(in table.Bits[i], table.Lengths[i], table.Networks[i], table.Asns[i]);
+        if (compact) t.Compact();
+        return t;
+    }
+
+    /// <summary>Insert cost with the index kept current, the garbage that leaves, and what compaction costs and reclaims.</summary>
+    public static void SnapshotCosts()
+    {
+        Costs("Real IPv4", RealData.V4, 32);
+        Costs("Real IPv6", RealData.V6, 128);
+    }
+
+    private static void Costs<TKey>(string name, RealData.Table<TKey> table, int width) where TKey : struct, IBitKey<TKey>
+    {
+        foreach (var threshold in new[] { 8, 32 })
+        {
+            GC.Collect();
+            var sw = Stopwatch.StartNew();
+            var t = new SnapshotTrie<TKey, IPNetwork, int>(width, 16, 8, threshold);
+            for (var i = 0; i < table.Bits.Length; i++) t.TryAdd(in table.Bits[i], table.Lengths[i], table.Networks[i], table.Asns[i]);
+            var insert = sw.Elapsed.TotalMilliseconds;
+            var garbage = t.Garbage;
+            var before = t.MemoryInBytes();
+            sw.Restart();
+            t.Compact();
+            var compact = sw.Elapsed.TotalMilliseconds;
+            var after = t.MemoryInBytes();
+
+            sw.Restart();
+            for (var i = 0; i < table.Bits.Length; i += 100) t.TryRemove(in table.Bits[i], table.Lengths[i]);
+            for (var i = 0; i < table.Bits.Length; i += 100) t.TryAdd(in table.Bits[i], table.Lengths[i], table.Networks[i], table.Asns[i]);
+            var churnOps = 2 * ((table.Bits.Length + 99) / 100);
+            var churn = sw.Elapsed.TotalMilliseconds;
+
+            GC.Collect();
+            sw.Restart();
+            var bulk = new SnapshotTrie<TKey, IPNetwork, int>(width, 16, 8, threshold);
+            bulk.BeginBulkLoad();
+            for (var i = 0; i < table.Bits.Length; i++) bulk.TryAdd(in table.Bits[i], table.Lengths[i], table.Networks[i], table.Asns[i]);
+            var bulkInsert = sw.Elapsed.TotalMilliseconds;
+            bulk.EndBulkLoad();
+            var bulkTotal = sw.Elapsed.TotalMilliseconds;
+            Console.WriteLine($"{name}, threshold {threshold}: bulk load {bulkInsert:F0} ms inserts + {bulkTotal - bulkInsert:F0} ms index = {bulkTotal:F0} ms, memory {bulk.MemoryInBytes() / 1048576.0:F1} MB");
+
+            Console.WriteLine($"{name}, threshold {threshold}: insert all {insert:F0} ms ({insert * 1000 / table.Bits.Length:F2} us each), " +
+                              $"garbage sub-table entries {garbage.SubEntries:N0}, memory {before / 1048576.0:F1} MB -> compact {compact:F0} ms -> {after / 1048576.0:F1} MB; " +
+                              $"then {churnOps:N0} removes and re-adds: {churn * 1000 / churnOps:F2} us each");
+        }
+    }
+
     public static NetworkPrefixLookup<int> BuildCurrent<TKey>(RealData.Table<TKey> table) where TKey : struct, IBitKey<TKey>
     {
         var lookup = new NetworkPrefixLookup<int>();
@@ -118,6 +172,9 @@ public static class RealDataChecks
             "v6-cached" => Single(RealData.V6, BuildCached(RealData.V6)),
             "v6-pooled" => Single(RealData.V6, BuildPooled(RealData.V6, 0)),
             _ when variant.StartsWith("v6-index") => Single(RealData.V6, BuildPooled(RealData.V6, int.Parse(variant[8..]))),
+            "v4-snap" => SingleSnapshot(RealData.V4, BuildSnapshot(RealData.V4, 32)),
+            "v6-snap" => SingleSnapshot(RealData.V6, BuildSnapshot(RealData.V6, 128)),
+            "v6-snap4" => SingleSnapshot(RealData.V6, BuildSnapshot(RealData.V6, 128, 4)),
             _ when variant.StartsWith("v4-ml") => Single(RealData.V4, MultiLevel(RealData.V4, variant[5..], 32)),
             _ when variant.StartsWith("v6-ml") => Single(RealData.V6, MultiLevel(RealData.V6, variant[5..], 128)),
             _ => throw new ArgumentException(variant)
@@ -139,6 +196,12 @@ public static class RealDataChecks
     {
         var parts = spec.Split('-').Select(int.Parse).ToArray();
         return BuildMultiLevel(table, parts[0], parts[1], parts[2], width);
+    }
+
+    private static Func<long> SingleSnapshot<TKey>(RealData.Table<TKey> table, SnapshotTrie<TKey, IPNetwork, int> trie) where TKey : struct, IBitKey<TKey>
+    {
+        var keys = table.Keys;
+        return () => { long sum = 0; for (var i = 0; i < keys.Length; i++) sum += trie.TryGetMatch(in keys[i], out var p, out var v) ? p.PrefixLength + v : -1; return sum; };
     }
 
     private static Func<long> Single<TKey>(RealData.Table<TKey> table, CachedKeyTrie<TKey, IPNetwork, int> trie) where TKey : struct, IBitKey<TKey>
