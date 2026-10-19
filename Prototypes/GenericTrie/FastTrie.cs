@@ -195,6 +195,15 @@ public sealed class PooledTrie<TKey, TPrefix, TValue> where TKey : struct, IBitK
     private CandidateEntry[]? _candidateIndex;
     private TKey _candidateSplit; // selects key bit number _indexBits
 
+    // multi-level index: a root table over the first _mlRootBits bits, and sub-tables of _mlSubBits bits each for blocks
+    // that still hold many nodes. An entry is (best value index << 32 | target); when bit 31 of the target is set, the
+    // rest of the target is the start of a sub-table in _mlSubs, otherwise it is a node index.
+    private ulong[]? _mlRoot;
+    private ulong[] _mlSubs = Array.Empty<ulong>();
+    private int _mlRootBits;
+    private int _mlSubBits;
+    private const uint SubTableFlag = 0x8000_0000;
+
     private const int Root = 1;
 
     public PooledTrie()
@@ -245,6 +254,7 @@ public sealed class PooledTrie<TKey, TPrefix, TValue> where TKey : struct, IBitK
     {
         _index = null; // the prototype rebuilds the index explicitly after changes
         _candidateIndex = null;
+        _mlRoot = null;
 
         var bits = TKey.Truncate(key, length);
 
@@ -454,6 +464,102 @@ public sealed class PooledTrie<TKey, TPrefix, TValue> where TKey : struct, IBitK
         FinalEntryFraction = final / (double)index.Length;
     }
 
+    /// <summary>Shrinks the node, length and entry arrays to exactly what is used, removing the growth headroom.</summary>
+    public void TrimExcess()
+    {
+        Array.Resize(ref _nodes, _nodeCount);
+        Array.Resize(ref _lengths, _nodeCount);
+        Array.Resize(ref _entries, _valueCount);
+    }
+
+    /// <summary>Bytes held by each part of the structure, from array capacities.</summary>
+    public (long Nodes, long Lengths, long Entries, long Index) MemoryBreakdown() =>
+        ((long)_nodes.Length * Unsafe.SizeOf<Node>(),
+         (long)_lengths.Length * sizeof(int),
+         (long)_entries.Length * Unsafe.SizeOf<Entry>(),
+         (_index?.LongLength ?? 0) * sizeof(ulong));
+
+    /// <summary>
+    ///     Builds a multi-level index. The root table covers the first <paramref name="rootBits" /> bits. Wherever the
+    ///     node an entry would point to still has more than <paramref name="threshold" /> nodes below it within that
+    ///     entry's block, the entry points to a sub-table over the next <paramref name="subBits" /> bits instead, and so
+    ///     on. Dense regions get indexed deeply; sparse ones cost nothing.
+    /// </summary>
+    public (int SubTables, long Bytes) BuildMultiLevelIndex(int rootBits, int subBits, int threshold, int keyWidth)
+    {
+        var subs = new List<ulong>();
+        var root = new ulong[1 << rootBits];
+        for (var top = 0; top < root.Length; top++)
+        {
+            var key = TKey.FromTopBits(top, rootBits);
+            var (node, best) = Descend(Root, -1, key, rootBits);
+            root[top] = MakeEntry(node, best, key, rootBits);
+        }
+
+        _mlRootBits = rootBits;
+        _mlSubBits = subBits;
+        _mlSubs = subs.ToArray();
+        _mlRoot = root;
+        _index = null;
+        _candidateIndex = null;
+        return (subs.Count >> subBits, (root.LongLength + subs.Count) * sizeof(ulong));
+
+        ulong MakeEntry(int node, int best, TKey key, int decided)
+        {
+            if (decided + subBits > keyWidth || !HasMoreNodesBelow(node, key, decided, threshold))
+                return (ulong)(uint)best << 32 | (uint)node;
+
+            var start = subs.Count;
+            subs.AddRange(new ulong[1 << subBits]);
+            for (var w = 0; w < 1 << subBits; w++)
+            {
+                var subKey = TKey.SetBits(key, decided, subBits, w);
+                var (subNode, subBest) = Descend(node, best, subKey, decided + subBits);
+                subs[start + w] = MakeEntry(subNode, subBest, subKey, decided + subBits);
+            }
+
+            return (ulong)(uint)best << 32 | SubTableFlag | (uint)start;
+        }
+    }
+
+    // Walks from node i (which matches key and whose best match is best) as far as the first `bits` bits of key decide.
+    private (int Node, int Best) Descend(int i, int best, in TKey key, int bits)
+    {
+        while (true)
+        {
+            best = SelectBest(_nodes[i].Value, best);
+            if (_lengths[i] >= bits)
+                return (i, best);
+
+            var next = ChildAt(ref _nodes[i], TKey.IsSet(key, _nodes[i].Split));
+            if (_lengths[next] > bits || !TKey.MatchesUnderMask(key, _nodes[next].Bits, _nodes[next].Mask))
+                return (i, best);
+            i = next;
+        }
+    }
+
+    // True when more than `threshold` nodes below `node` lie in the block of keys that share the first `decided` bits of key.
+    private bool HasMoreNodesBelow(int node, in TKey key, int decided, int threshold)
+    {
+        var block = TKey.Truncate(key, decided);
+        var mask = TKey.MaskFor(decided);
+        var count = 0;
+        var stack = new Stack<int>();
+        if (_nodes[node].Child0 != 0) stack.Push(_nodes[node].Child0);
+        if (_nodes[node].Child1 != 0) stack.Push(_nodes[node].Child1);
+        while (stack.TryPop(out var c))
+        {
+            if (!TKey.MatchesUnderMask(_nodes[c].Bits, block, mask))
+                continue; // outside the block, and so is everything below it
+            if (++count > threshold)
+                return true;
+            if (_nodes[c].Child0 != 0) stack.Push(_nodes[c].Child0);
+            if (_nodes[c].Child1 != 0) stack.Push(_nodes[c].Child1);
+        }
+
+        return false;
+    }
+
     /// <summary>The share of index entries that point at the sentinel because nothing below them can match.</summary>
     public double FinalEntryFraction { get; private set; }
 
@@ -461,6 +567,32 @@ public sealed class PooledTrie<TKey, TPrefix, TValue> where TKey : struct, IBitK
     private int FindValueIndex(in TKey key)
     {
         ref var nodes = ref MemoryMarshal.GetArrayDataReference(_nodes);
+
+        var mlRoot = _mlRoot;
+        if (mlRoot != null)
+        {
+            var entry = Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(mlRoot), TKey.GetTopBits(key, _mlRootBits));
+            var offset = _mlRootBits;
+            ref var subs = ref MemoryMarshal.GetArrayDataReference(_mlSubs);
+            while (((uint)entry & SubTableFlag) != 0)
+            {
+                entry = Unsafe.Add(ref subs, (int)((uint)entry & ~SubTableFlag) + TKey.GetBits(key, offset, _mlSubBits));
+                offset += _mlSubBits;
+            }
+
+            var at = (int)(uint)entry;
+            var found = (int)(entry >> 32);
+            while (true)
+            {
+                ref var n = ref Unsafe.Add(ref nodes, at);
+                found = SelectBest(n.Value, found);
+                var next = ChildAt(ref n, TKey.IsSet(key, n.Split));
+                ref var c = ref Unsafe.Add(ref nodes, next);
+                if (!TKey.MatchesUnderMask(key, c.Bits, c.Mask))
+                    return found;
+                at = next;
+            }
+        }
 
         var candidates = _candidateIndex;
         if (candidates != null)
@@ -532,6 +664,17 @@ public sealed class PooledTrie<TKey, TPrefix, TValue> where TKey : struct, IBitK
         var i = Root;
         if (_index != null)
             i = (int)(uint)_index[TKey.GetTopBits(key, _indexBits)];
+        if (_mlRoot != null)
+        {
+            var entry = _mlRoot[TKey.GetTopBits(key, _mlRootBits)];
+            var offset = _mlRootBits;
+            while (((uint)entry & SubTableFlag) != 0)
+            {
+                entry = _mlSubs[(int)((uint)entry & ~SubTableFlag) + TKey.GetBits(key, offset, _mlSubBits)];
+                offset += _mlSubBits;
+            }
+            i = (int)(uint)entry;
+        }
 
         var visited = 1;
         while (true)

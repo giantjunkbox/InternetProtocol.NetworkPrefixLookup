@@ -60,6 +60,12 @@ public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
 
     /// <summary>A key whose first <paramref name="count" /> bits are <paramref name="top" /> and whose other bits are zero.</summary>
     static abstract TSelf FromTopBits(int top, int count);
+
+    /// <summary>The <paramref name="count" /> bits starting at bit <paramref name="offset" />, as an integer. 1 to 24 bits.</summary>
+    static abstract int GetBits(in TSelf key, int offset, int count);
+
+    /// <summary>A copy of <paramref name="key" /> with <paramref name="count" /> bits at <paramref name="offset" /> replaced by <paramref name="value" />.</summary>
+    static abstract TSelf SetBits(in TSelf key, int offset, int count, int value);
 }
 
 /// <summary>32-bit key.</summary>
@@ -96,6 +102,15 @@ public readonly struct Bits32 : IBitKey<Bits32>
     public static int GetTopBits(in Bits32 key, int count) => (int)(key.Value >> (32 - count));
 
     public static Bits32 FromTopBits(int top, int count) => new((uint)top << (32 - count));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int GetBits(in Bits32 key, int offset, int count) => (int)((key.Value << offset) >> (32 - count));
+
+    public static Bits32 SetBits(in Bits32 key, int offset, int count, int value)
+    {
+        var mask = (uint.MaxValue >> (32 - count)) << (32 - offset - count);
+        return new((key.Value & ~mask) | (((uint)value << (32 - offset - count)) & mask));
+    }
 }
 
 /// <summary>128-bit key.</summary>
@@ -130,6 +145,15 @@ public readonly struct Bits128 : IBitKey<Bits128>
     public static int GetTopBits(in Bits128 key, int count) => (int)(ulong)(key.Value >> (128 - count));
 
     public static Bits128 FromTopBits(int top, int count) => new((UInt128)(uint)top << (128 - count));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int GetBits(in Bits128 key, int offset, int count) => (int)(ulong)((key.Value << offset) >> (128 - count));
+
+    public static Bits128 SetBits(in Bits128 key, int offset, int count, int value)
+    {
+        var mask = (UInt128.MaxValue >> (128 - count)) << (128 - offset - count);
+        return new((key.Value & ~mask) | (((UInt128)(uint)value << (128 - offset - count)) & mask));
+    }
 }
 
 [InlineArray(4)]
@@ -203,6 +227,27 @@ public struct Bits256 : IBitKey<Bits256>
 
     public static Bits256 FromTopBits(int top, int count) { var k = new Bits256(); k.Words[0] = (ulong)(uint)top << (64 - count); return k; }
 
+    public static int GetBits(in Bits256 key, int offset, int count)
+    {
+        var result = 0;
+        for (var i = 0; i < count; i++)
+            result = (result << 1) | (int)((key.Words[(offset + i) >> 6] >> (63 - ((offset + i) & 63))) & 1);
+        return result;
+    }
+
+    public static Bits256 SetBits(in Bits256 key, int offset, int count, int value)
+    {
+        var result = key;
+        for (var i = 0; i < count; i++)
+        {
+            var bit = (ulong)((value >> (count - 1 - i)) & 1);
+            var word = (offset + i) >> 6;
+            var shift = 63 - ((offset + i) & 63);
+            result.Words[word] = (result.Words[word] & ~(1UL << shift)) | (bit << shift);
+        }
+        return result;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector256<ulong> AsVector(in Bits256 value) => Unsafe.As<Words4, Vector256<ulong>>(ref Unsafe.AsRef(in value.Words));
 
@@ -275,6 +320,33 @@ public readonly struct Bits192 : IBitKey<Bits192>
     public static int GetTopBits(in Bits192 key, int count) => (int)(key.W0 >> (64 - count));
 
     public static Bits192 FromTopBits(int top, int count) => new((ulong)(uint)top << (64 - count), 0, 0);
+
+    private static ulong Word(in Bits192 k, int i) => i == 0 ? k.W0 : i == 1 ? k.W1 : k.W2;
+
+    public static int GetBits(in Bits192 key, int offset, int count)
+    {
+        var result = 0;
+        for (var i = 0; i < count; i++)
+            result = (result << 1) | (int)((Word(key, (offset + i) >> 6) >> (63 - ((offset + i) & 63))) & 1);
+        return result;
+    }
+
+    public static Bits192 SetBits(in Bits192 key, int offset, int count, int value)
+    {
+        ulong w0 = key.W0, w1 = key.W1, w2 = key.W2;
+        for (var i = 0; i < count; i++)
+        {
+            var bit = (ulong)((value >> (count - 1 - i)) & 1);
+            var shift = 63 - ((offset + i) & 63);
+            switch ((offset + i) >> 6)
+            {
+                case 0: w0 = (w0 & ~(1UL << shift)) | (bit << shift); break;
+                case 1: w1 = (w1 & ~(1UL << shift)) | (bit << shift); break;
+                default: w2 = (w2 & ~(1UL << shift)) | (bit << shift); break;
+            }
+        }
+        return new(w0, w1, w2);
+    }
 }
 
 /// <summary>
@@ -357,6 +429,26 @@ public readonly struct BitsVar : IBitKey<BitsVar>
     public static int GetTopBits(in BitsVar key, int count) => (int)(key.Words[0] >> (64 - count));
 
     public static BitsVar FromTopBits(int top, int count) => new(new[] { (ulong)(uint)top << (64 - count), 0UL, 0UL, 0UL });
+
+    public static int GetBits(in BitsVar key, int offset, int count)
+    {
+        var result = 0;
+        for (var i = 0; i < count; i++)
+            result = (result << 1) | (int)((key.Words[(offset + i) >> 6] >> (63 - ((offset + i) & 63))) & 1);
+        return result;
+    }
+
+    public static BitsVar SetBits(in BitsVar key, int offset, int count, int value)
+    {
+        var words = (ulong[])key.Words.Clone();
+        for (var i = 0; i < count; i++)
+        {
+            var bit = (ulong)((value >> (count - 1 - i)) & 1);
+            var shift = 63 - ((offset + i) & 63);
+            words[(offset + i) >> 6] = (words[(offset + i) >> 6] & ~(1UL << shift)) | (bit << shift);
+        }
+        return new BitsVar(words);
+    }
 }
 
 /// <summary>
