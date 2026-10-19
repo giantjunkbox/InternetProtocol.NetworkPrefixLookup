@@ -18,6 +18,7 @@
 
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
 
 namespace GenericTrie;
 
@@ -39,6 +40,20 @@ public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
 
     /// <summary>Number of leading bits the two values share, capped at <paramref name="maxLength" />.</summary>
     static abstract int CommonPrefixLength(in TSelf a, in TSelf b, int maxLength);
+
+    // Operations that let a node cache its mask and split bit, as BitTrie does. Used by CachedKeyTrie.
+
+    /// <summary>A value with the first <paramref name="length" /> bits set.</summary>
+    static abstract TSelf MaskFor(int length);
+
+    /// <summary>A value with only bit <paramref name="length" /> set, or zero when the length is the full width.</summary>
+    static abstract TSelf SplitFor(int length);
+
+    /// <summary>True when <c>key &amp; split</c> is non-zero.</summary>
+    static abstract bool IsSet(in TSelf key, in TSelf split);
+
+    /// <summary>True when <c>(key &amp; mask) == bits</c>.</summary>
+    static abstract bool MatchesUnderMask(in TSelf key, in TSelf bits, in TSelf mask);
 }
 
 /// <summary>32-bit key.</summary>
@@ -61,6 +76,15 @@ public readonly struct Bits32 : IBitKey<Bits32>
     public static bool StartsWith(in Bits32 key, in Bits32 prefix, int length) => ((key.Value ^ prefix.Value) & Mask(length)) == 0;
 
     public static int CommonPrefixLength(in Bits32 a, in Bits32 b, int maxLength) => Math.Min(BitOperations.LeadingZeroCount(a.Value ^ b.Value), maxLength);
+
+    public static Bits32 MaskFor(int length) => new(Mask(length));
+    public static Bits32 SplitFor(int length) => new(length >= 32 ? 0 : 0x8000_0000u >> length);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool IsSet(in Bits32 key, in Bits32 split) => (key.Value & split.Value) != 0;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool MatchesUnderMask(in Bits32 key, in Bits32 bits, in Bits32 mask) => (key.Value & mask.Value) == bits.Value;
 }
 
 /// <summary>128-bit key.</summary>
@@ -81,6 +105,15 @@ public readonly struct Bits128 : IBitKey<Bits128>
     public static bool StartsWith(in Bits128 key, in Bits128 prefix, int length) => ((key.Value ^ prefix.Value) & Mask(length)) == UInt128.Zero;
 
     public static int CommonPrefixLength(in Bits128 a, in Bits128 b, int maxLength) => Math.Min((int)UInt128.LeadingZeroCount(a.Value ^ b.Value), maxLength);
+
+    public static Bits128 MaskFor(int length) => new(Mask(length));
+    public static Bits128 SplitFor(int length) => new(length >= 128 ? UInt128.Zero : UInt128.One << (127 - length));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool IsSet(in Bits128 key, in Bits128 split) => (key.Value & split.Value) != UInt128.Zero;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool MatchesUnderMask(in Bits128 key, in Bits128 bits, in Bits128 mask) => (key.Value & mask.Value) == bits.Value;
 }
 
 [InlineArray(4)]
@@ -131,6 +164,28 @@ public struct Bits256 : IBitKey<Bits256>
         }
         return Math.Min(256, maxLength);
     }
+
+    public static Bits256 MaskFor(int length) => Truncate(new Bits256 { Words = AllOnes() }, length);
+
+    public static Bits256 SplitFor(int length)
+    {
+        var result = new Bits256();
+        if (length < 256)
+            result.Words[length >> 6] = 1UL << (63 - (length & 63));
+        return result;
+    }
+
+    // the four words are compared as one 256-bit vector: one AND and one test or compare instruction each
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool IsSet(in Bits256 key, in Bits256 split) => (AsVector(key) & AsVector(split)) != Vector256<ulong>.Zero;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static bool MatchesUnderMask(in Bits256 key, in Bits256 bits, in Bits256 mask) => (AsVector(key) & AsVector(mask)) == AsVector(bits);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector256<ulong> AsVector(in Bits256 value) => Unsafe.As<Words4, Vector256<ulong>>(ref Unsafe.AsRef(in value.Words));
+
+    private static Words4 AllOnes() { var w = new Words4(); for (var i = 0; i < 4; i++) w[i] = ulong.MaxValue; return w; }
 }
 
 /// <summary>
@@ -181,6 +236,33 @@ public readonly struct BitsVar : IBitKey<BitsVar>
                 return Math.Min(i * 64 + BitOperations.LeadingZeroCount(diff), maxLength);
         }
         return Math.Min(a.Words.Length * 64, maxLength);
+    }
+
+    // the variable-width type cannot know the width here, so the study data's 256 bits are assumed
+    public static BitsVar MaskFor(int length) => Truncate(new BitsVar(new[] { ulong.MaxValue, ulong.MaxValue, ulong.MaxValue, ulong.MaxValue }), length);
+
+    public static BitsVar SplitFor(int length)
+    {
+        var words = new ulong[4];
+        if (length < 256)
+            words[length >> 6] = 1UL << (63 - (length & 63));
+        return new BitsVar(words);
+    }
+
+    public static bool IsSet(in BitsVar key, in BitsVar split)
+    {
+        for (var i = 0; i < key.Words.Length; i++)
+            if ((key.Words[i] & split.Words[i]) != 0)
+                return true;
+        return false;
+    }
+
+    public static bool MatchesUnderMask(in BitsVar key, in BitsVar bits, in BitsVar mask)
+    {
+        for (var i = 0; i < key.Words.Length; i++)
+            if ((key.Words[i] & mask.Words[i]) != bits.Words[i])
+                return false;
+        return true;
     }
 }
 
@@ -301,6 +383,111 @@ public sealed class KeyTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey<
         {
             Bits = bits;
             Length = length;
+        }
+    }
+}
+
+/// <summary>
+///     <see cref="KeyTrie{TKey,TPrefix,TValue}" /> with the mask and split bit cached in every node, exactly as
+///     <see cref="BitTrie{TBits,TPrefix,TValue}" /> does, but through <see cref="IBitKey{TSelf}" /> so the key can be
+///     any width. Only the lookup path differs from KeyTrie; insert reuses the same steps.
+/// </summary>
+public sealed class CachedKeyTrie<TKey, TPrefix, TValue> where TKey : struct, IBitKey<TKey>
+{
+    private readonly Node _root = new(default, 0);
+
+    public bool TryAdd(in TKey key, int length, TPrefix prefix, TValue value)
+    {
+        var bits = TKey.Truncate(key, length);
+
+        var parent = _root;
+        while (true)
+        {
+            var next = parent.Children[TKey.IsSet(bits, parent.Split) ? 1 : 0];
+            if (next == null || next.Length > length || !TKey.MatchesUnderMask(bits, next.Bits, next.Mask))
+                break;
+            parent = next;
+        }
+
+        if (parent.Length == length)
+        {
+            if (parent.HasValue)
+                return false;
+
+            parent.Prefix = prefix;
+            parent.Value = value;
+            parent.HasValue = true;
+            return true;
+        }
+
+        var slot = TKey.IsSet(bits, parent.Split) ? 1 : 0;
+        var existing = parent.Children[slot];
+        var node = new Node(bits, length) { Prefix = prefix, Value = value, HasValue = true };
+
+        if (existing == null)
+        {
+            parent.Children[slot] = node;
+            return true;
+        }
+
+        if (length < existing.Length && TKey.MatchesUnderMask(existing.Bits, bits, node.Mask))
+        {
+            node.Children[TKey.IsSet(existing.Bits, node.Split) ? 1 : 0] = existing;
+            parent.Children[slot] = node;
+            return true;
+        }
+
+        var common = TKey.CommonPrefixLength(bits, existing.Bits, Math.Min(length, existing.Length));
+        var routing = new Node(TKey.Truncate(bits, common), common);
+        routing.Children[TKey.IsSet(bits, routing.Split) ? 1 : 0] = node;
+        routing.Children[TKey.IsSet(existing.Bits, routing.Split) ? 1 : 0] = existing;
+        parent.Children[slot] = routing;
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool TryGetMatch(in TKey key, out TPrefix prefix, out TValue value)
+    {
+        Node? best = null;
+        Node? node = _root;
+
+        do
+        {
+            if (node.HasValue)
+                best = node;
+
+            node = node.Children[TKey.IsSet(key, node.Split) ? 1 : 0];
+        } while (node != null && TKey.MatchesUnderMask(key, node.Bits, node.Mask));
+
+        if (best != null)
+        {
+            prefix = best.Prefix;
+            value = best.Value;
+            return true;
+        }
+
+        prefix = default!;
+        value = default!;
+        return false;
+    }
+
+    private sealed class Node
+    {
+        public readonly TKey Bits;
+        public readonly TKey Mask;
+        public readonly TKey Split;
+        public readonly int Length;
+        public readonly Node?[] Children = new Node?[2];
+        public bool HasValue;
+        public TPrefix Prefix = default!;
+        public TValue Value = default!;
+
+        public Node(TKey bits, int length)
+        {
+            Bits = bits;
+            Length = length;
+            Mask = TKey.MaskFor(length);
+            Split = TKey.SplitFor(length);
         }
     }
 }
