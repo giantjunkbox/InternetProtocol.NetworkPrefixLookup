@@ -415,8 +415,9 @@ so they verify the exact shape of the trie and not just lookup results. Notable 
 
 The `ToDotSvgTree_*` tests are disabled because they need Graphviz and write to `c:\temp`.
 
-On Linux and macOS, 16 of the 19 tests currently fail because of the `ToTextTree` newline issue described below. All
-19 pass when that one line is corrected.
+All 19 tests pass on Linux and Windows. The expected trees are raw string literals, so they take the line endings of
+the checked-out file, while `ToTextTree` uses `Environment.NewLine`. The repository's `.gitattributes` sets
+`text=auto`, which checks files out with the platform's native line endings, so the two agree.
 
 ### Benchmarks
 
@@ -440,7 +441,6 @@ These were found while writing this document. Behavior was intentionally left un
 
 | Issue | Effect | Location |
 | --- | --- | --- |
-| `ToTextTree` removes the trailing line break by deleting two characters, which assumes `\r\n`. | On Linux and macOS the final character of the output is lost and 16 tests fail. | `NetworkPrefixLookupBase.ToTextTree` |
 | Insert case 2 does not increment `Count`. | `Count` is too low. With the benchmark data it reports 91,471 instead of 96,944. | `NetworkPrefixLookupBase.TryAdd` |
 | `TryRemove` does not check `HasValue`. | Removing a routing node's prefix, or `/0` from an empty trie, returns `true` and decrements `Count`, which can go negative. | `NetworkPrefixLookupBase.TryRemove` |
 | `Clear` does not reset `Count`. | `Count` is wrong after `Clear`. | `NetworkPrefixLookupBase.Clear` |

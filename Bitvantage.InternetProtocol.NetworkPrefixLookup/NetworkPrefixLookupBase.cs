@@ -406,9 +406,8 @@ public abstract class NetworkPrefixLookupBase<TValue> where TValue : NetworkPref
     ///         changing it breaks most tests.
     ///     </para>
     ///     <para>
-    ///         KNOWN ISSUE: the trailing line break is removed by deleting two characters, which assumes
-    ///         <see cref="Environment.NewLine" /> is <c>\r\n</c>. On Linux and macOS the last character of the
-    ///         final line is removed instead, which makes the text tree unit tests fail on those platforms.
+    ///         Lines are separated by <see cref="Environment.NewLine" />, so the output uses <c>\r\n</c> on Windows
+    ///         and <c>\n</c> on Linux and macOS.
     ///     </para>
     /// </remarks>
     public string ToTextTree(IPVersion version, Func<TValue, string>? displayText = null)
@@ -468,9 +467,9 @@ public abstract class NetworkPrefixLookupBase<TValue> where TValue : NetworkPref
         }
 
         // remove the extra line break at the end
-        // KNOWN ISSUE: assumes a two character "\r\n" line break; see the remarks above
+        // AppendLine writes Environment.NewLine, which is two characters on Windows and one elsewhere
         if (stringBuilder.Length > 0)
-            stringBuilder.Remove(stringBuilder.Length - 2, 2);
+            stringBuilder.Length -= Environment.NewLine.Length;
 
         return stringBuilder.ToString();
     }

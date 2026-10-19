@@ -38,10 +38,9 @@ dotnet run -c Release --project PerformanceTest           # benchmarks; slow, ru
 
 `PerformanceTest` ignores command-line arguments, so BenchmarkDotNet filters do not work without changing `Main`.
 
-**Test baseline on Linux:** 3 of 19 tests pass and 16 fail. Every failure comes from one known bug: `ToTextTree`
-trims its trailing line break by removing two characters, which assumes Windows `\r\n`. All 19 pass on Windows, or on
-Linux once that trim uses `Environment.NewLine.Length`. Do not edit the expected strings in the tests to work around
-it.
+**Test baseline:** all 19 tests pass on Linux and Windows. The expected trees in the tests are raw string literals, so
+they use the line endings of the checked-out file, and `ToTextTree` uses `Environment.NewLine`. Keep `.gitattributes`
+at `text=auto` so those stay in agreement.
 
 The library build has 4 pre-existing nullable warnings (CS8618, CS8625). Do not add new warnings.
 
