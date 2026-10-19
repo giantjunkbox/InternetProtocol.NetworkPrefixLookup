@@ -638,7 +638,13 @@ public sealed class SnapshotTrie<TKey, TPrefix, TValue> where TKey : struct, IBi
         _publishing = false;
         _w = next;
         if (_rootBits > 0)
+        {
             RebuildIndex(); // also during a bulk load: EndBulkLoad compacts to build the index
+            // the sub-table array grew by doubling; keep an eighth as headroom and give the rest back
+            var keep = _w.SubCount + _w.SubCount / 8 + (1 << _subBits);
+            if (_w.Subs.Length > keep)
+                Array.Resize(ref _w.Subs, keep);
+        }
         _publishing = true;
         Volatile.Write(ref _state, _w);
 

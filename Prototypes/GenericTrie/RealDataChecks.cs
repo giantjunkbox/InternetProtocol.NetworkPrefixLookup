@@ -60,6 +60,16 @@ public static class RealDataChecks
         return t;
     }
 
+    public static SnapshotTrie<TKey, IPNetwork, int> BulkSnapshot<TKey>(RealData.Table<TKey> table, int width, int threshold)
+        where TKey : struct, IBitKey<TKey>
+    {
+        var t = new SnapshotTrie<TKey, IPNetwork, int>(width, 16, 8, threshold);
+        t.BeginBulkLoad();
+        for (var i = 0; i < table.Bits.Length; i++) t.TryAdd(in table.Bits[i], table.Lengths[i], table.Networks[i], table.Asns[i]);
+        t.EndBulkLoad();
+        return t;
+    }
+
     /// <summary>Insert cost with the index kept current, the garbage that leaves, and what compaction costs and reclaims.</summary>
     public static void SnapshotCosts()
     {

@@ -68,6 +68,21 @@ public static class MemoryComparison
 
     private static void ReportReal<TKey>(string name, RealData.Table<TKey> table, int bits) where TKey : struct, IBitKey<TKey>
     {
+        var width = typeof(TKey) == typeof(Bits32) ? 32 : 128;
+        var count = table.Bits.Length;
+        foreach (var threshold in new[] { 8, 32 })
+        {
+            var bytes = Retained(() =>
+            {
+                var t = new SnapshotTrie<TKey, IPNetwork, int>(width, 16, 8, threshold);
+                t.BeginBulkLoad();
+                for (var i = 0; i < table.Bits.Length; i++) t.TryAdd(in table.Bits[i], table.Lengths[i], table.Networks[i], table.Asns[i]);
+                t.EndBulkLoad();
+                return t;
+            });
+            Console.WriteLine($"| {name}, {count:N0} prefixes | SnapshotTrie, bulk loaded, multi-level 16/8/{threshold} | {bytes / 1048576.0:F1} MB | {bytes / (double)count:F0} |");
+        }
+
         var prefixes = table.Networks.Select(n => new NetworkPrefix(n.BaseAddress, n.PrefixLength)).ToArray();
         Report($"{name}, {table.Bits.Length:N0} prefixes", table.Bits.Length, prefixes,
             () => { var l = new NetworkPrefixLookup<int>(); for (var i = 0; i < prefixes.Length; i++) l.TryAdd(prefixes[i], table.Asns[i]); return l; },
