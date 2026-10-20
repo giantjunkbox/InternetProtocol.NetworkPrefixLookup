@@ -38,6 +38,7 @@ against the current library on .NET 10.
 | `NetworkPrefix` support | A separate package containing the `NetworkPrefix` adapter. |
 | Key interface | `IBitKey<TSelf>`, with each node caching its mask and split bit. Widths are fixed at compile time; widths chosen at run time are not supported. See [Arbitrary key widths](#arbitrary-key-widths). |
 | Lookup results | Whichever shape is fastest. All measured shapes tied, so lookups use `out` parameters, which keep the node layout private. See [Lookup result shape](#lookup-result-shape). |
+| Context such as a VRF | One lookup instance per context, not wider keys. `Bits192`, recommended below for that purpose, was dropped after the read-write core moved to 8-bit BART nodes, where context bits in front of the address cost a level per byte. |
 | Write path | One read-write design in which every write does bounded work, with no pauses for growth or compaction. No separate real-time mode: two nearly identical code paths are not worth keeping. A pausing variant returns only if the bounded design proves clearly slower. See [Interface.md](Interface.md#bounded-writes). |
 
 ## What the library uses from NetworkPrefix today
@@ -357,7 +358,8 @@ Building the trie from 97,000 prefixes, with computed masks:
 - Constrain the core on `IBitKey<TSelf>` rather than `IBinaryInteger<T>`. It is equally fast and allows any fixed
   width.
 - Ship `Bits32`, `Bits64`, `Bits128` and `Bits192`. `Bits192` covers IPv6 plus up to 64 bits of context at the same
-  speed as `Bits128`. Add `Bits256` only if more context bits are needed. Try a vector-based `Bits128` and keep
+  speed as `Bits128`. (Later reversed: see [Decisions](#decisions). This measurement was made on the binary trie,
+  whose path compression folds a shared context into one node; the BART-style core has no such folding.) Add `Bits256` only if more context bits are needed. Try a vector-based `Bits128` and keep
   whichever benchmarks faster.
 - Cache the mask and split bit in each node.
 - Do not support widths chosen at run time. Shorter keys already fit in a wider key type, because bits are

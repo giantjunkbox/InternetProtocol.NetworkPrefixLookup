@@ -14,7 +14,7 @@ Three layers, as in the study, each knowing less than the one above it:
 | --- | --- | --- |
 | IP layer | `IPPrefixLookup<TPrefix, TAdapter, TValue>`, `IPNetworkLookup<TValue>`, their frozen forms | `IPAddress`, IPv4 and IPv6, your prefix type |
 | Core | `BitTrie<TKey, TPrefix, TValue>`, `FrozenBitTrie<TKey, TPrefix, TValue>` | Bits and lengths only |
-| Keys | `IBitKey<TSelf>`, `Bits32`, `Bits64`, `Bits128`, `Bits192` | Bit arithmetic for one fixed width |
+| Keys | `IBitKey<TSelf>`, `Bits32`, `Bits64`, `Bits128` | Bit arithmetic for one fixed width |
 
 Every layer comes in two forms:
 
@@ -37,7 +37,7 @@ operations. All are `static abstract`, so the JIT compiles each key type into pl
 ```csharp
 public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
 {
-    static abstract int Width { get; }                                         // 32, 64, 128, 192 ...
+    static abstract int Width { get; }                                         // 32, 64, 128 ...
 
     static abstract TSelf Truncate(in TSelf key, int length);                  // clear every bit from length on
     static abstract int CommonPrefixLength(in TSelf a, in TSelf b, int max);   // routing node for two siblings
@@ -57,8 +57,8 @@ public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
 - `GetBit` and `StartsWith` from the prototype are dropped. Only the uncached tries used them.
 - `GetTopBits` and `FromTopBits` get default implementations, so a new key type writes nine members. The shipped types
   override them where that saves an instruction.
-- Shipped key types: `Bits32`, `Bits64`, `Bits128`, and `Bits192` for IPv6 plus up to 64 bits of context. Each has a
-  constructor from its integer or words.
+- Shipped key types: `Bits32`, `Bits64` and `Bits128`. Each has a constructor from its integer. `Bits192`, proposed
+  for IPv6 plus up to 64 bits of context, was dropped; see [Status](#status).
 
 ## Core
 
@@ -435,6 +435,7 @@ Version 3 implements this interface. Where it differs from the proposal above:
 | Part | Shipped |
 | --- | --- |
 | Read-write core | `BitTrie` is built on the BART-style design measured as `BartTrie`, not on chunks, so there is nothing to tune or compact: no `BitTrieOptions`, no `Compact`, and `BitTrieStatistics` has no garbage counts. Its constructor throws `NotSupportedException` for widths that are not a multiple of 8 |
+| Key types | `Bits192` is not shipped. Context such as a VRF is better served by one lookup per context: in front of the address it would cost a trie level per 8 bits and waste the shortcut table and the frozen root |
 | Read-only core interface | Adds `TryGetValue(bits, length, out prefix, out value)`, an exact lookup that also returns the prefix object |
 | Frozen core | `FrozenBitTrie` keeps no nodes; parent links answer the other queries, as proposed. It exposes `Options` and `Bytes` |
 | IP layer options | `IPLookupOptions.MapIPv4MappedAddresses`, on by default, answers the open question below |

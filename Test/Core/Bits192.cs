@@ -18,11 +18,14 @@
 
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using Bitvantage.InternetProtocol;
 
-namespace Bitvantage.InternetProtocol;
+namespace Test.Core;
 
 /// <summary>
-///     A 192-bit key held in three 64-bit words, such as an IPv6 address followed by up to 64 bits of context.
+///     A 192-bit key held in three 64-bit words. The library does not ship it: it existed for an IPv6 address followed by
+///     up to 64 bits of context, such as a VRF, and one lookup per context serves that better. The tests keep it to cover
+///     the trie's code for keys wider than 128 bits.
 /// </summary>
 public readonly struct Bits192 : IBitKey<Bits192>, IEquatable<Bits192>
 {

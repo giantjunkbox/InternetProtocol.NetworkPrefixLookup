@@ -24,8 +24,8 @@ namespace Bitvantage.InternetProtocol;
 /// <remarks>
 ///     <para>
 ///         Every member is static, so the JIT compiles each key type into plain machine instructions. The library ships
-///         <see cref="Bits32" />, <see cref="Bits64" />, <see cref="Bits128" /> and <see cref="Bits192" />; any other
-///         fixed width that is a multiple of 8, up to 256 bits, can implement this interface.
+///         <see cref="Bits32" />, <see cref="Bits64" /> and <see cref="Bits128" />; any other fixed width that is a
+///         multiple of 8, up to 256 bits, can implement this interface.
 ///     </para>
 ///     <para>
 ///         Bit operations past the end of the key must treat the missing bits as zeros.

@@ -137,7 +137,7 @@ var lookup = new IPPrefixLookup<MyNetwork, MyNetworkAdapter, string>();
 ## Keys other than IP addresses
 
 The core works on bits only. `BitTrie<TKey, TPrefix, TValue>` takes any key type implementing `IBitKey<TKey>`;
-`Bits32`, `Bits64`, `Bits128` and `Bits192` are included. A 48-bit MAC address prefix, left-aligned in a `Bits64`:
+`Bits32`, `Bits64` and `Bits128` are included. A 48-bit MAC address prefix, left-aligned in a `Bits64`:
 
 ```csharp
 var vendors = new BitTrie<Bits64, string, string>();

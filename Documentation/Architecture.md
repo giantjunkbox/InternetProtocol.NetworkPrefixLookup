@@ -43,7 +43,7 @@ contains a given prefix, and look prefixes up exactly.
 
 | Path | Contents |
 | --- | --- |
-| `Bitvantage.InternetProtocol.NetworkPrefixLookup/Keys/` | `IBitKey<TSelf>` and `Bits32`, `Bits64`, `Bits128`, `Bits192` |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup/Keys/` | `IBitKey<TSelf>` and `Bits32`, `Bits64`, `Bits128` |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup/Core/` | `BitTrie`, `FrozenBitTrie`, `IReadOnlyBitTrie`, `BitSet256` and the ART tables, `PrefixEntry`, `NoValue` |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup/IP/` | Adapter interfaces, `IPAddressBits`, `IPPrefixLookup`, `IPRangeLookup`, their frozen forms, `IPNetworkLookup` |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup.*/` | One adapter package each |
@@ -76,9 +76,13 @@ through `out` parameters, as decided in [Abstraction-Study.md](Abstraction-Study
 
 A key is a fixed-width bit string, left-aligned: bit 0 is the most significant bit. `IBitKey<TSelf>` has only static
 members, so each key type is a struct the JIT compiles into plain instructions. Widths must be multiples of 8 from 8
-to 256, because the trie consumes 8 bits per level. The shipped types are `Bits32` (IPv4), `Bits64`, `Bits128` (IPv6)
-and `Bits192` (IPv6 plus 64 bits of context). A user type needs nine members; `GetTopBits` and `FromTopBits` have
-default implementations. The test project's `Bits16` is written that way.
+to 256, because the trie consumes 8 bits per level. The shipped types are `Bits32` (IPv4), `Bits64` and `Bits128` (IPv6).
+A user type needs nine members; `GetTopBits` and `FromTopBits` have default implementations. The test project's
+`Bits16` is written that way, and its `Bits192` covers keys wider than 128 bits.
+
+Keys are not the place for context such as a VRF. The context would have to come before the address, costing a trie
+level per 8 bits and spending the shortcut table and the frozen root on bits that barely vary. Use one lookup per
+context instead.
 
 Operations past the end of the key read zeros. The frozen tables rely on that: a last table narrower than the others
 reads padding bits as zeros.
@@ -428,7 +432,7 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 
 | Test class | What it checks |
 | --- | --- |
-| `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 16-, 32-, 64-, 128- and 192-bit keys, before and after removals; canonical shape; batches commit and discard; `Version`; lock-free readers during churn; concurrent writers |
+| `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 16-, 32-, 64-, 128- and 192-bit keys (16 and 192 are test-only types), before and after removals; canonical shape; batches commit and discard; `Version`; lock-free readers during churn; concurrent writers |
 | `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; IPv4-mapped addresses; writes and batches; a reader during churn |
 | `IP/IPRangeLookupTests` | Exact coverage, the fewest pieces, nested ranges and removal, random nested ranges against brute force, batches, the frozen form |
 | `Adapters/AdapterTests` | Each adapter package in both forms; MaxMind databases against `Reader.Find` |
