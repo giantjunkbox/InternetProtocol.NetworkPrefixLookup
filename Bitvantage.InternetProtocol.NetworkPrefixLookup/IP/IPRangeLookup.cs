@@ -41,12 +41,12 @@ namespace Bitvantage.InternetProtocol;
 ///     </para>
 ///     <para>
 ///         Counting, listing, <see cref="TryGetValue" />, <see cref="ContainsPrefix" /> and <see cref="Remove" /> work on
-///         whole ranges, matched exactly by their first and last address.
+///         whole ranges, matched exactly by their first and last address. A range is read once, when it is added;
+///         changing a stored range object afterwards changes nothing in the lookup.
 ///     </para>
 ///     <para>
-///         <b>Thread safety.</b> Any number of threads may read while one writes, and reads take no locks. A change to a
-///         range that is not a single CIDR block changes its pieces one after another, so a reader can see some pieces
-///         changed and others not; changes made in a <see cref="BeginBatch">batch</see> are published at once.
+///         <b>Thread safety.</b> Any number of threads may read while one writes, and reads take no locks. Every change
+///         to a range publishes all of its pieces at once. A change either completes or leaves the lookup as it was.
 ///     </para>
 /// </remarks>
 /// <typeparam name="TRange">The range type.</typeparam>
@@ -237,13 +237,8 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
         {
             if (_pending.ContainsKey(key))
                 return false;
-            var claim = new RangeClaim<TRange, TValue>(range, value);
-            foreach (var (bits, length) in RangePieces<TRange, TAdapter, TValue>.Decompose(key))
-            {
-                if (key.IsIPv6) AddClaim(_v6, new Bits128(bits), length, claim);
-                else AddClaim(_v4, new Bits32((uint)bits), length, claim);
-            }
-
+            var claim = new RangeClaim<TRange, TValue>(range, value, key);
+            ChangeClaims(key, claims => claims.Add(claim));
             Publish(_pending.Add(key, claim));
             return true;
         }
@@ -271,13 +266,8 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
             if (!_pending.ContainsKey(key))
                 return TryAdd(range, value);
 
-            var claim = new RangeClaim<TRange, TValue>(range, value);
-            foreach (var (bits, length) in RangePieces<TRange, TAdapter, TValue>.Decompose(key))
-            {
-                if (key.IsIPv6) ReplaceClaim(_v6, new Bits128(bits), length, key, claim);
-                else ReplaceClaim(_v4, new Bits32((uint)bits), length, key, claim);
-            }
-
+            var claim = new RangeClaim<TRange, TValue>(range, value, key);
+            ChangeClaims(key, claims => claims[IndexOf(claims, key)] = claim);
             Publish(_pending.SetItem(key, claim));
             return false;
         }
@@ -285,7 +275,7 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
 
     /// <summary>Returns the value of a range, adding it with a value from <paramref name="valueFactory" /> if absent.</summary>
     /// <param name="range">The range.</param>
-    /// <param name="valueFactory">Creates the value, called only when the range is absent.</param>
+    /// <param name="valueFactory">Creates the value, called only when the range is absent, while other writers wait.</param>
     public TValue GetOrAdd(TRange range, Func<TRange, TValue> valueFactory)
     {
         ArgumentNullException.ThrowIfNull(valueFactory);
@@ -309,12 +299,7 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
         {
             if (!_pending.ContainsKey(key))
                 return false;
-            foreach (var (bits, length) in RangePieces<TRange, TAdapter, TValue>.Decompose(key))
-            {
-                if (key.IsIPv6) ReplaceClaim(_v6, new Bits128(bits), length, key, null);
-                else ReplaceClaim(_v4, new Bits32((uint)bits), length, key, null);
-            }
-
+            ChangeClaims(key, claims => claims.RemoveAt(IndexOf(claims, key)));
             Publish(_pending.Remove(key));
             return true;
         }
@@ -337,47 +322,44 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
         if (!_batch) Volatile.Write(ref _published, ranges);
     }
 
-    // adds a claim to a piece, keeping the claims smallest first
-    private static void AddClaim<TKey>(BitTrie<TKey, TRange, RangePiece<TRange, TValue>> core, TKey bits, int length, RangeClaim<TRange, TValue> claim)
+    private static int IndexOf(List<RangeClaim<TRange, TValue>> claims, RangeKey key)
+    {
+        var at = claims.FindIndex(c => c.Key == key);
+        return at >= 0 ? at : throw new InvalidOperationException("A piece of a stored range is missing.");
+    }
+
+    private void ChangeClaims(RangeKey key, Action<List<RangeClaim<TRange, TValue>>> change)
+    {
+        if (key.IsIPv6) ChangeClaims(_v6, key, change, bits => new Bits128(bits));
+        else ChangeClaims(_v4, key, change, bits => new Bits32((uint)bits));
+    }
+
+    // Applies a change to the claims of every piece of a range. All the pieces' new claims are worked out from the
+    // writer's view of the trie before anything is written, so a change that fails leaves the lookup as it was, and a
+    // range of several pieces is published at once: by the caller's batch, or by a batch of its own.
+    private void ChangeClaims<TKey>(BitTrie<TKey, TRange, RangePiece<TRange, TValue>> core, RangeKey key, Action<List<RangeClaim<TRange, TValue>>> change, Func<UInt128, TKey> toKey)
         where TKey : struct, IBitKey<TKey>
     {
-        if (!core.TryGetValue(bits, length, out var winner, out var piece))
+        var updates = new List<(TKey Bits, int Length, List<RangeClaim<TRange, TValue>> Claims)>();
+        foreach (var (value, length) in RangePieces<TRange, TAdapter, TValue>.Decompose(key))
         {
-            core.Add(bits, length, claim.Range, new RangePiece<TRange, TValue>(claim.Value, null));
-            return;
+            var bits = toKey(value);
+            var claims = new List<RangeClaim<TRange, TValue>>();
+            if (core.TryGetPendingValue(bits, length, out var winner, out var piece))
+                RangePieces<TRange, TAdapter, TValue>.AddClaims(claims, winner, piece);
+            change(claims);
+            RangePieces<TRange, TAdapter, TValue>.SortBySize(claims);
+            updates.Add((bits, length, claims));
         }
 
-        var claims = new List<RangeClaim<TRange, TValue>>();
-        RangePieces<TRange, TAdapter, TValue>.AddClaims(claims, winner, piece);
-        claims.Add(claim);
-        RangePieces<TRange, TAdapter, TValue>.SortBySize(claims);
-        Store(core, bits, length, claims);
-    }
+        using var batch = updates.Count > 1 && !_batch ? core.BeginBatch() : null;
+        foreach (var (bits, length, claims) in updates)
+        {
+            if (claims.Count == 0) core.Remove(bits, length);
+            else core.AddOrUpdate(bits, length, claims[0].Range, RangePiece<TRange, TValue>.From(claims));
+        }
 
-    // replaces the claim of the range with the given key, or removes it when replacement is null
-    private static void ReplaceClaim<TKey>(BitTrie<TKey, TRange, RangePiece<TRange, TValue>> core, TKey bits, int length, RangeKey key, RangeClaim<TRange, TValue>? replacement)
-        where TKey : struct, IBitKey<TKey>
-    {
-        if (!core.TryGetValue(bits, length, out var winner, out var piece))
-            throw new InvalidOperationException("A piece of a stored range is missing.");
-
-        var claims = new List<RangeClaim<TRange, TValue>>();
-        RangePieces<TRange, TAdapter, TValue>.AddClaims(claims, winner, piece);
-        var at = claims.FindIndex(c => RangePieces<TRange, TAdapter, TValue>.KeyOf(c.Range) == key);
-        if (at < 0)
-            throw new InvalidOperationException("A piece of a stored range is missing.");
-        if (replacement is { } r) claims[at] = r;
-        else claims.RemoveAt(at);
-
-        if (claims.Count == 0) core.Remove(bits, length);
-        else Store(core, bits, length, claims);
-    }
-
-    private static void Store<TKey>(BitTrie<TKey, TRange, RangePiece<TRange, TValue>> core, TKey bits, int length, List<RangeClaim<TRange, TValue>> claims)
-        where TKey : struct, IBitKey<TKey>
-    {
-        var others = claims.Count > 1 ? claims.Skip(1).ToArray() : null;
-        core.AddOrUpdate(bits, length, claims[0].Range, new RangePiece<TRange, TValue>(claims[0].Value, others));
+        batch?.Commit();
     }
 
     /// <summary>

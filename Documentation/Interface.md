@@ -387,7 +387,9 @@ lookups return the range.
 - **Partly overlapping ranges** have no single right answer. An address in both gets whichever range's covering piece
   is smaller, which is well defined but rarely what a caller means, so the documentation should advise splitting them.
 - **Counting and listing** report ranges, not pieces. `TryGetValue` and `Remove` take the range, and match it exactly.
-- **Ranges are read once**, when added. Changing a range object that is already stored is not supported.
+- **Ranges are read once**, when added. Changing a range object that is already stored changes nothing in the lookup.
+- **A range's pieces change together.** Readers see all of a range's pieces added, updated or removed at once, and a
+  write that fails changes nothing.
 
 ## Examples
 

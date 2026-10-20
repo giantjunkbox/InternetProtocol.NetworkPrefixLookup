@@ -290,9 +290,10 @@ reads the two ends.
 
 - **Pieces.** A range is stored as the fewest prefixes that cover it exactly: from the first address, repeatedly the
   largest aligned block that fits. That is one prefix for a CIDR block, at most 62 for IPv4 and 254 for IPv6.
-- **Claims.** Each piece's prefix object is the winning range, and its value is a `RangePiece`: the winner's value and,
-  rarely, the other ranges that split into exactly the same piece, smallest first. A lookup reads the winner directly,
-  as fast as a prefix lookup.
+- **Claims.** Each piece's prefix object is the winning range, and its value is a `RangePiece`: the winner's value and
+  ends and, rarely, the other ranges that split into exactly the same piece, smallest first. A lookup reads the winner
+  directly, as fast as a prefix lookup. A range's ends are read once, when it is added, and stored with each claim, so
+  a caller that changes a stored range object cannot make the pieces disagree with the range list.
 - **Nesting.** An address in nested ranges gets the inner range, because the inner range's covering piece is longer or,
   when the pieces are identical, the inner range is the smaller claim. Removing a range removes its claims, uncovering
   the others. Partly overlapping ranges get whichever range's covering piece is longer.
@@ -301,8 +302,10 @@ reads the two ends.
   published one during a batch.
 - **`TryGetMatch(range)`** returns the smallest stored range that contains the whole range. Every stored range that
   contains it has a piece containing its first address, so the candidates are the claims on that address's matches.
-- **Writes** take the range lookup's own lock, then the tries' locks. A range of several pieces changes them one at a
-  time; a batch publishes them together.
+- **Writes** take the range lookup's own lock, then the tries' locks. A write works out the new claims of every piece
+  from the writer's view of the trie, which includes an open batch, before it changes anything, so a write either
+  completes or changes nothing. A range of several pieces is written in a batch of its own, or in the caller's, so
+  readers see all of its pieces change at once.
 
 ## Adapter packages
 
@@ -514,7 +517,7 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 | --- | --- |
 | `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 16-, 32- and 128-bit keys (16 is a test-only type), before and after removals; canonical shape; batches commit and discard; `Version`; lock-free readers during churn; concurrent writers |
 | `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; IPv4-mapped addresses; writes and batches; a reader during churn |
-| `IP/IPRangeLookupTests` | Exact coverage, the fewest pieces, nested ranges and removal, random nested ranges against brute force, batches, the frozen form |
+| `IP/IPRangeLookupTests` | Exact coverage, the fewest pieces, nested ranges and removal, random nested ranges against brute force, batches, writes that see the open batch, ranges read once, the frozen form |
 | `Adapters/AdapterTests` | Each adapter package in both forms; MaxMind databases against `Reader.Find` |
 
 ## Limitations
@@ -531,7 +534,6 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 - **Small frozen leaf-pushed tables** of 32 prefixes or more keep the full 16-bit root, 256 KB, for speed. Set
   `RootBits = 8` or use the compressed layout when many small frozen tables must be kept, such as one per VRF.
 - **Batches are atomic per address family**, not across both.
-- **Range writes** outside a batch change a range's pieces one at a time.
 - **Enumeration is not a snapshot** while writes run.
 
 The known issues of version 2, listed in [Architecture-v2.md](Architecture-v2.md#known-issues), do not apply: the code

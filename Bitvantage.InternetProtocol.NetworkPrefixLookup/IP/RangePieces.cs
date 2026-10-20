@@ -44,12 +44,18 @@ internal readonly record struct RangeKey(bool IsIPv6, UInt128 First, UInt128 Las
     }
 }
 
-// One range and its value.
-internal readonly record struct RangeClaim<TRange, TValue>(TRange Range, TValue Value);
+// One range, its value, and its ends as read when it was added: a stored range object is never read again, so a caller
+// that changes one afterwards cannot make the lookup inconsistent.
+internal readonly record struct RangeClaim<TRange, TValue>(TRange Range, TValue Value, RangeKey Key);
 
-// What a piece stores besides the winning range, which is the piece's prefix object: the winner's value, and the other
-// ranges that split into exactly this piece, smallest first. Others is null for nearly every piece.
-internal readonly record struct RangePiece<TRange, TValue>(TValue Value, RangeClaim<TRange, TValue>[]? Others);
+// What a piece stores besides the winning range, which is the piece's prefix object: the winner's value and ends, and the
+// other ranges that split into exactly this piece, smallest first. Others is null for nearly every piece.
+internal readonly record struct RangePiece<TRange, TValue>(TValue Value, RangeKey Key, RangeClaim<TRange, TValue>[]? Others)
+{
+    // a piece whose claims are already smallest first
+    public static RangePiece<TRange, TValue> From(List<RangeClaim<TRange, TValue>> claims) =>
+        new(claims[0].Value, claims[0].Key, claims.Count > 1 ? claims.Skip(1).ToArray() : null);
+}
 
 // The parts of a range lookup that both the read-write and the frozen form use.
 internal static class RangePieces<TRange, TAdapter, TValue> where TAdapter : struct, IIPRangeAdapter<TRange>
@@ -100,17 +106,15 @@ internal static class RangePieces<TRange, TAdapter, TValue> where TAdapter : str
     // every claim of a piece, winner first
     public static void AddClaims(List<RangeClaim<TRange, TValue>> claims, TRange winner, in RangePiece<TRange, TValue> piece)
     {
-        claims.Add(new RangeClaim<TRange, TValue>(winner, piece.Value));
+        claims.Add(new RangeClaim<TRange, TValue>(winner, piece.Value, piece.Key));
         if (piece.Others != null) claims.AddRange(piece.Others);
     }
 
+    // smallest first; the sort is stable, so equal claims keep their order
     public static void SortBySize(List<RangeClaim<TRange, TValue>> claims)
     {
         if (claims.Count < 2) return;
-        var keys = claims.Select(c => KeyOf(c.Range)).ToArray();
-        var order = Enumerable.Range(0, claims.Count).ToArray();
-        Array.Sort(order, (a, b) => RangeKey.BySize(keys[a], keys[b]));
-        var sorted = order.Select(i => claims[i]).ToList();
+        var sorted = claims.OrderBy(c => c.Key, Comparer<RangeKey>.Create(RangeKey.BySize)).ToList();
         claims.Clear();
         claims.AddRange(sorted);
     }
@@ -149,9 +153,8 @@ internal static class RangePieces<TRange, TAdapter, TValue> where TAdapter : str
             AddClaims(claims, piece.Prefix, piece.Value);
         foreach (var claim in claims)
         {
-            var candidate = KeyOf(claim.Range);
-            if (!candidate.Contains(key) || (found && RangeKey.BySize(candidate, best) >= 0)) continue;
-            (found, best, range, value) = (true, candidate, claim.Range, claim.Value);
+            if (!claim.Key.Contains(key) || (found && RangeKey.BySize(claim.Key, best) >= 0)) continue;
+            (found, best, range, value) = (true, claim.Key, claim.Range, claim.Value);
         }
 
         return found;

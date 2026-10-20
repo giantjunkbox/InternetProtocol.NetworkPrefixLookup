@@ -40,6 +40,21 @@ public readonly struct TestRangeAdapter : IIPRangeAdapter<TestRange>
     public static IPAddress GetLast(TestRange range) => range.Last;
 }
 
+/// <summary>A range type whose ends can change after it is stored.</summary>
+public sealed class MutableRange(IPAddress first, IPAddress last)
+{
+    public IPAddress First { get; set; } = first;
+    public IPAddress Last { get; set; } = last;
+    public override string ToString() => $"{First}-{Last}";
+}
+
+public readonly struct MutableRangeAdapter : IIPRangeAdapter<MutableRange>
+{
+    public static IPAddress GetFirst(MutableRange range) => range.First;
+
+    public static IPAddress GetLast(MutableRange range) => range.Last;
+}
+
 /// <summary>Tests for <see cref="IPRangeLookup{TRange,TAdapter,TValue}" /> and its frozen form.</summary>
 public class IPRangeLookupTests
 {
@@ -236,6 +251,79 @@ public class IPRangeLookupTests
         Assert.That(Match(frozen, "172.16.0.9"), Is.EqualTo("batch"));
         Assert.That(frozen.TryGetValue(R("172.16.0.1-172.16.0.200"), out value) && value == "batch");
         Assert.That(frozen.Bytes, Is.GreaterThan(0));
+    }
+
+    [Test]
+    public void Writes_in_a_batch_see_the_batch()
+    {
+        // the two ranges share the piece 10.0.0.0/24, which the second writes while the first is still unpublished
+        var inner = new KeyValuePair<TestRange, string>(R("10.0.0.0-10.0.0.255"), "inner");
+        var outer = new KeyValuePair<TestRange, string>(R("10.0.0.0-10.0.1.0"), "outer");
+        var lookup = new IPRangeLookup<TestRange, TestRangeAdapter, string>([outer, inner]);
+        foreach (var form in Forms(lookup))
+        {
+            Assert.That(Match(form, "10.0.0.5"), Is.EqualTo("inner"));
+            Assert.That(Match(form, "10.0.1.0"), Is.EqualTo("outer"));
+            Assert.That(form.GetMatches(IPAddress.Parse("10.0.0.5")).Select(m => m.Value), Is.EqualTo(new[] { "inner", "outer" }));
+        }
+
+        using (var batch = lookup.BeginBatch())
+        {
+            lookup.Add(R("10.0.0.0-10.0.0.127"), "added and removed");
+            lookup.Remove(R("10.0.0.0-10.0.0.127"));
+            lookup.Add(R("192.168.0.3-192.168.0.200"), "added");
+            lookup.AddOrUpdate(R("192.168.0.3-192.168.0.200"), "updated");
+            lookup.Remove(inner.Key);
+            batch.Commit();
+        }
+
+        foreach (var form in Forms(lookup))
+        {
+            Assert.That(form.Count, Is.EqualTo(2));
+            Assert.That(Match(form, "10.0.0.5"), Is.EqualTo("outer"));
+            Assert.That(form.GetMatches(IPAddress.Parse("10.0.0.5")).Select(m => m.Value), Is.EqualTo(new[] { "outer" }));
+            Assert.That(Match(form, "192.168.0.3"), Is.EqualTo("updated"));
+            Assert.That(Match(form, "192.168.0.200"), Is.EqualTo("updated"));
+        }
+
+        using (var batch = lookup.BeginBatch())
+        {
+            lookup.Clear();
+            lookup.Add(R("10.0.0.0-10.0.0.255"), "after clear");
+            batch.Commit();
+        }
+
+        foreach (var form in Forms(lookup))
+        {
+            Assert.That(form.Count, Is.EqualTo(1));
+            Assert.That(form.GetMatches(IPAddress.Parse("10.0.0.5")).Select(m => m.Value), Is.EqualTo(new[] { "after clear" }), "the cleared ranges stay gone");
+            Assert.That(Match(form, "10.0.1.0"), Is.Null);
+            Assert.That(Match(form, "192.168.0.3"), Is.Null);
+        }
+    }
+
+    [Test]
+    public void A_range_is_read_once()
+    {
+        var lookup = new IPRangeLookup<MutableRange, MutableRangeAdapter, string>();
+        var outer = new MutableRange(IPAddress.Parse("10.0.0.0"), IPAddress.Parse("10.0.1.0"));
+        var inner = new MutableRange(IPAddress.Parse("10.0.0.0"), IPAddress.Parse("10.0.0.255"));
+        lookup.Add(outer, "outer");
+        lookup.Add(inner, "inner");
+
+        // changing the stored objects changes nothing in the lookup
+        outer.Last = IPAddress.Parse("10.0.0.1");
+        inner.First = IPAddress.Parse("192.168.0.0");
+        inner.Last = IPAddress.Parse("192.168.0.255");
+        Assert.That(lookup.TryGetMatch(IPAddress.Parse("10.0.0.5"), out _, out var value) ? value : null, Is.EqualTo("inner"));
+        Assert.That(lookup.TryGetMatch(IPAddress.Parse("10.0.1.0"), out _, out value) ? value : null, Is.EqualTo("outer"));
+        Assert.That(lookup.TryGetMatchValue(IPAddress.Parse("192.168.0.5"), out _), Is.False);
+
+        Assert.That(lookup.Remove(new MutableRange(IPAddress.Parse("10.0.0.0"), IPAddress.Parse("10.0.0.255"))), Is.True);
+        Assert.That(lookup.TryGetMatch(IPAddress.Parse("10.0.0.5"), out _, out value) ? value : null, Is.EqualTo("outer"));
+        Assert.That(lookup.Remove(new MutableRange(IPAddress.Parse("10.0.0.0"), IPAddress.Parse("10.0.1.0"))), Is.True);
+        Assert.That(lookup.Count, Is.Zero);
+        Assert.That(lookup.TryGetMatchValue(IPAddress.Parse("10.0.0.5"), out _), Is.False);
     }
 
     [Test]
