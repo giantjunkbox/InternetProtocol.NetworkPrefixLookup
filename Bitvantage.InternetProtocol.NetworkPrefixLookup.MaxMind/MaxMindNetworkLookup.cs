@@ -65,8 +65,8 @@ public class MaxMindNetworkLookup<TValue> : IPPrefixLookup<Network, MaxMindNetwo
     ///     Builds a read-only copy with faster lookups. Later changes to this lookup do not affect it. Writes wait while
     ///     the copy is built; reads do not.
     /// </summary>
-    /// <param name="ipv4">The layout of the IPv4 tables; the default is leaf-pushed with a 16-bit root.</param>
-    /// <param name="ipv6">The layout of the IPv6 tables; the default is leaf-pushed with a 16-bit root.</param>
+    /// <param name="ipv4">The layout of the IPv4 tables; the default is leaf-pushed, with a root sized to the table.</param>
+    /// <param name="ipv6">The layout of the IPv6 tables; the default is leaf-pushed, with a root sized to the table.</param>
     public new FrozenMaxMindNetworkLookup<TValue> Freeze(FrozenBitTrieOptions? ipv4 = null, FrozenBitTrieOptions? ipv6 = null) => new(this, ipv4, ipv6);
 }
 

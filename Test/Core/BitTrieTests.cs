@@ -391,7 +391,7 @@ public class BitTrieTests
         Assert.That(small.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }).Bytes, Is.LessThan(20_000));
 
         var large = Build(TestKeys.RandomPrefixes<Bits32>(20_000, 10), Enumerable.Range(0, 20_000));
-        Assert.That(large.Freeze().Bytes, Is.GreaterThan(1L << 18), "a full 16-bit root from 4,096 prefixes");
+        Assert.That(large.Freeze().Bytes, Is.GreaterThan(1L << 18), "a full 16-bit root from 32 prefixes");
     }
 
     [Test(Description = "Readers always find a /32 that is never removed, while a writer adds and removes every prefix on its path.")]
@@ -406,37 +406,31 @@ public class BitTrieTests
         }
 
         trie.Add(new Bits32(0), 32, -1, -1);
-        var stop = false;
         long lookups = 0, failures = 0;
-        var reader = new Thread(() =>
+        var random = new Random(9);
+        WithReaders(1, _ =>
         {
-            while (!Volatile.Read(ref stop))
+            if (!trie.TryGetMatch(new Bits32(0), out var prefix, out _) || prefix != -1)
+                Interlocked.Increment(ref failures);
+            lookups++;
+        }, () =>
+        {
+            for (var round = 0; round < 300; round++)
             {
-                if (!trie.TryGetMatch(new Bits32(0), out var prefix, out _) || prefix != -1)
-                    Interlocked.Increment(ref failures);
-                lookups++;
+                foreach (var (bits, length) in path.OrderBy(_ => random.Next()))
+                    trie.Add(bits, length, length, length);
+                using (var batch = trie.BeginBatch())
+                {
+                    foreach (var (bits, length) in path.Where(_ => random.Next(2) == 0))
+                        trie.Remove(bits, length);
+                    batch.Commit();
+                }
+
+                foreach (var (bits, length) in path)
+                    trie.Remove(bits, length);
             }
         });
-        reader.Start();
 
-        var random = new Random(9);
-        for (var round = 0; round < 300; round++)
-        {
-            foreach (var (bits, length) in path.OrderBy(_ => random.Next()))
-                trie.Add(bits, length, length, length);
-            using (var batch = trie.BeginBatch())
-            {
-                foreach (var (bits, length) in path.Where(_ => random.Next(2) == 0))
-                    trie.Remove(bits, length);
-                batch.Commit();
-            }
-
-            foreach (var (bits, length) in path)
-                trie.Remove(bits, length);
-        }
-
-        Volatile.Write(ref stop, true);
-        reader.Join();
         Assert.That(failures, Is.Zero, $"{lookups:N0} lookups");
         Assert.That(trie.Count, Is.EqualTo(1));
     }
@@ -452,43 +446,70 @@ public class BitTrieTests
         var keys = TestKeys.ProbeKeys(prefixes, 11).ToArray();
         var expected = keys.Select(k => reference.Matches(k, 32) is { Count: > 0 } m ? m[0].Length : -1).ToArray();
 
-        var stop = false;
         long failures = 0;
-        var readers = Enumerable.Range(0, 3).Select(r => new Thread(() =>
-        {
-            var at = r;
-            while (!Volatile.Read(ref stop))
-            {
-                at = (at + 1) % keys.Length;
-                // the answer is a stable prefix at least as long as the stable answer, or a churned one longer still,
-                // and it must contain the key
-                if (trie.TryGetMatch(keys[at], out var prefix, out var value))
-                {
-                    var (bits, length) = prefixes[prefix];
-                    if (value != prefix * 7 || length < expected[at] || !Bits32.MatchesUnderMask(keys[at], bits, Bits32.MaskFor(length)))
-                        Interlocked.Increment(ref failures);
-                }
-                else if (expected[at] >= 0)
-                {
-                    Interlocked.Increment(ref failures);
-                }
-            }
-        })).ToList();
-        readers.ForEach(t => t.Start());
-
+        var positions = new int[3];
         var random = new Random(12);
-        for (var round = 0; round < 20; round++)
+        WithReaders(3, r =>
         {
-            foreach (var i in churned.OrderBy(_ => random.Next()))
-                trie.Add(prefixes[i].Bits, prefixes[i].Length, i, i * 7);
-            foreach (var i in churned.OrderBy(_ => random.Next()))
-                trie.Remove(prefixes[i].Bits, prefixes[i].Length);
-        }
+            var at = positions[r] = (positions[r] + 1) % keys.Length;
+            // the answer is a stable prefix at least as long as the stable answer, or a churned one longer still, and
+            // it must contain the key
+            if (trie.TryGetMatch(keys[at], out var prefix, out var value))
+            {
+                var (bits, length) = prefixes[prefix];
+                if (value != prefix * 7 || length < expected[at] || !Bits32.MatchesUnderMask(keys[at], bits, Bits32.MaskFor(length)))
+                    Interlocked.Increment(ref failures);
+            }
+            else if (expected[at] >= 0)
+            {
+                Interlocked.Increment(ref failures);
+            }
+        }, () =>
+        {
+            for (var round = 0; round < 20; round++)
+            {
+                foreach (var i in churned.OrderBy(_ => random.Next()))
+                    trie.Add(prefixes[i].Bits, prefixes[i].Length, i, i * 7);
+                foreach (var i in churned.OrderBy(_ => random.Next()))
+                    trie.Remove(prefixes[i].Bits, prefixes[i].Length);
+            }
+        });
 
-        Volatile.Write(ref stop, true);
-        readers.ForEach(t => t.Join());
         Assert.That(failures, Is.Zero);
         Assert.That(trie.ToTextTree(Format), Is.EqualTo(Build(prefixes, stable).ToTextTree(Format)));
+    }
+
+    [Test(Description = "A writer adds a covering prefix before it removes a longer one, and back again. Readers, more than there are processors so that some pause in the middle of a lookup, must find one of the two whichever writes they overlap.")]
+    public void A_lookup_that_overlaps_several_writes_sees_one_state()
+    {
+        // 10.0.0.0/8 is a fringe of the root and 10.1.0.0/16 a fringe of the node below octet 10, which the two other
+        // prefixes keep in place, so the writes alternate between two nodes; every state holds one of the two
+        var trie = new BitTrie<Bits32, int, int>();
+        var (covering, specific) = (new Bits32(0x0A000000), new Bits32(0x0A010000));
+        trie.Add(new Bits32(0x0A020000), 16, 2, 2);
+        trie.Add(new Bits32(0x0A030000), 16, 3, 3);
+        trie.Add(specific, 16, 1, 1);
+        var key = new Bits32(0x0A010203);
+        var readers = Environment.ProcessorCount * 4;
+        var matches = Enumerable.Range(0, readers).Select(_ => new PrefixEntry<int, int>[33]).ToArray();
+        long failures = 0;
+        WithReaders(readers, r =>
+        {
+            if (!trie.TryGetMatchValue(key, out _) || !trie.TryGetMatch(key, 24, out _, out _) || trie.GetMatches(key, matches[r]) == 0)
+                Interlocked.Increment(ref failures);
+        }, () =>
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (clock.ElapsedMilliseconds < 1000)
+            {
+                trie.Add(covering, 8, 0, 0);
+                trie.Remove(specific, 16);
+                trie.Add(specific, 16, 1, 1);
+                trie.Remove(covering, 8);
+            }
+        });
+
+        Assert.That(failures, Is.Zero);
     }
 
     [Test]
@@ -499,5 +520,26 @@ public class BitTrieTests
         Parallel.For(0, prefixes.Count, new ParallelOptions { MaxDegreeOfParallelism = 4 }, i => trie.Add(prefixes[i].Bits, prefixes[i].Length, i, i * 7));
         Assert.That(trie.Count, Is.EqualTo(prefixes.Count));
         Assert.That(trie.ToTextTree(Format), Is.EqualTo(Build(prefixes, Enumerable.Range(0, prefixes.Count)).ToTextTree(Format)));
+    }
+
+    // Runs read on background threads, each over and over with its own index, until write returns or throws.
+    private static void WithReaders(int count, Action<int> read, Action write)
+    {
+        var stop = false;
+        var readers = Enumerable.Range(0, count).Select(r => new Thread(() =>
+        {
+            while (!Volatile.Read(ref stop))
+                read(r);
+        }) { IsBackground = true }).ToList();
+        readers.ForEach(t => t.Start());
+        try
+        {
+            write();
+        }
+        finally
+        {
+            Volatile.Write(ref stop, true);
+            readers.ForEach(t => t.Join());
+        }
     }
 }

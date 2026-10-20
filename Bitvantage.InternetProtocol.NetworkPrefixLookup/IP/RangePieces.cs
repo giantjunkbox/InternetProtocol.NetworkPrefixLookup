@@ -128,16 +128,6 @@ internal static class RangePieces<TRange, TAdapter, TValue> where TAdapter : str
         return claims.Select(c => new PrefixEntry<TRange, TValue>(c.Range, c.Value)).ToList();
     }
 
-    public static int Matches(IReadOnlyList<PrefixEntry<TRange, RangePiece<TRange, TValue>>> pieces, Span<PrefixEntry<TRange, TValue>> destination)
-    {
-        var matches = Matches(pieces);
-        if (matches.Count > destination.Length)
-            throw new ArgumentException("The destination is too small for the matches.", nameof(destination));
-        for (var i = 0; i < matches.Count; i++)
-            destination[i] = matches[i];
-        return matches.Count;
-    }
-
     // the smallest stored range that contains the whole range: it has a piece that contains the range's first address
     public static bool TryGetMatch(IReadOnlyBitTrie<Bits32, TRange, RangePiece<TRange, TValue>> v4, IReadOnlyBitTrie<Bits128, TRange, RangePiece<TRange, TValue>> v6,
         TRange network, out TRange range, out TValue value)

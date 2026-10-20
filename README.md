@@ -5,7 +5,7 @@ Fast longest-prefix-match lookups for IPv4 and IPv6 networks, and for any other 
 - **Lookups that allocate nothing**, from `IPAddress`, byte spans or integers.
 - **Read-write tables** where any number of threads read without locks while one writes, and every write does a bounded
   amount of work: no pauses for growth or compaction.
-- **Frozen tables** for data that is loaded once and then only read, nearly twice as fast again.
+- **Frozen tables** for data that is loaded once and then only read, with lookups up to 1.8 times as fast again.
 - **Your network type**: `System.Net.IPNetwork` is built in, and small packages add `NetworkPrefix`, `IPNetwork2`,
   `IPAddressRange` ranges and MaxMind databases.
 - **No dependencies** in the core package. .NET 10.

@@ -21,8 +21,8 @@ using Bitvantage.InternetProtocol;
 namespace Test.Core;
 
 /// <summary>
-///     A 16-bit key written the way a library user would: only the nine required members, relying on the default
-///     <see cref="IBitKey{TSelf}.GetTopBits" /> and <see cref="IBitKey{TSelf}.FromTopBits" />.
+///     A 16-bit key written the way a library user would: only the required members, relying on the default
+///     <see cref="IBitKey{TSelf}.GetTopBits" />.
 /// </summary>
 public readonly record struct Bits16(ushort Value) : IBitKey<Bits16>
 {
@@ -32,14 +32,7 @@ public readonly record struct Bits16(ushort Value) : IBitKey<Bits16>
 
     public static Bits16 Truncate(in Bits16 key, int length) => new((ushort)(key.Value & Mask(length)));
 
-    public static int CommonPrefixLength(in Bits16 a, in Bits16 b, int maxLength) =>
-        Math.Min(System.Numerics.BitOperations.LeadingZeroCount((uint)(a.Value ^ b.Value) << 16 | 0xFFFF), maxLength);
-
     public static Bits16 MaskFor(int length) => new(Mask(length));
-
-    public static Bits16 SplitFor(int length) => new(length >= 16 ? (ushort)0 : (ushort)(0x8000 >> length));
-
-    public static bool IsSet(in Bits16 key, in Bits16 split) => (key.Value & split.Value) != 0;
 
     public static bool MatchesUnderMask(in Bits16 key, in Bits16 bits, in Bits16 mask) => (key.Value & mask.Value) == bits.Value;
 
@@ -57,10 +50,7 @@ public readonly struct Bits136 : IBitKey<Bits136>
 {
     public static int Width => 136;
     public static Bits136 Truncate(in Bits136 key, int length) => throw new NotSupportedException();
-    public static int CommonPrefixLength(in Bits136 a, in Bits136 b, int maxLength) => throw new NotSupportedException();
     public static Bits136 MaskFor(int length) => throw new NotSupportedException();
-    public static Bits136 SplitFor(int length) => throw new NotSupportedException();
-    public static bool IsSet(in Bits136 key, in Bits136 split) => throw new NotSupportedException();
     public static bool MatchesUnderMask(in Bits136 key, in Bits136 bits, in Bits136 mask) => throw new NotSupportedException();
     public static int GetBits(in Bits136 key, int offset, int count) => throw new NotSupportedException();
     public static Bits136 SetBits(in Bits136 key, int offset, int count, int value) => throw new NotSupportedException();
@@ -125,7 +115,6 @@ public static class TestKeys
         {
             keys.Add(bits);
             var inside = RandomKey<TKey>(random);
-            var mask = TKey.MaskFor(length);
             // the prefix's bits followed by random bits
             var merged = bits;
             for (var offset = length; offset < TKey.Width; offset++)
@@ -133,7 +122,6 @@ public static class TestKeys
             keys.Add(merged);
             if (length > 0)
                 keys.Add(TKey.SetBits(bits, length - 1, 1, 1 - TKey.GetBits(bits, length - 1, 1))); // the sibling
-            _ = mask;
         }
 
         for (var i = 0; i < 2000; i++)

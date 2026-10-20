@@ -119,7 +119,13 @@ public class AdapterTests
             {
                 var first = IPAddressBits.ToIPv4Bits(node.Start);
                 var last = first | (uint)(0xFFFFFFFFUL >> node.PrefixLength);
-                probes.AddRange(new[] { first, last, first - 1, last + 1 }.Select(IPAddressBits.FromIPv4Bits));
+                // each address as IPv4, IPv4-compatible and IPv4-mapped
+                foreach (var address in new[] { first, last, first - 1, last + 1 })
+                {
+                    probes.Add(IPAddressBits.FromIPv4Bits(address));
+                    probes.Add(IPAddressBits.FromIPv6Bits(address));
+                    probes.Add(IPAddressBits.FromIPv6Bits(address | ((UInt128)0xFFFF << 32)));
+                }
             }
             else
             {
@@ -141,12 +147,17 @@ public class AdapterTests
         return probes;
     }
 
+    // the aliases of the IPv4 networks in MaxMind's IPv6 databases: IPv4-mapped, Teredo and 6to4
     private static bool InAlias(IPAddress address)
     {
         if (address.AddressFamily != AddressFamily.InterNetworkV6) return false;
         var bits = IPAddressBits.ToIPv6Bits(address);
         return bits >> 32 == 0xFFFF || bits >> 96 == 0x20010000 || bits >> 112 == 0x2002;
     }
+
+    // ::/96, where MaxMind's IPv6 databases keep the IPv4 networks
+    private static bool IsIPv4Compatible(IPAddress address) =>
+        address.AddressFamily == AddressFamily.InterNetworkV6 && IPAddressBits.ToIPv6Bits(address) >> 32 == 0;
 
     [TestCase("MaxMind-DB-test-mixed-24.mmdb")]
     [TestCase("GeoIP2-Country-Test.mmdb")]
@@ -169,8 +180,8 @@ public class AdapterTests
             if (expected != "null") found++;
             foreach (var (name, form) in new (string, IReadOnlyIPPrefixLookup<Network, Dictionary<string, object>>)[] { ("full", full), ("full frozen", full.Freeze()), ("lean", lean), ("lean frozen", lean.Freeze()) })
             {
-                if (name.StartsWith("lean") && InAlias(address) && !(IPAddressBits.ToIPv6Bits(address) >> 32 == 0xFFFF))
-                    continue; // Teredo and 6to4 addresses are not loaded by default
+                if (name.StartsWith("lean") && (IsIPv4Compatible(address) || (InAlias(address) && IPAddressBits.ToIPv6Bits(address) >> 32 != 0xFFFF)))
+                    continue; // by default, only IPv4-mapped addresses find the IPv4 networks
                 var actual = Json(form.TryGetMatchValue(address, out var record) ? record : null);
                 if (actual != expected)
                     failures.Add($"{name} at {address}: {actual}, expected {expected}");
@@ -189,7 +200,7 @@ public class AdapterTests
         var lean = MaxMindDatabase.Load<Dictionary<string, object>>(reader);
         var ipv4 = full.Count(e => e.Prefix.NetworkAddress.AddressFamily == AddressFamily.InterNetwork);
         Assert.That(ipv4, Is.GreaterThan(0));
-        Assert.That(full.Count - lean.Count, Is.EqualTo(3 * ipv4), "each IPv4 network appears under three aliases");
+        Assert.That(full.Count - lean.Count, Is.EqualTo(4 * ipv4), "each IPv4 network appears under ::/96 and three aliases");
         Assert.That(lean.Any(e => InAlias(e.Prefix.NetworkAddress)), Is.False);
     }
 }

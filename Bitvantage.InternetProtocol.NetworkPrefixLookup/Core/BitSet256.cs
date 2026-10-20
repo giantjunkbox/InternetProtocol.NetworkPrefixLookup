@@ -62,15 +62,6 @@ internal struct BitSet256
         return false;
     }
 
-    /// <summary>The highest set bit below <paramref name="limit" />, or -1.</summary>
-    public readonly int HighestBelow(int limit)
-    {
-        for (var bit = limit - 1; bit >= 0; bit--)
-            if (Test(bit))
-                return bit;
-        return -1;
-    }
-
     /// <summary>The lowest set bit, or 256 when the set is empty.</summary>
     public readonly int First() =>
         W0 != 0 ? BitOperations.TrailingZeroCount(W0) : W1 != 0 ? 64 + BitOperations.TrailingZeroCount(W1)

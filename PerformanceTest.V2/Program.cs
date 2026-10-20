@@ -47,13 +47,13 @@ public static class Program
         foreach (var name in ComparisonData.Names)
         {
             var data = ComparisonData.Get(name);
-            var before = Heap();
+            var before = ComparisonData.HeapBytes();
             var sw = Stopwatch.StartNew();
             var lookup = new NetworkPrefixLookup<int>();
             for (var i = 0; i < data.Prefixes.Length; i++)
                 lookup.TryAdd(data.Prefixes[i], data.Values[i]);
             var seconds = sw.Elapsed.TotalSeconds;
-            var held = Heap() - before;
+            var held = ComparisonData.HeapBytes() - before;
 
             var allocated = GC.GetAllocatedBytesForCurrentThread();
             foreach (var address in data.Addresses.Take(100_000))
@@ -62,14 +62,6 @@ public static class Program
             Console.WriteLine($"{name,-10} original on .NET {Environment.Version.Major}: {held / 1048576.0,8:F1} MB held, built in {seconds:F2} s, {perLookup:F0} bytes allocated per lookup");
             GC.KeepAlive(lookup);
         }
-    }
-
-    private static long Heap()
-    {
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-        return GC.GetTotalMemory(true);
     }
 }
 

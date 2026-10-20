@@ -329,8 +329,13 @@ public class IPRangeLookupTests
     [Test]
     public void Mapped_addresses_find_IPv4_ranges()
     {
-        var lookup = Lookup("10.0.0.1-10.0.0.3");
-        Assert.That(Match(lookup, "::ffff:10.0.0.2"), Is.EqualTo("10.0.0.1-10.0.0.3"));
-        Assert.That(Match(lookup.Freeze(), "::ffff:10.0.0.2"), Is.EqualTo("10.0.0.1-10.0.0.3"));
+        var lookup = Lookup("10.0.0.1-10.0.0.3", "::ffff:10.0.0.0-::ffff:10.0.0.9");
+        foreach (var form in Forms(lookup))
+        {
+            Assert.That(Match(form, "::ffff:10.0.0.2"), Is.EqualTo("10.0.0.1-10.0.0.3"));
+            Assert.That(Match(form, "::ffff:10.0.0.5"), Is.EqualTo("::ffff:10.0.0.0-::ffff:10.0.0.9"), "an IPv6 range when no IPv4 range holds it");
+            Assert.That(Match(form, "10.0.0.5"), Is.Null);
+            Assert.That(form.GetMatches(IPAddress.Parse("::ffff:10.0.0.2")).Select(m => m.Value), Is.EqualTo(new[] { "10.0.0.1-10.0.0.3", "::ffff:10.0.0.0-::ffff:10.0.0.9" }));
+        }
     }
 }

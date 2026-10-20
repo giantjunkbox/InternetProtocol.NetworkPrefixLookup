@@ -54,21 +54,47 @@ public static class ComparisonData
 
     public static Table Get(string name) => Tables[name].Value;
 
-    private static Table Load(string kind, int width)
+    /// <summary>
+    ///     Every line of the latest RouteViews table of a kind, rv2 for IPv4 or rv6 for IPv6, in file order: the prefix as
+    ///     a right-aligned integer of the family's width, its length, and its first origin AS.
+    /// </summary>
+    public static (string File, List<(UInt128 Bits, int Length, int Asn)> Rows) ReadRouteViews(string kind, int width)
     {
-        var file = System.IO.Directory.GetFiles(Directory!, $"routeviews-{kind}-*.pfx2as").OrderBy(f => f).Last();
-        var seen = new HashSet<(UInt128, int)>();
-        var prefixes = new List<NetworkPrefix>();
-        var values = new List<int>();
-        var bits = new List<UInt128>();
+        var directory = Directory ?? throw new InvalidOperationException("Set ROUTEVIEWS_DIR.");
+        var file = System.IO.Directory.GetFiles(directory, $"routeviews-{kind}-*.pfx2as").OrderBy(f => f).Last();
+        var rows = new List<(UInt128, int, int)>();
         foreach (var line in File.ReadLines(file))
         {
             var parts = line.Split('\t');
             var length = int.Parse(parts[1]);
-            var value = ToBits(IPAddress.Parse(parts[0]), width) & Mask(length, width);
+            // the origin AS field can be a set such as "64496_64497" or "64496,64497"; keep the first AS
+            var asn = int.TryParse(parts[2].Split('_', ',')[0], out var first) ? first : 0;
+            rows.Add((ToBits(IPAddress.Parse(parts[0]), width) & Mask(length, width), length, asn));
+        }
+
+        return (file, rows);
+    }
+
+    /// <summary>Collects garbage fully and returns the bytes still held.</summary>
+    public static long HeapBytes()
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        return GC.GetTotalMemory(true);
+    }
+
+    private static Table Load(string kind, int width)
+    {
+        var seen = new HashSet<(UInt128, int)>();
+        var prefixes = new List<NetworkPrefix>();
+        var values = new List<int>();
+        var bits = new List<UInt128>();
+        foreach (var (value, length, asn) in ReadRouteViews(kind, width).Rows)
+        {
             if (!seen.Add((value, length))) continue; // the IPv6 table lists a few prefixes twice
             prefixes.Add(new NetworkPrefix(ToAddress(value, width), length));
-            values.Add(int.TryParse(parts[2].Split('_', ',')[0], out var asn) ? asn : 0);
+            values.Add(asn);
             bits.Add(value);
         }
 

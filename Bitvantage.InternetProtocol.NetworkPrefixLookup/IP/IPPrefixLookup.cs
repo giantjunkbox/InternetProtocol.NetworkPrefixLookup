@@ -82,13 +82,13 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     /// <inheritdoc />
     public bool TryGetMatch(IPAddress address, out TPrefix prefix, out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
-            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out value)
+            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out value) || (v6 != 0 && _v6.TryGetMatch(new Bits128(v6), out prefix, out value))
             : _v6.TryGetMatch(new Bits128(v6), out prefix, out value);
 
     /// <inheritdoc />
     public bool TryGetMatch(ReadOnlySpan<byte> address, out TPrefix prefix, out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
-            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out value)
+            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out value) || (v6 != 0 && _v6.TryGetMatch(new Bits128(v6), out prefix, out value))
             : _v6.TryGetMatch(new Bits128(v6), out prefix, out value);
 
     /// <inheritdoc />
@@ -97,19 +97,19 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     /// <inheritdoc />
     public bool TryGetMatchIPv6(UInt128 address, out TPrefix prefix, out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4)
-            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out value)
+            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out value) || _v6.TryGetMatch(new Bits128(address), out prefix, out value)
             : _v6.TryGetMatch(new Bits128(address), out prefix, out value);
 
     /// <inheritdoc />
     public bool TryGetMatchValue(IPAddress address, out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
-            ? _v4.TryGetMatchValue(new Bits32(v4), out value)
+            ? _v4.TryGetMatchValue(new Bits32(v4), out value) || (v6 != 0 && _v6.TryGetMatchValue(new Bits128(v6), out value))
             : _v6.TryGetMatchValue(new Bits128(v6), out value);
 
     /// <inheritdoc />
     public bool TryGetMatchValue(ReadOnlySpan<byte> address, out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
-            ? _v4.TryGetMatchValue(new Bits32(v4), out value)
+            ? _v4.TryGetMatchValue(new Bits32(v4), out value) || (v6 != 0 && _v6.TryGetMatchValue(new Bits128(v6), out value))
             : _v6.TryGetMatchValue(new Bits128(v6), out value);
 
     /// <inheritdoc />
@@ -118,7 +118,7 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     /// <inheritdoc />
     public bool TryGetMatchValueIPv6(UInt128 address, out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4)
-            ? _v4.TryGetMatchValue(new Bits32(v4), out value)
+            ? _v4.TryGetMatchValue(new Bits32(v4), out value) || _v6.TryGetMatchValue(new Bits128(address), out value)
             : _v6.TryGetMatchValue(new Bits128(address), out value);
 
     /// <inheritdoc />
@@ -149,12 +149,22 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(IPAddress address) =>
-        IPAddressBits.IsIPv4(address, _map, out var v4, out var v6) ? _v4.GetMatches(new Bits32(v4)) : _v6.GetMatches(new Bits128(v6));
+    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(IPAddress address)
+    {
+        if (!IPAddressBits.IsIPv4(address, _map, out var v4, out var v6))
+            return _v6.GetMatches(new Bits128(v6));
+        var matches = _v4.GetMatches(new Bits32(v4));
+        return v6 == 0 ? matches : [.. matches, .. _v6.GetMatches(new Bits128(v6))];
+    }
 
     /// <inheritdoc />
-    public int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination) =>
-        IPAddressBits.IsIPv4(address, _map, out var v4, out var v6) ? _v4.GetMatches(new Bits32(v4), destination) : _v6.GetMatches(new Bits128(v6), destination);
+    public int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination)
+    {
+        if (!IPAddressBits.IsIPv4(address, _map, out var v4, out var v6))
+            return _v6.GetMatches(new Bits128(v6), destination);
+        var count = _v4.GetMatches(new Bits32(v4), destination);
+        return v6 == 0 ? count : count + _v6.GetMatches(new Bits128(v6), destination[count..]);
+    }
 
     /// <summary>The number of stored prefixes, IPv4 and IPv6.</summary>
     public int Count => _v4.Count + _v6.Count;
@@ -201,7 +211,7 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
 
     /// <summary>Returns the value of a prefix, adding it with a value from <paramref name="valueFactory" /> if absent.</summary>
     /// <param name="prefix">The prefix; host bits after its length are ignored.</param>
-    /// <param name="valueFactory">Creates the value, called only when the prefix is absent.</param>
+    /// <param name="valueFactory">Creates the value, called only when the prefix is absent, while other writers wait.</param>
     public TValue GetOrAdd(TPrefix prefix, Func<TPrefix, TValue> valueFactory)
     {
         IPAddressBits.ThrowIfNull(prefix);
@@ -297,8 +307,8 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     ///     Builds a read-only copy with faster lookups. Later changes to this lookup do not affect it. Writes wait while
     ///     the copy is built; reads do not.
     /// </summary>
-    /// <param name="ipv4">The layout of the IPv4 tables; the default is leaf-pushed with a 16-bit root.</param>
-    /// <param name="ipv6">The layout of the IPv6 tables; the default is leaf-pushed with a 16-bit root.</param>
+    /// <param name="ipv4">The layout of the IPv4 tables; the default is leaf-pushed, with a root sized to the table.</param>
+    /// <param name="ipv6">The layout of the IPv6 tables; the default is leaf-pushed, with a root sized to the table.</param>
     public FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> Freeze(FrozenBitTrieOptions? ipv4 = null, FrozenBitTrieOptions? ipv6 = null) => new(this, ipv4, ipv6);
 
     internal FrozenBitTrie<Bits32, TPrefix, TValue> FreezeIPv4(FrozenBitTrieOptions? options) => _v4.Freeze(options);

@@ -41,17 +41,7 @@ public readonly struct Bits128 : IBitKey<Bits128>, IEquatable<Bits128>
     public static Bits128 Truncate(in Bits128 key, int length) => new(key.Value & Mask(length));
 
     /// <inheritdoc />
-    public static int CommonPrefixLength(in Bits128 a, in Bits128 b, int maxLength) => Math.Min((int)UInt128.LeadingZeroCount(a.Value ^ b.Value), maxLength);
-
-    /// <inheritdoc />
     public static Bits128 MaskFor(int length) => new(Mask(length));
-
-    /// <inheritdoc />
-    public static Bits128 SplitFor(int length) => new(length >= 128 ? UInt128.Zero : UInt128.One << (127 - length));
-
-    /// <inheritdoc />
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool IsSet(in Bits128 key, in Bits128 split) => (key.Value & split.Value) != UInt128.Zero;
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -71,9 +61,6 @@ public readonly struct Bits128 : IBitKey<Bits128>, IEquatable<Bits128>
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int GetTopBits(in Bits128 key, int count) => (int)(ulong)(key.Value >> (128 - count));
-
-    /// <inheritdoc />
-    public static Bits128 FromTopBits(int top, int count) => new((UInt128)(uint)top << (128 - count));
 
     /// <inheritdoc />
     public bool Equals(Bits128 other) => Value == other.Value;

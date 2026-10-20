@@ -35,8 +35,9 @@ public enum FrozenLayout
 
     /// <summary>
     ///     Compressed tables, after Poptrie: a root table, then nodes that each decide 6 more bits and store their
-    ///     children and their runs of equal answers once, found by popcount. A quarter to a tenth of the memory of
-    ///     <see cref="LeafPushed" /> on routing tables, for somewhat slower lookups.
+    ///     children and their runs of equal answers once, found by popcount. Less memory than <see cref="LeafPushed" />:
+    ///     about 60% of it on a full IPv4 routing table, and under a tenth for prefixes scattered across the address
+    ///     space, where lookups are faster too. Elsewhere lookups are somewhat slower.
     /// </summary>
     Compressed
 }

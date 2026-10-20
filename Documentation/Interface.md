@@ -40,23 +40,23 @@ public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
     static abstract int Width { get; }                                         // 32 or 128 for IP
 
     static abstract TSelf Truncate(in TSelf key, int length);                  // clear every bit from length on
-    static abstract int CommonPrefixLength(in TSelf a, in TSelf b, int max);   // routing node for two siblings
-    static abstract TSelf MaskFor(int length);                                 // cached in each node
-    static abstract TSelf SplitFor(int length);                                // the bit after length; cached
-    static abstract bool IsSet(in TSelf key, in TSelf split);                  // which child
+    static abstract TSelf MaskFor(int length);                                 // stored with each leaf
     static abstract bool MatchesUnderMask(in TSelf key, in TSelf bits, in TSelf mask);
 
-    static abstract int GetBits(in TSelf key, int offset, int count);          // 1 to 24 bits, for tables
+    static abstract int GetBits(in TSelf key, int offset, int count);          // 1 to 24 bits, for strides and tables
     static abstract TSelf SetBits(in TSelf key, int offset, int count, int value);
     static virtual int GetTopBits(in TSelf key, int count) => TSelf.GetBits(key, 0, count);
-    static virtual TSelf FromTopBits(int top, int count) => TSelf.SetBits(default, 0, count, top);
 }
 ```
 
+The proposal also had `CommonPrefixLength`, `SplitFor`, `IsSet` and a default `FromTopBits`, which a binary-trie core
+needs to route between two siblings and to choose a child. The shipped core is a multibit trie and uses none of them,
+so they were removed; see [Status](#status).
+
 - `Width` is new. The prototype passes the width to each trie's constructor instead.
 - `GetBit` and `StartsWith` from the prototype are dropped. Only the uncached tries used them.
-- `GetTopBits` and `FromTopBits` get default implementations, so a new key type writes nine members. The shipped types
-  override them where that saves an instruction.
+- `GetTopBits` gets a default implementation, so a new key type writes six members. The shipped types override it,
+  which saves an instruction.
 - Shipped key types: `Bits32` and `Bits128`. Each has a constructor from its integer. `Bits64` and `Bits192` were
   dropped; see [Status](#status).
 
@@ -437,15 +437,17 @@ Version 3 implements this interface. Where it differs from the proposal above:
 | Part | Shipped |
 | --- | --- |
 | Read-write core | `BitTrie` is built on the BART-style design measured as `BartTrie`, not on chunks, so there is nothing to tune or compact: no `BitTrieOptions`, no `Compact`, and `BitTrieStatistics` has no garbage counts. Its constructor throws `NotSupportedException` for widths that are not a multiple of 8 |
+| Key interface | Six required members and a default `GetTopBits`. `CommonPrefixLength`, `SplitFor`, `IsSet` and `FromTopBits` were removed, because the multibit core uses none of them |
 | Key types | Only `Bits32` and `Bits128` ship, and key widths are limited to 128 bits. `Bits192` was for context such as a VRF, which one lookup per context serves better: in front of the address it would cost a trie level per 8 bits and waste the shortcut table and the frozen root. `Bits64` was for keys such as MAC address prefixes, which come in a few fixed lengths that a hash table handles |
 | Read-only core interface | Adds `TryGetValue(bits, length, out prefix, out value)`, an exact lookup that also returns the prefix object |
 | Frozen core | `FrozenBitTrie` keeps no nodes; parent links answer the other queries, as proposed. It exposes `Options` and `Bytes`. Without `RootBits`, the root follows the number of prefixes instead of always being 16 or 18 bits, so small and empty tables stay small |
-| IP layer options | `IPLookupOptions.MapIPv4MappedAddresses`, on by default, answers the open question below |
+| IP layer options | `IPLookupOptions.MapIPv4MappedAddresses`, on by default, answers the open question below. A mapped address that no IPv4 prefix contains is then looked up as IPv6, and `GetMatches` returns its IPv4 matches and then its IPv6 ones |
+| Address conversions | `IPAddressBits.ToIPv4Bits` and `ToIPv6Bits` throw `ArgumentException` for an address of the other family |
 | IP layer batches | `IPPrefixLookup.BeginBatch` returns a `Batch` that publishes each family atomically, IPv4 first |
 | Frozen IP lookups | A frozen class's protected constructor takes the read-write lookup to copy, so adapter packages can define their own pairs |
 | Value-less lookups | `NoValueLookupExtensions` adds `TryAdd(prefix)`, `Add(prefix)`, `TryGetMatch(address, out prefix)` and `ContainsMatch(address)` |
 | Ranges | As proposed, in `IPRangeLookup` and `FrozenIPRangeLookup`. `GetMatches` returns ranges smallest first and, with overlapping ranges, can need more than 129 entries |
-| Adapter packages | As in the table above. The MaxMind loader is `MaxMindDatabase.Load<T>`, which skips MaxMind's three IPv4 alias networks unless `IncludeAliasedNetworks` is set |
+| Adapter packages | As in the table above. The MaxMind loader is `MaxMindDatabase.Load<T>`, which stores MaxMind's IPv4 networks once, as IPv4. `IncludeAliasedNetworks` also stores them under `::/96`, where an IPv6 database keeps them, and under its three alias networks, so that every address answers as `Reader.Find` does |
 | Package versions | Left at 2.0.0 in every project, for the owner to set |
 
 ## Open questions

@@ -42,17 +42,7 @@ public readonly struct Bits32 : IBitKey<Bits32>, IEquatable<Bits32>
     public static Bits32 Truncate(in Bits32 key, int length) => new(key.Value & Mask(length));
 
     /// <inheritdoc />
-    public static int CommonPrefixLength(in Bits32 a, in Bits32 b, int maxLength) => Math.Min(BitOperations.LeadingZeroCount(a.Value ^ b.Value), maxLength);
-
-    /// <inheritdoc />
     public static Bits32 MaskFor(int length) => new(Mask(length));
-
-    /// <inheritdoc />
-    public static Bits32 SplitFor(int length) => new(length >= 32 ? 0u : 1u << (31 - length));
-
-    /// <inheritdoc />
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool IsSet(in Bits32 key, in Bits32 split) => (key.Value & split.Value) != 0u;
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -72,9 +62,6 @@ public readonly struct Bits32 : IBitKey<Bits32>, IEquatable<Bits32>
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int GetTopBits(in Bits32 key, int count) => (int)(key.Value >> (32 - count));
-
-    /// <inheritdoc />
-    public static Bits32 FromTopBits(int top, int count) => new((uint)top << (32 - count));
 
     /// <inheritdoc />
     public bool Equals(Bits32 other) => Value == other.Value;

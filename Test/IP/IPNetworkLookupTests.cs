@@ -208,7 +208,20 @@ public class IPNetworkLookupTests
             Assert.That(Match(form, "::ffff:10.1.2.3"), Is.EqualTo("10.0.0.0/8"));
             Assert.That(form.TryGetMatch(mapped.GetAddressBytes(), out _, out var value) && value == "10.0.0.0/8");
             Assert.That(form.TryGetMatchIPv6(IPAddressBits.ToIPv6Bits(mapped), out _, out value) && value == "10.0.0.0/8");
-            Assert.That(Match(form, "::ffff:11.1.2.3"), Is.Null, "no IPv4 prefix contains it");
+
+            // with no IPv4 match, a mapped address is looked up as IPv6; an IPv4 address is not
+            var other = IPAddress.Parse("::ffff:11.1.2.3");
+            Assert.That(Match(form, "::ffff:11.1.2.3"), Is.EqualTo("::ffff:0:0/96"), "no IPv4 prefix contains it");
+            Assert.That(form.TryGetMatchValue(other.GetAddressBytes(), out value) && value == "::ffff:0:0/96");
+            Assert.That(form.TryGetMatchValueIPv6(IPAddressBits.ToIPv6Bits(other), out value) && value == "::ffff:0:0/96");
+            Assert.That(Match(form, "11.1.2.3"), Is.Null);
+
+            Assert.That(form.GetMatches(mapped).Select(m => m.Value), Is.EqualTo(new[] { "10.0.0.0/8", "::ffff:0:0/96" }), "IPv4 first");
+            var span = new PrefixEntry<IPNetwork, string>[2];
+            Assert.That(form.GetMatches(mapped, span), Is.EqualTo(2));
+            Assert.That(span.Select(m => m.Value), Is.EqualTo(new[] { "10.0.0.0/8", "::ffff:0:0/96" }));
+            Assert.Throws<ArgumentException>(() => form.GetMatches(mapped, new PrefixEntry<IPNetwork, string>[1]));
+            Assert.That(form.GetMatches(IPAddress.Parse("10.1.2.3")).Select(m => m.Value), Is.EqualTo(new[] { "10.0.0.0/8" }));
         }
 
         var unmapped = new IPNetworkLookup<string>(new IPLookupOptions { MapIPv4MappedAddresses = false });
@@ -216,6 +229,18 @@ public class IPNetworkLookupTests
         unmapped.Add(N("::ffff:0:0/96"), "::ffff:0:0/96");
         Assert.That(Match(unmapped, "::ffff:10.1.2.3"), Is.EqualTo("::ffff:0:0/96"));
         Assert.That(Match(unmapped.Freeze(), "::ffff:10.1.2.3"), Is.EqualTo("::ffff:0:0/96"));
+    }
+
+    [Test]
+    public void Address_conversions_check_the_family()
+    {
+        Assert.That(IPAddressBits.ToIPv4Bits(IPAddress.Parse("10.1.2.3")), Is.EqualTo(0x0A010203u));
+        Assert.That(IPAddressBits.ToIPv6Bits(IPAddress.Parse("::ffff:10.1.2.3")), Is.EqualTo((UInt128)0xFFFF_0A010203UL));
+        Assert.That(IPAddressBits.FromIPv6Bits(IPAddressBits.ToIPv6Bits(IPAddress.Parse("2001:db8::1"))), Is.EqualTo(IPAddress.Parse("2001:db8::1")));
+        Assert.Throws<ArgumentException>(() => IPAddressBits.ToIPv4Bits(IPAddress.Parse("::1")));
+        Assert.Throws<ArgumentException>(() => IPAddressBits.ToIPv6Bits(IPAddress.Parse("10.1.2.3")));
+        Assert.Throws<ArgumentNullException>(() => IPAddressBits.ToIPv4Bits(null!));
+        Assert.Throws<ArgumentNullException>(() => IPAddressBits.ToIPv6Bits(null!));
     }
 
     [Test]
@@ -275,20 +300,26 @@ public class IPNetworkLookupTests
             while (!Volatile.Read(ref stop))
                 if (!lookup.TryGetMatchValue(IPAddress.Any, out var value) || value != "Success")
                     Interlocked.Increment(ref failures);
-        });
+        }) { IsBackground = true };
         reader.Start();
 
-        var random = new Random(20);
-        for (var round = 0; round < 500; round++)
+        try
         {
-            foreach (var network in networks.OrderBy(_ => random.Next()))
-                lookup.Add(network, string.Empty);
-            foreach (var network in networks.OrderBy(_ => random.Next()))
-                lookup.Remove(network);
+            var random = new Random(20);
+            for (var round = 0; round < 500; round++)
+            {
+                foreach (var network in networks.OrderBy(_ => random.Next()))
+                    lookup.Add(network, string.Empty);
+                foreach (var network in networks.OrderBy(_ => random.Next()))
+                    lookup.Remove(network);
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref stop, true);
+            reader.Join();
         }
 
-        Volatile.Write(ref stop, true);
-        reader.Join();
         Assert.That(failures, Is.Zero);
     }
 }

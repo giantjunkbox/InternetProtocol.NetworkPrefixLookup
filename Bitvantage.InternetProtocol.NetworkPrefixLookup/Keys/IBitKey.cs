@@ -42,24 +42,9 @@ public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
     /// <param name="length">The number of leading bits to keep, from 0 to <see cref="Width" />.</param>
     static abstract TSelf Truncate(in TSelf key, int length);
 
-    /// <summary>The number of leading bits two keys share, capped at <paramref name="maxLength" />.</summary>
-    /// <param name="a">The first key.</param>
-    /// <param name="b">The second key.</param>
-    /// <param name="maxLength">The largest result to return.</param>
-    static abstract int CommonPrefixLength(in TSelf a, in TSelf b, int maxLength);
-
     /// <summary>A key with the first <paramref name="length" /> bits set and the rest clear.</summary>
     /// <param name="length">The number of leading bits to set, from 0 to <see cref="Width" />.</param>
     static abstract TSelf MaskFor(int length);
-
-    /// <summary>A key with only bit <paramref name="length" /> set, or no bits set when the length is the full width.</summary>
-    /// <param name="length">The index of the bit to set, from 0 to <see cref="Width" />.</param>
-    static abstract TSelf SplitFor(int length);
-
-    /// <summary>True when <paramref name="key" /> has any bit of <paramref name="split" /> set.</summary>
-    /// <param name="key">The key.</param>
-    /// <param name="split">A key with one bit set, from <see cref="SplitFor" />.</param>
-    static abstract bool IsSet(in TSelf key, in TSelf split);
 
     /// <summary>True when the bits of <paramref name="key" /> under <paramref name="mask" /> equal <paramref name="bits" />.</summary>
     /// <param name="key">The key to test.</param>
@@ -84,9 +69,4 @@ public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
     /// <param name="key">The key.</param>
     /// <param name="count">The number of bits.</param>
     static virtual int GetTopBits(in TSelf key, int count) => TSelf.GetBits(key, 0, count);
-
-    /// <summary>A key whose first <paramref name="count" /> bits are <paramref name="top" /> and whose other bits are clear.</summary>
-    /// <param name="top">The bits, right-aligned in an integer.</param>
-    /// <param name="count">The number of bits, from 1 to 24.</param>
-    static virtual TSelf FromTopBits(int top, int count) => TSelf.SetBits(default, 0, count, top);
 }

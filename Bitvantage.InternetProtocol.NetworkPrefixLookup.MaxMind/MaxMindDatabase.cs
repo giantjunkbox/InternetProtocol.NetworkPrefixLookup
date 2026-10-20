@@ -26,11 +26,13 @@ namespace Bitvantage.InternetProtocol;
 public sealed record MaxMindLoadOptions
 {
     /// <summary>
-    ///     Loads the networks under <c>::ffff:0:0/96</c>, <c>2001::/32</c> and <c>2002::/16</c> too. MaxMind's IPv6
-    ///     databases point these three networks at the IPv4 networks, so loading them stores every IPv4 network three more
-    ///     times. The default is false: they are skipped, and with
-    ///     <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> on, an IPv4-mapped address still finds its IPv4 network.
-    ///     Teredo and 6to4 addresses then find only what covers them outside the aliases.
+    ///     Loads the IPv4 networks of an IPv6 database a second time as IPv6 networks under <c>::/96</c>, where the
+    ///     database keeps them, and loads the networks under <c>::ffff:0:0/96</c>, <c>2001::/32</c> and
+    ///     <c>2002::/16</c>, which it points at them. Every IPv4 network is then stored four more times, and every
+    ///     address finds what <see cref="Reader.Find{T}(IPAddress,InjectableValues?)" /> finds. The default is false:
+    ///     only the IPv4 networks are stored, and with <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> on an
+    ///     IPv4-mapped address still finds its IPv4 network. IPv4-compatible addresses such as <c>::10.1.2.3</c>, and
+    ///     Teredo and 6to4 addresses, then find only the IPv6 networks that cover them.
     /// </summary>
     public bool IncludeAliasedNetworks { get; init; }
 
@@ -73,6 +75,7 @@ public static class MaxMindDatabase
         ArgumentNullException.ThrowIfNull(reader);
         options ??= new MaxMindLoadOptions();
         var lookup = new MaxMindNetworkLookup<T>(options.LookupOptions);
+        var compatible = options.IncludeAliasedNetworks && reader.Metadata.IPVersion == 6;
         using var batch = lookup.BeginBatch();
         foreach (var node in reader.FindAll<T>(options.Injectables, options.CacheSize))
         {
@@ -80,6 +83,9 @@ public static class MaxMindDatabase
             if (!options.IncludeAliasedNetworks && IsAliased(network))
                 continue;
             lookup.TryAdd(network, node.Data);
+            // the same network as the database stores it, so that IPv4-compatible addresses find it
+            if (compatible && network.NetworkAddress.AddressFamily == AddressFamily.InterNetwork)
+                lookup.TryAdd(new Network(IPAddressBits.FromIPv6Bits(IPAddressBits.ToIPv4Bits(network.NetworkAddress)), network.PrefixLength + 96), node.Data);
         }
 
         batch.Commit();

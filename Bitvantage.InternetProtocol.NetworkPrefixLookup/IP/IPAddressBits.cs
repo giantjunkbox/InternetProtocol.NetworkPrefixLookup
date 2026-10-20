@@ -31,8 +31,31 @@ public static class IPAddressBits
 {
     /// <summary>The bits of an IPv4 address: 10.1.2.3 becomes 0x0A010203.</summary>
     /// <param name="address">An IPv4 address.</param>
+    /// <exception cref="ArgumentException">The address is not IPv4.</exception>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static uint ToIPv4Bits(IPAddress address)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+        if (address.AddressFamily != AddressFamily.InterNetwork)
+            throw new ArgumentException($"{address} is not an IPv4 address.", nameof(address));
+        return IPv4Bits(address);
+    }
+
+    /// <summary>The bits of an IPv6 address. The scope ID is ignored.</summary>
+    /// <param name="address">An IPv6 address.</param>
+    /// <exception cref="ArgumentException">The address is not IPv6.</exception>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static UInt128 ToIPv6Bits(IPAddress address)
+    {
+        ArgumentNullException.ThrowIfNull(address);
+        if (address.AddressFamily != AddressFamily.InterNetworkV6)
+            throw new ArgumentException($"{address} is not an IPv6 address.", nameof(address));
+        return IPv6Bits(address);
+    }
+
+    // the conversions for an address already known to be of the right family
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static uint IPv4Bits(IPAddress address)
     {
         // The obsolete Address property is about 30% faster end to end than TryWriteBytes. It holds the bytes in
         // network order, read as a machine integer.
@@ -42,10 +65,8 @@ public static class IPAddressBits
         return BitConverter.IsLittleEndian ? BinaryPrimitives.ReverseEndianness(bits) : bits;
     }
 
-    /// <summary>The bits of an IPv6 address. The scope ID is ignored.</summary>
-    /// <param name="address">An IPv6 address.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static UInt128 ToIPv6Bits(IPAddress address)
+    private static UInt128 IPv6Bits(IPAddress address)
     {
         Span<byte> bytes = stackalloc byte[16];
         address.TryWriteBytes(bytes, out _);
@@ -82,11 +103,11 @@ public static class IPAddressBits
         switch (address.AddressFamily)
         {
             case AddressFamily.InterNetwork:
-                v4 = ToIPv4Bits(address);
+                v4 = IPv4Bits(address);
                 v6 = default;
                 return true;
             case AddressFamily.InterNetworkV6:
-                v6 = ToIPv6Bits(address);
+                v6 = IPv6Bits(address);
                 return IsIPv4(v6, map, out v4);
             default:
                 throw new ArgumentException($"Unsupported address family {address.AddressFamily}.", nameof(address));

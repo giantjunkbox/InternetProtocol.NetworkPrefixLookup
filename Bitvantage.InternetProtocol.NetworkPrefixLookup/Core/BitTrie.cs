@@ -32,15 +32,16 @@ namespace Bitvantage.InternetProtocol;
 ///         popcount-compressed arrays. They hold the prefixes that end inside the node's stride, as Knuth's ART base
 ///         indexes 1 to 255; fringes, prefixes that end exactly at the end of the stride; child nodes; and leaves, lone
 ///         longer prefixes stored whole. The shape is canonical: a child node exists at an octet exactly when two or more
-///         prefixes lie below it. For keys of 16 bits or more, a 65,536-slot table points at the nodes for each 16-bit
-///         block, so lookups skip the first two levels.
+///         prefixes lie below it. For keys of 16 bits or more, shortcut blocks, one for each first octet that leads to a
+///         node, point at the nodes below the first 16 bits, so most lookups skip the first two levels.
 ///     </para>
 ///     <para>
 ///         <b>Thread safety.</b> Any number of threads may read while one writes. Reads take no locks, and each sees the
-///         trie before or after any single change. Writes are serialized by an internal lock. A write copies the one
-///         node it changes, finishes the copy, and links it in with one reference write; the garbage collector frees
-///         replaced nodes, so the trie never pauses for compaction or array growth. Enumeration during writes is safe and
-///         sees every entry whole, but is not a snapshot of the whole trie at one instant.
+///         trie as it was before or after every change: a lookup that overlaps two or more changes looks again. Writes
+///         are serialized by an internal lock. A write copies the one node it changes, finishes the copy, and links it in
+///         with one reference write; the garbage collector frees replaced nodes, so the trie never pauses for compaction
+///         or array growth. Enumeration during writes is safe and sees every entry whole, but is not a snapshot of the
+///         whole trie at one instant.
 ///     </para>
 ///     <para>
 ///         <b>Batches.</b> Changes made after <see cref="BeginBatch" /> build privately and stay invisible to readers
@@ -137,7 +138,15 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     private Node _w;        // what the writer works on; ahead of the published root only during a batch
     private int _stamp = 1; // nodes stamped 0 at construction count as published
     private bool _batch;
-    private long _version;
+
+    // Twice the number of published changes, plus one while a change is being published. A change that replaces a node
+    // stores the copy into the parent's child array in place, and a copy shares that array with the node it was copied
+    // from, so a lookup that overlaps two changes can see the second through a node from before the first: a mix that
+    // never existed. Lookups read this before and after, and look again if two or more changes overlapped them.
+    private long _changes;
+
+    // TEMP: lets ConsistencyBenchmarks measure lookups without the check in the same session; removed once measured
+    private static readonly bool Retry = Environment.GetEnvironmentVariable("BITTRIE_NO_RETRY") != "1";
 
     /// <summary>Creates an empty trie.</summary>
     /// <exception cref="NotSupportedException">The key width is not a multiple of 8 from 8 to 128.</exception>
@@ -163,13 +172,13 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     }
 
     /// <summary>The number of stored prefixes that readers can see; changes in an uncommitted batch do not count.</summary>
-    public int Count => Root.Count;
+    public int Count => Volatile.Read(ref Root.Count);
 
     /// <summary>
     ///     A number that changes with every published change, so a caller can cache lookup results and check that they are
     ///     still current with one comparison.
     /// </summary>
-    public long Version => Volatile.Read(ref _version);
+    public long Version => Volatile.Read(ref _changes) >> 1;
 
     // the root that readers see
     private Node Root => Volatile.Read(ref Volatile.Read(ref _published).Root);
@@ -208,7 +217,27 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         return true;
     }
 
+    // True when at most one change overlapped a lookup that began when _changes was before, so that the lookup saw the
+    // trie as it was before or after that change.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool Settled(long before)
+    {
+        if (!Retry) return true;
+        Volatile.ReadBarrier();
+        return Volatile.Read(ref _changes) - (before & ~1L) <= 2;
+    }
+
     private ref Entry Find(in TKey key)
+    {
+        while (true)
+        {
+            var before = Volatile.Read(ref _changes);
+            ref var entry = ref FindOnce(in key);
+            if (Settled(before)) return ref entry;
+        }
+    }
+
+    private ref Entry FindOnce(in TKey key)
     {
         var stack = new NodeStack();
         var published = Volatile.Read(ref _published);
@@ -288,8 +317,18 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         return true;
     }
 
-    // the longest stored prefix that contains the prefix (bits, length): only prefixes no longer than length qualify
     private ref Entry FindForPrefix(in TKey bits, int length)
+    {
+        while (true)
+        {
+            var before = Volatile.Read(ref _changes);
+            ref var entry = ref FindForPrefixOnce(in bits, length);
+            if (Settled(before)) return ref entry;
+        }
+    }
+
+    // the longest stored prefix that contains the prefix (bits, length): only prefixes no longer than length qualify
+    private ref Entry FindForPrefixOnce(in TKey bits, int length)
     {
         var path = new NodeStack();
         var n = Root;
@@ -337,7 +376,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     public bool TryGetValue(in TKey bits, int length, out TValue value)
     {
         CheckLength(length);
-        ref var entry = ref FindExact(Root, in bits, length);
+        ref var entry = ref FindPublished(in bits, length);
         if (Unsafe.IsNullRef(ref entry))
         {
             value = default!;
@@ -352,7 +391,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     public bool TryGetValue(in TKey bits, int length, out TPrefix prefix, out TValue value)
     {
         CheckLength(length);
-        ref var entry = ref FindExact(Root, in bits, length);
+        ref var entry = ref FindPublished(in bits, length);
         if (Unsafe.IsNullRef(ref entry))
         {
             prefix = default!;
@@ -369,7 +408,17 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     public bool ContainsPrefix(in TKey bits, int length)
     {
         CheckLength(length);
-        return !Unsafe.IsNullRef(ref FindExact(Root, in bits, length));
+        return !Unsafe.IsNullRef(ref FindPublished(in bits, length));
+    }
+
+    private ref Entry FindPublished(in TKey bits, int length)
+    {
+        while (true)
+        {
+            var before = Volatile.Read(ref _changes);
+            ref var entry = ref FindExact(Root, in bits, length);
+            if (Settled(before)) return ref entry;
+        }
     }
 
     // The writer's view of exactly this prefix, which includes an uncommitted batch, for the range lookups, which work
@@ -438,6 +487,21 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     // every prefix that contains key, longest first, into the list or else the span
     private int CollectMatches(in TKey key, List<PrefixEntry<TPrefix, TValue>>? list, Span<PrefixEntry<TPrefix, TValue>> span)
     {
+        while (true)
+        {
+            list?.Clear();
+            var before = Volatile.Read(ref _changes);
+            var count = CollectMatchesOnce(in key, list, span);
+            if (!Settled(before)) continue;
+            if (list == null && count > span.Length)
+                throw new ArgumentException("The destination is too small for the matches.", "destination");
+            return count;
+        }
+    }
+
+    // counts every match, and stores those that fit
+    private int CollectMatchesOnce(in TKey key, List<PrefixEntry<TPrefix, TValue>>? list, Span<PrefixEntry<TPrefix, TValue>> span)
+    {
         var count = 0;
 
         void Emit(in Entry entry, List<PrefixEntry<TPrefix, TValue>>? l, Span<PrefixEntry<TPrefix, TValue>> s, ref int c)
@@ -445,7 +509,6 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             var item = new PrefixEntry<TPrefix, TValue>(entry.Prefix, entry.Value);
             if (l != null) l.Add(item);
             else if (c < s.Length) s[c] = item;
-            else throw new ArgumentException("The destination is too small for the matches.", nameof(span));
             c++;
         }
 
@@ -590,7 +653,9 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     /// <param name="bits">The prefix bits; bits after the length are ignored.</param>
     /// <param name="length">The prefix length.</param>
     /// <param name="prefix">The prefix object to store if the prefix is added.</param>
-    /// <param name="valueFactory">Creates the value from the prefix object, called only when the prefix is absent.</param>
+    /// <param name="valueFactory">
+    ///     Creates the value from the prefix object, called only when the prefix is absent, while other writers wait.
+    /// </param>
     public TValue GetOrAdd(in TKey bits, int length, TPrefix prefix, Func<TPrefix, TValue> valueFactory)
     {
         CheckLength(length);
@@ -625,8 +690,10 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             _stamp++;
             _w = new Node { Stamp = _stamp };
             if (_batch) return;
-            Volatile.Write(ref _published, new Published(_w, _hasTable));
-            Interlocked.Increment(ref _version);
+            var published = new Published(_w, _hasTable);
+            Interlocked.Increment(ref _changes);
+            Volatile.Write(ref _published, published);
+            Interlocked.Increment(ref _changes);
         }
     }
 
@@ -699,8 +766,9 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
                             published.Blocks[first] = old[first] is { } block && block.Depth1 == depth1 ? block : NewBlock(depth1);
                     }
                 }
+                Interlocked.Increment(ref _changes);
                 Volatile.Write(ref _published, published);
-                Interlocked.Increment(ref _version);
+                Interlocked.Increment(ref _changes);
             }
             else
             {
@@ -805,23 +873,20 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             break;
         }
 
-        if (added)
-        {
-            changed.Count++;
-            if (!_batch)
-                for (var i = 0; i < depth; i++)
-                    path[i].Count++;
-        }
+        if (added) changed.Count++;
 
-        Link(changed, n, ref path, octets, depth);
         if (_batch)
         {
+            Link(changed, n, ref path, octets, depth);
             if (added) AdjustCounts(in item.Bits, depth, 1);
         }
         else
         {
+            Interlocked.Increment(ref _changes);
+            Link(changed, n, ref path, octets, depth);
             UpdateTable(in item.Bits, depth);
-            Interlocked.Increment(ref _version);
+            if (added) AdjustPublishedCounts(ref path, depth, 1);
+            Interlocked.Increment(ref _changes);
         }
 
         return added ? SetResult.Added : SetResult.Updated;
@@ -900,19 +965,18 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             depth--;
         }
 
-        if (!_batch)
-            for (var i = 0; i < depth; i++)
-                path[i].Count--;
-
-        Link(changed, original, ref path, octets, depth);
         if (_batch)
         {
+            Link(changed, original, ref path, octets, depth);
             AdjustCounts(in key, depth, -1);
         }
         else
         {
+            Interlocked.Increment(ref _changes);
+            Link(changed, original, ref path, octets, depth);
             UpdateTable(in key, depth);
-            Interlocked.Increment(ref _version);
+            AdjustPublishedCounts(ref path, depth, -1);
+            Interlocked.Increment(ref _changes);
         }
 
         return true;
@@ -952,6 +1016,14 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             Volatile.Write(ref parent.KidNodes[at], changed);
             return;
         }
+    }
+
+    // Outside a batch the counts of the published nodes above a change are adjusted after it is linked in, so that Count
+    // changes only once lookups see the change.
+    private static void AdjustPublishedCounts(ref NodeStack path, int depth, int delta)
+    {
+        for (var i = 0; i < depth; i++)
+            Volatile.Write(ref path[i].Count, path[i].Count + delta);
     }
 
     private static void OwnKidArray(Node n)

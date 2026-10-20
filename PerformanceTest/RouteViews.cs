@@ -58,26 +58,11 @@ public static class RouteViews
     private static Table Load(string kind, int width)
     {
         var sw = Stopwatch.StartNew();
-        var directory = Environment.GetEnvironmentVariable("ROUTEVIEWS_DIR") ?? throw new InvalidOperationException("Set ROUTEVIEWS_DIR.");
-        var file = Directory.GetFiles(directory, $"routeviews-{kind}-*.pfx2as").OrderBy(f => f).Last();
-        var bits = new List<UInt128>();
-        var lengths = new List<int>();
-        var networks = new List<IPNetwork>();
-        var asns = new List<int>();
-        foreach (var line in File.ReadLines(file))
-        {
-            var parts = line.Split('\t');
-            var address = IPAddress.Parse(parts[0]);
-            var length = int.Parse(parts[1]);
-            var value = width == 32 ? IPAddressBits.ToIPv4Bits(address) : IPAddressBits.ToIPv6Bits(address);
-            value &= Mask(length, width);
-            // the origin AS field can be a set such as "64496_64497" or "64496,64497"; keep the first AS
-            var asText = parts[2].Split('_', ',')[0];
-            bits.Add(value);
-            lengths.Add(length);
-            networks.Add(new IPNetwork(ToAddress(value, width), length));
-            asns.Add(int.TryParse(asText, out var asn) ? asn : 0);
-        }
+        var (file, rows) = ComparisonData.ReadRouteViews(kind, width);
+        var bits = rows.Select(r => r.Bits).ToList();
+        var lengths = rows.Select(r => r.Length).ToList();
+        var networks = rows.Select(r => new IPNetwork(ToAddress(r.Bits, width), r.Length)).ToList();
+        var asns = rows.Select(r => r.Asn).ToList();
 
         // the prototype's keys: a random announced prefix, then random bits for the rest of the address
         var random = new Random(42);

@@ -77,8 +77,8 @@ through `out` parameters, as decided in [Abstraction-Study.md](Abstraction-Study
 A key is a fixed-width bit string, left-aligned: bit 0 is the most significant bit. `IBitKey<TSelf>` has only static
 members, so each key type is a struct the JIT compiles into plain instructions. Widths must be multiples of 8, because the trie
 consumes 8 bits per level, from 8 to 128, so that a path fits in a fixed stack of 17 nodes. The library ships `Bits32`
-for IPv4 and `Bits128` for IPv6. A user type needs nine members; `GetTopBits` and `FromTopBits` have default
-implementations. The test project's `Bits16` is written that way.
+for IPv4 and `Bits128` for IPv6. A user type needs six members; `GetTopBits` has a default implementation. The test
+project's `Bits16` is written that way.
 
 Keys are not the place for context such as a VRF. The context would have to come before the address, costing a trie
 level per 8 bits and spending the shortcut table and the frozen root on bits that barely vary. Use one lookup per
@@ -181,7 +181,8 @@ Two fields make the copying cheap:
   its bits do not matter until the next copy sets them all again.
 
 `Count` on each node is the number of prefixes in its subtree, used by removal to find nodes that must collapse. Only
-the writer reads it; the root's count is the trie's `Count`.
+the writer reads it; the root's count is the trie's `Count`. A single write adjusts the counts of the published nodes
+above it after it links the change in, so `Count` never runs ahead of what lookups find.
 
 ### What readers see
 
@@ -189,10 +190,21 @@ the writer reads it; the root's count is the trie's `Count`.
 batch updates the root reference or a child reference, and then the blocks, in place. A batch commit and `Clear` build a
 new root and a new block array privately and publish both with one reference write.
 
-- Each lookup sees the trie as it was before or after any single write. A write changes one prefix and touches one
-  path, so a reader that combines a newer block entry with an older root, or the reverse, still gets an answer that was
-  correct before or after that write. A new block is filled before it is linked in, and a block always holds its
+- A lookup that overlaps one write sees the trie as it was before or after it. A write changes one prefix and touches
+  one path, so a reader that combines a newer block entry with an older root, or the reverse, still gets an answer that
+  was correct before or after that write. A new block is filled before it is linked in, and a block always holds its
   depth-1 node.
+- A lookup that overlaps two or more writes could see a state that never existed. A copied node shares its child array
+  with the original, and a write stores a replaced child into the published parent's array in place, so a reader still
+  holding the original parent from before one write sees the child from a later one. With a writer that adds a covering
+  /8 and then removes a /16 inside it, such a reader can miss both. So `_changes` counts writes: each write outside a
+  batch, each commit and each `Clear` raises it to odd before its first visible store and to even after its last.
+  Every lookup reads it before and after, behind a read barrier, and looks again when the two readings show that two
+  or more writes overlapped it, that is when the second exceeds the first, rounded down to even, by more than 2. A
+  lookup therefore sees the trie as it was at one moment during the call. Readers still take no locks. They are
+  lock-free rather than wait-free: a lookup retries only when a second write begins before it ends, and a write takes
+  several times as long as a lookup, so retries are occasional even under continuous writes, and each costs about one
+  lookup. `Version` is `_changes` halved.
 - A batch is all or nothing. Readers keep seeing the published root and blocks until the commit replaces both at once.
 - Enumeration during writes sees each entry whole, but is not a snapshot of the whole trie at one instant.
 
@@ -273,9 +285,12 @@ caller's type costs no indirection.
 
 - **Addresses** convert without allocating: IPv4 through the obsolete `IPAddress.Address` property, which was about
   30% faster end to end than `TryWriteBytes`, and IPv6 through `TryWriteBytes` into a stack buffer. The span, `uint` and
-  `UInt128` overloads skip `IPAddress` entirely. `IPAddressBits` exposes the conversions for adapter authors.
+  `UInt128` overloads skip `IPAddress` entirely. `IPAddressBits` exposes the conversions for adapter authors; its public
+  conversions check the address family, and the lookups use unchecked copies after sorting the address by family.
 - **IPv4-mapped addresses** such as `::ffff:10.1.2.3` are looked up as IPv4 when `IPLookupOptions.MapIPv4MappedAddresses`
-  is on, the default. Prefixes are always stored and looked up as given.
+  is on, the default. On a miss they are looked up again as IPv6, so that IPv6 prefixes inside `::ffff:0:0/96`, or
+  covering it, still answer; the second lookup costs only misses of mapped addresses. `GetMatches` returns the IPv4
+  matches and then the IPv6 ones. Prefixes are always stored and looked up as given.
 - **Batches** begin a batch on both tries. On commit each family publishes atomically, IPv4 first.
 - **`Version`** is the sum of the two tries' versions, which changes whenever either does.
 - **Concrete classes** such as `IPNetworkLookup<TValue>` fix the prefix and adapter types, and redeclare `Freeze` with
@@ -315,10 +330,12 @@ Each package defines an adapter struct and a read-write and frozen class pair. T
   `NoValueLookupExtensions` in the core adds `TryAdd(prefix)`, `Add(prefix)`, `TryGetMatch(address, out prefix)` and
   `ContainsMatch(address)` for any value-less lookup.
 - **MaxMind** adds `MaxMindDatabase.Load<T>`, which reads every network through `Reader.FindAll<T>` into one batch.
-  MaxMind's IPv6 databases point `::ffff:0:0/96`, `2001::/32` and `2002::/16` at the IPv4 networks, so a full walk
-  returns every IPv4 network four times. The loader skips the three aliases by default; with IPv4-mapped addresses
-  mapped, `::ffff:` addresses still find their IPv4 network. `IncludeAliasedNetworks` loads them for exact agreement
-  with `Reader.Find`, which the tests check at every network boundary of two MaxMind test databases.
+  MaxMind's IPv6 databases keep the IPv4 networks under `::/96`, which `FindAll` reports as IPv4, and point
+  `::ffff:0:0/96`, `2001::/32` and `2002::/16` at them, so a full walk returns every IPv4 network four times. The loader
+  skips the three aliases by default; with IPv4-mapped addresses mapped, `::ffff:` addresses still find their IPv4
+  network. `IncludeAliasedNetworks` loads the aliases and stores each IPv4 network once more under `::/96`, for exact
+  agreement with `Reader.Find` at every address, which the tests check at every network boundary of two MaxMind test
+  databases, in IPv4, IPv4-compatible and IPv4-mapped form.
 
 ## Diagnostics
 
@@ -515,10 +532,10 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 
 | Test class | What it checks |
 | --- | --- |
-| `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 16-, 32- and 128-bit keys (16 is a test-only type), before and after removals; canonical shape; batches commit and discard; `Version`; lock-free readers during churn; concurrent writers |
-| `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; IPv4-mapped addresses; writes and batches; a reader during churn |
+| `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 16-, 32- and 128-bit keys (16 is a test-only type), before and after removals; canonical shape; batches commit and discard; `Version`; lock-free readers during churn; lookups that overlap several writes; concurrent writers |
+| `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; IPv4-mapped addresses and their IPv6 fallback; address conversions; writes and batches; a reader during churn |
 | `IP/IPRangeLookupTests` | Exact coverage, the fewest pieces, nested ranges and removal, random nested ranges against brute force, batches, writes that see the open batch, ranges read once, the frozen form |
-| `Adapters/AdapterTests` | Each adapter package in both forms; MaxMind databases against `Reader.Find` |
+| `Adapters/AdapterTests` | Each adapter package in both forms; MaxMind databases against `Reader.Find`, at IPv4, IPv4-compatible and IPv4-mapped addresses |
 
 ## Limitations
 
