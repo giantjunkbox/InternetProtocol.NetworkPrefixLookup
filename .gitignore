@@ -361,3 +361,5 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# PerformanceTest.V2: the original library source, extracted by get-original.sh
+PerformanceTest.V2/Original/

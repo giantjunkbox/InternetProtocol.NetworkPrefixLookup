@@ -1,0 +1,30 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<!--
+		The original library, before the redesign, against the same benchmarks as PerformanceTest. Not in the solution:
+		the original has the same type and assembly names as version 3, so it runs in its own process. Run
+		get-original.sh first; it extracts the original source at commit b512201 into Original/. The original targeted
+		.NET 7, so this project builds for .NET 7 as well as .NET 10.
+	-->
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFrameworks>net10.0;net7.0</TargetFrameworks>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<IsPackable>false</IsPackable>
+		<SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
+		<CheckEolTargetFramework>false</CheckEolTargetFramework>
+		<!-- the original source's own warnings -->
+		<NoWarn>$(NoWarn);CS8618;CS8625;CS8600;CS8602;CS8603;CS8604;CS8619;CS8765;CS9057;CS0618</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+		<PackageReference Include="Bitvantage.InternetProtocol.NetworkPrefix" Version="2.0.*" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Compile Include="..\PerformanceTest\ComparisonData.cs" Link="ComparisonData.cs" />
+	</ItemGroup>
+
+</Project>
