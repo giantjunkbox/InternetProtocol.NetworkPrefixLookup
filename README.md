@@ -144,27 +144,31 @@ For context such as a VRF, use one lookup per VRF rather than a wider key.
 
 ## Performance
 
-One million lookups in a 4-core cloud container on .NET 10. Lookups allocate nothing. The real tables are the CAIDA
-RouteViews tables of September 2025.
+One million lookups from `IPAddress` objects in a 4-core cloud container, against version 2 as it shipped, on .NET 7,
+with `NetworkPrefix` prefixes in both. Version 3 allocates nothing per lookup; version 2 allocated 64 to 104 bytes. The
+real tables are the CAIDA RouteViews tables of September 2025; the small ones are 1,000 prefixes sampled from them.
 
-| Table | Read-write | Frozen | Version 2 |
+| Table | Version 2 | Version 3 | Version 3, frozen |
 | --- | --- | --- | --- |
-| Real IPv4, 1,054,037 prefixes, from `IPAddress` | 227 ms | | 3,466 ms |
-| Real IPv4, from `uint` | 170 ms | 94 ms, 74 ms value only | |
-| Real IPv6, 239,603 prefixes, from `IPAddress` | 417 ms | | 2,632 ms |
-| Real IPv6, from `UInt128` | 368 ms | 213 ms, 162 ms value only | |
-| 96,944 random IPv4 prefixes, from `IPAddress` | 154 ms | 88 ms | 1,405 ms |
+| Small IPv4, 1,000 prefixes | 187 ms | 20 ms | 13 ms |
+| Small IPv6, 1,000 prefixes | 227 ms | 50 ms | 44 ms |
+| Random IPv4, 96,944 prefixes | 1,294 ms | 120 ms | 70 ms |
+| Real IPv4, 1,054,037 prefixes | 3,315 ms | 220 ms | 141 ms |
+| Real IPv6, 239,603 prefixes | 2,330 ms | 503 ms | 388 ms |
 
-Loading the real IPv4 table as one batch takes 0.3 seconds and holds 32 MB, against 3.2 seconds and 416 MB in
-version 2. The frozen copy holds 61 MB, or 41 MB with the compressed layout. Prefer the compressed layout for prefixes
+From integer addresses, version 3 takes 170 ms on the real IPv4 table, 94 ms frozen and 74 ms frozen when only the
+value is needed.
+
+Loading the real IPv4 table as one batch takes 0.2 seconds and holds 22 MB, against 0.5 seconds and 416 MB in
+version 2. The frozen copy holds 53 MB, or 32 MB with the compressed layout. Prefer the compressed layout for prefixes
 scattered across the address space, such as random /25 to /32 blocks: the default layout grew to 105 MB for the random
 table above, where the compressed one needs 8 MB and was faster.
 
 Loaded into a lookup, a MaxMind database answers about 80 times faster than MaxMind's reader read-write, and about 180
 times faster frozen, on MaxMind's small test database.
 
-[Documentation/Architecture.md](Documentation/Architecture.md#performance) has the details and how they were measured.
-Version 2 numbers come from separate runs on the same machine.
+[Documentation/Architecture.md](Documentation/Architecture.md#performance) has the details, including builds and
+memory for every table, and how they were measured. Version 2 ran in its own process, back to back with version 3.
 
 ## How it works
 

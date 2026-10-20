@@ -345,6 +345,50 @@ All numbers come from a 4-core cloud container (Intel Xeon, 2.8 GHz) on .NET 10.
 2026-10-19 and 20. Lookups allocate nothing in either form. Timings in this container drift by about 10% between
 sessions, so compare ratios within a table rather than times across tables.
 
+**Against the original library.** `PerformanceTest.V2` runs the library as it was before the redesign, at commit
+`b512201`, on the same tables as `ComparisonBenchmarks`: `NetworkPrefix` prefixes with `int` values in both, and
+1,000,000 lookups from `IPAddress` objects. The small tables are every 1,054th prefix of the real IPv4 table and every
+240th of the real IPv6 table. The original ran on .NET 7, as it shipped, and on .NET 10; version 3 runs on .NET 10.
+The three sessions ran back to back on 2026-10-20.
+
+| Lookups, ms per million | Original, .NET 7 | Original, .NET 10 | Version 3 | Version 3, frozen | Faster than the original on .NET 7 |
+| --- | --- | --- | --- | --- | --- |
+| Small IPv4, 1,000 prefixes | 187 | 218 | 20 | 13 | 9.2 times, 14 frozen |
+| Small IPv6, 1,000 prefixes | 227 | 242 | 50 | 44 | 4.5 times, 5.2 frozen |
+| Random IPv4, 96,944 prefixes | 1,294 | 1,722 | 120 | 70 | 11 times, 18 frozen |
+| Real IPv4, 1,054,037 prefixes | 3,315 | 3,396 | 220 | 141 | 15 times, 24 frozen |
+| Real IPv6, 239,603 prefixes | 2,330 | 3,425 | 503 | 388 | 4.6 times, 6.0 frozen |
+
+The original allocates 64 bytes per IPv4 lookup and 104 per IPv6 lookup; version 3 allocates nothing. IPv6 gains least:
+its prefixes are deeper, converting a 16-byte address costs more, and `NetworkPrefix` is a class, so reading the
+returned prefix's length is a cache miss in both versions.
+
+| Building, one prefix at a time | Original, .NET 7 | Original, .NET 10 | Version 3 | Version 3, one batch |
+| --- | --- | --- | --- | --- |
+| Small IPv4 | 0.44 ms | 0.38 ms | 0.80 ms | 0.42 ms |
+| Small IPv6 | 0.72 ms | 0.58 ms | 0.51 ms | 0.27 ms |
+| Random IPv4 | 162 ms | 390 ms | 222 ms | 37 ms |
+| Real IPv4 | 496 ms, 1,044 MB allocated | 1,987 ms | 484 ms, 858 MB allocated | 201 ms, 71 MB |
+| Real IPv6 | 165 ms | 464 ms | 153 ms | 69 ms |
+
+On .NET 7 the original builds as fast as version 3 adding one prefix at a time on the real tables, and faster on the
+small IPv4 and random tables, because each copy-on-write insert allocates. A batch is 2.4 to 4.4 times faster than the
+original on .NET 7, and ties it on the small IPv4 table. On .NET 10 the original builds 2.3 to 4 times slower than on
+.NET 7, because of garbage collection, so version 3 builds faster there on every table but small IPv4.
+
+| Memory held | Original | Version 3 | Version 3, frozen leaf-pushed | Version 3, frozen compressed |
+| --- | --- | --- | --- | --- |
+| Small IPv4 | 0.4 MB | 0.4 MB | 1.2 MB | 0.1 MB |
+| Small IPv6 | 0.5 MB | 0.1 MB | 2.2 MB | 0.2 MB |
+| Random IPv4 | 37.0 MB | 8.7 MB | 104.7 MB | 7.6 MB |
+| Real IPv4 | 415.6 MB | 22.3 MB | 52.9 MB | 32.2 MB |
+| Real IPv6 | 106.2 MB | 11.8 MB | 56.6 MB | 10.3 MB |
+
+Memory is heap growth after full collections, not counting the callers' `NetworkPrefix` objects; the original held the
+same on both runtimes. The read-write trie holds 5 to 19 times less than the original on the larger tables and the same
+on the small IPv4 table. Leaf-pushed frozen tables hold more than the original on small and scattered tables; compressed
+ones hold less everywhere.
+
 **The version 2 benchmarks.** `RandomTableBenchmarks` repeats the benchmarks of version 2 on the same seeded data:
 96,944 distinct random IPv4 prefixes and 1,000,000 random addresses. Version 2 cannot run in the same process, because
 its assembly has the same name, so its row comes from its own `PerformanceTest`, run about an hour earlier.

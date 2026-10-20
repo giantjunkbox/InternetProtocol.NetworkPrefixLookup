@@ -58,6 +58,9 @@ interface differs from the proposal. `Documentation/Adapter-Survey.md` explains 
   the v2 library from NuGet, so it builds independently of the library. `BartTrie.cs` is the prototype of `BitTrie`;
   `PooledTrie` in `FastTrie.cs` holds the prototype frozen tables; `SnapshotTrie.cs` is the earlier binary-trie core.
   `Prototypes/GenericTrie.Tests/` holds 66 test cases for the prototypes.
+- `PerformanceTest.V2/` runs `ComparisonBenchmarks` against the original library, before the redesign, at commit
+  `b512201`. It is not in the solution; `get-original.sh` extracts the original source into its ignored `Original/`
+  folder, and it targets .NET 7, which the original shipped on, as well as .NET 10.
 
 ## Build and test
 
@@ -78,6 +81,16 @@ dotnet run -c Release --project PerformanceTest -- --memory                   # 
 ```
 
 `PerformanceTest` passes its arguments to BenchmarkDotNet, so `--filter` and `--artifacts` work.
+
+To compare with the original library, run the same benchmarks in its own process, from its folder so that
+BenchmarkDotNet finds the right project:
+
+```sh
+PerformanceTest.V2/get-original.sh
+(cd PerformanceTest.V2 && dotnet run -c Release -f net7.0)          # or -f net10.0; --memory for memory held
+dotnet run -c Release --project PerformanceTest -- --filter '*ComparisonBenchmarks*'
+dotnet run -c Release --project PerformanceTest -- --memory-comparison
+```
 
 The real-table benchmarks and the prototype's real-data tests use the CAIDA RouteViews tables. Download them once and
 point `ROUTEVIEWS_DIR` at them; without it those benchmarks are left out and the prototype's six real-table tests are
