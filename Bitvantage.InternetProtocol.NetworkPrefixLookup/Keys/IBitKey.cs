@@ -24,8 +24,8 @@ namespace Bitvantage.InternetProtocol;
 /// <remarks>
 ///     <para>
 ///         Every member is static, so the JIT compiles each key type into plain machine instructions. The library ships
-///         <see cref="Bits32" />, <see cref="Bits64" /> and <see cref="Bits128" />; any other fixed width that is a
-///         multiple of 8, up to 256 bits, can implement this interface.
+///         <see cref="Bits32" /> for IPv4 and <see cref="Bits128" /> for IPv6; any other fixed width that is a multiple
+///         of 8, up to 128 bits, can implement this interface.
 ///     </para>
 ///     <para>
 ///         Bit operations past the end of the key must treat the missing bits as zeros.
@@ -34,7 +34,7 @@ namespace Bitvantage.InternetProtocol;
 /// <typeparam name="TSelf">The implementing key type.</typeparam>
 public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
 {
-    /// <summary>The number of bits in the key, a multiple of 8 from 8 to 256.</summary>
+    /// <summary>The number of bits in the key, a multiple of 8 from 8 to 128.</summary>
     static abstract int Width { get; }
 
     /// <summary>Returns a copy with every bit at index <paramref name="length" /> or later cleared.</summary>

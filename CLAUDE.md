@@ -22,8 +22,8 @@ Decisions made by the user:
 - The `NetworkPrefix` adapter ships as a separate package.
 - The core is constrained on a purpose-built key interface, `IBitKey<TSelf>`. Key widths are fixed at compile time;
   widths chosen at run time are not supported.
-- Context such as a VRF is handled with one lookup instance per context, not with wider keys, so `Bits192` was
-  removed. The tests keep a copy of it to cover keys wider than 128 bits.
+- Context such as a VRF is handled with one lookup instance per context, not with wider keys. Only `Bits32` and
+  `Bits128` ship, and key widths are limited to 128 bits.
 - Lookup results use whichever shape is fastest. All measured shapes tied, so lookups return the prefix and value
   through `out` parameters, which keep the node layout private.
 - One read-write design in which every write does bounded work, with no pauses for growth or compaction. There is no
@@ -42,7 +42,7 @@ interface differs from the proposal. `Documentation/Adapter-Survey.md` explains 
 ## Layout
 
 - `Bitvantage.InternetProtocol.NetworkPrefixLookup/`: the core package.
-  - `Keys/`: `IBitKey<TSelf>` and `Bits32`, `Bits64`, `Bits128`.
+  - `Keys/`: `IBitKey<TSelf>`, `Bits32` and `Bits128`.
   - `Core/`: `BitTrie` (the read-write trie), `FrozenBitTrie`, `IReadOnlyBitTrie`, `BitSet256` with the ART tables,
     `PrefixEntry`, `NoValue`.
   - `IP/`: the adapter interfaces, `IPAddressBits`, `IPPrefixLookup`, `IPRangeLookup`, their frozen forms, and
@@ -89,7 +89,7 @@ ROUTEVIEWS_DIR=/tmp/routeviews dotnet run -c Release --project PerformanceTest
 ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 3 minutes
 ```
 
-**Test baseline:** all 41 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
+**Test baseline:** all 40 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
 text with `Environment.NewLine`, so it passes with either line ending. Keep `.gitattributes` at `text=auto`.
 
 The whole solution builds with no warnings. Do not add any.

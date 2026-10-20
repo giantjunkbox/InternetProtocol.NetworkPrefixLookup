@@ -43,7 +43,7 @@ contains a given prefix, and look prefixes up exactly.
 
 | Path | Contents |
 | --- | --- |
-| `Bitvantage.InternetProtocol.NetworkPrefixLookup/Keys/` | `IBitKey<TSelf>` and `Bits32`, `Bits64`, `Bits128` |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup/Keys/` | `IBitKey<TSelf>`, `Bits32` and `Bits128` |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup/Core/` | `BitTrie`, `FrozenBitTrie`, `IReadOnlyBitTrie`, `BitSet256` and the ART tables, `PrefixEntry`, `NoValue` |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup/IP/` | Adapter interfaces, `IPAddressBits`, `IPPrefixLookup`, `IPRangeLookup`, their frozen forms, `IPNetworkLookup` |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup.*/` | One adapter package each |
@@ -75,10 +75,10 @@ through `out` parameters, as decided in [Abstraction-Study.md](Abstraction-Study
 ## Keys
 
 A key is a fixed-width bit string, left-aligned: bit 0 is the most significant bit. `IBitKey<TSelf>` has only static
-members, so each key type is a struct the JIT compiles into plain instructions. Widths must be multiples of 8 from 8
-to 256, because the trie consumes 8 bits per level. The shipped types are `Bits32` (IPv4), `Bits64` and `Bits128` (IPv6).
-A user type needs nine members; `GetTopBits` and `FromTopBits` have default implementations. The test project's
-`Bits16` is written that way, and its `Bits192` covers keys wider than 128 bits.
+members, so each key type is a struct the JIT compiles into plain instructions. Widths must be multiples of 8, because the trie
+consumes 8 bits per level, from 8 to 128, so that a path fits in a fixed stack of 17 nodes. The library ships `Bits32`
+for IPv4 and `Bits128` for IPv6. A user type needs nine members; `GetTopBits` and `FromTopBits` have default
+implementations. The test project's `Bits16` is written that way.
 
 Keys are not the place for context such as a VRF. The context would have to come before the address, costing a trie
 level per 8 bits and spending the shortcut table and the frozen root on bits that barely vary. Use one lookup per
@@ -135,7 +135,7 @@ compare `ToTextTree` output after shuffled, reversed and batched insertion, and 
 ### Lookup
 
 `Find` walks down while the key's next octet has a child node, pushing each node on a stack (an inline array of 17
-nodes for keys up to 128 bits, 33 above that). If the last node has a leaf at the key's octet and the leaf matches, that
+nodes). If the last node has a leaf at the key's octet and the leaf matches, that
 is the answer. Otherwise it backtracks from the deepest node up: in each node a fringe at the key's octet beats any
 prefix inside the stride, then the `Prefixes AND Ancestors` test finds the longest base index. The first hit is the
 longest match.
@@ -337,7 +337,7 @@ its assembly has the same name, so its row comes from its own `PerformanceTest`,
 | 100,000 adds, one at a time | 427 ms, 95 MB allocated | 434 ms, 217 MB allocated | |
 | 100,000 adds, one batch | | 79 ms, 21 MB allocated | |
 | Freezing | | | 193 ms, 111 MB allocated |
-| Memory held | 37.0 MB, earlier session | 9.1 MB | 105.4 MB leaf-pushed, 8.3 MB compressed |
+| Memory held | 37.0 MB, earlier session | 9.1 MB | 105.3 MB leaf-pushed, 8.2 MB compressed |
 
 Scattered long prefixes, as in this random data, give the leaf-pushed layout a child table under almost every root
 entry, so its tables outgrow the cache. In a separate session the compressed layout was faster as well as smaller here:
@@ -375,8 +375,8 @@ objects rather than conversion.
 | --- | --- | --- |
 | Version 2, earlier session | 415.6 MB | 106.2 MB |
 | Read-write, 25,083 and 33,330 nodes | 31.9 MB | 15.6 MB |
-| Frozen, leaf-pushed 16/8 | 62.2 MB | 58.9 MB |
-| Frozen, compressed 18 | 41.5 MB | 12.6 MB |
+| Frozen, leaf-pushed 16/8 | 61.2 MB | 58.7 MB |
+| Frozen, compressed 18 | 40.5 MB | 12.3 MB |
 
 **The IP layer** adds nothing measurable: `LayerBenchmarks` took 153.6 ms per million real IPv4 lookups on a bare
 `BitTrie` and through `IPNetworkLookup`, in one session.
@@ -432,7 +432,7 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 
 | Test class | What it checks |
 | --- | --- |
-| `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 16-, 32-, 64-, 128- and 192-bit keys (16 and 192 are test-only types), before and after removals; canonical shape; batches commit and discard; `Version`; lock-free readers during churn; concurrent writers |
+| `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 16-, 32- and 128-bit keys (16 is a test-only type), before and after removals; canonical shape; batches commit and discard; `Version`; lock-free readers during churn; concurrent writers |
 | `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; IPv4-mapped addresses; writes and batches; a reader during churn |
 | `IP/IPRangeLookupTests` | Exact coverage, the fewest pieces, nested ranges and removal, random nested ranges against brute force, batches, the frozen form |
 | `Adapters/AdapterTests` | Each adapter package in both forms; MaxMind databases against `Reader.Find` |

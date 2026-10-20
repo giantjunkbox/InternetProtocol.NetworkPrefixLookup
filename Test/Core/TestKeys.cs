@@ -52,6 +52,20 @@ public readonly record struct Bits16(ushort Value) : IBitKey<Bits16>
     }
 }
 
+/// <summary>A key wider than the trie supports, to check that it is refused. Only its width is ever read.</summary>
+public readonly struct Bits136 : IBitKey<Bits136>
+{
+    public static int Width => 136;
+    public static Bits136 Truncate(in Bits136 key, int length) => throw new NotSupportedException();
+    public static int CommonPrefixLength(in Bits136 a, in Bits136 b, int maxLength) => throw new NotSupportedException();
+    public static Bits136 MaskFor(int length) => throw new NotSupportedException();
+    public static Bits136 SplitFor(int length) => throw new NotSupportedException();
+    public static bool IsSet(in Bits136 key, in Bits136 split) => throw new NotSupportedException();
+    public static bool MatchesUnderMask(in Bits136 key, in Bits136 bits, in Bits136 mask) => throw new NotSupportedException();
+    public static int GetBits(in Bits136 key, int offset, int count) => throw new NotSupportedException();
+    public static Bits136 SetBits(in Bits136 key, int offset, int count, int value) => throw new NotSupportedException();
+}
+
 /// <summary>Random keys and prefixes of any width, and an independent reference to check lookups against.</summary>
 public static class TestKeys
 {

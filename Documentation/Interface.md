@@ -14,7 +14,7 @@ Three layers, as in the study, each knowing less than the one above it:
 | --- | --- | --- |
 | IP layer | `IPPrefixLookup<TPrefix, TAdapter, TValue>`, `IPNetworkLookup<TValue>`, their frozen forms | `IPAddress`, IPv4 and IPv6, your prefix type |
 | Core | `BitTrie<TKey, TPrefix, TValue>`, `FrozenBitTrie<TKey, TPrefix, TValue>` | Bits and lengths only |
-| Keys | `IBitKey<TSelf>`, `Bits32`, `Bits64`, `Bits128` | Bit arithmetic for one fixed width |
+| Keys | `IBitKey<TSelf>`, `Bits32`, `Bits128` | Bit arithmetic for one fixed width |
 
 Every layer comes in two forms:
 
@@ -37,7 +37,7 @@ operations. All are `static abstract`, so the JIT compiles each key type into pl
 ```csharp
 public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
 {
-    static abstract int Width { get; }                                         // 32, 64, 128 ...
+    static abstract int Width { get; }                                         // 32 or 128 for IP
 
     static abstract TSelf Truncate(in TSelf key, int length);                  // clear every bit from length on
     static abstract int CommonPrefixLength(in TSelf a, in TSelf b, int max);   // routing node for two siblings
@@ -57,8 +57,8 @@ public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
 - `GetBit` and `StartsWith` from the prototype are dropped. Only the uncached tries used them.
 - `GetTopBits` and `FromTopBits` get default implementations, so a new key type writes nine members. The shipped types
   override them where that saves an instruction.
-- Shipped key types: `Bits32`, `Bits64` and `Bits128`. Each has a constructor from its integer. `Bits192`, proposed
-  for IPv6 plus up to 64 bits of context, was dropped; see [Status](#status).
+- Shipped key types: `Bits32` and `Bits128`. Each has a constructor from its integer. `Bits64` and `Bits192` were
+  dropped; see [Status](#status).
 
 ## Core
 
@@ -420,12 +420,12 @@ private volatile FrozenIPNetworkLookup<int> _origins;
 void Reload() => _origins = new IPNetworkLookup<int>(LoadPrefixes()).Freeze(); // readers switch on their next lookup
 ```
 
-A non-IP key, using the core directly. A 48-bit MAC address prefix is left-aligned in a `Bits64`:
+One routing table per VRF:
 
 ```csharp
-var vendors = new BitTrie<Bits64, string, string>();
-vendors.TryAdd(new Bits64(0x001A2BUL << 40), 24, "00:1A:2B", "Example vendor");
-vendors.TryGetMatch(new Bits64(macAddress << 16), out var oui, out var vendor);
+var vrfs = new Dictionary<int, IPNetworkLookup<int>>();
+vrfs[7] = new IPNetworkLookup<int>(LoadRoutes(vrf: 7));
+vrfs[7].TryGetMatchValue(destination, out var nextHop);
 ```
 
 ## Status
@@ -435,7 +435,7 @@ Version 3 implements this interface. Where it differs from the proposal above:
 | Part | Shipped |
 | --- | --- |
 | Read-write core | `BitTrie` is built on the BART-style design measured as `BartTrie`, not on chunks, so there is nothing to tune or compact: no `BitTrieOptions`, no `Compact`, and `BitTrieStatistics` has no garbage counts. Its constructor throws `NotSupportedException` for widths that are not a multiple of 8 |
-| Key types | `Bits192` is not shipped. Context such as a VRF is better served by one lookup per context: in front of the address it would cost a trie level per 8 bits and waste the shortcut table and the frozen root |
+| Key types | Only `Bits32` and `Bits128` ship, and key widths are limited to 128 bits. `Bits192` was for context such as a VRF, which one lookup per context serves better: in front of the address it would cost a trie level per 8 bits and waste the shortcut table and the frozen root. `Bits64` was for keys such as MAC address prefixes, which come in a few fixed lengths that a hash table handles |
 | Read-only core interface | Adds `TryGetValue(bits, length, out prefix, out value)`, an exact lookup that also returns the prefix object |
 | Frozen core | `FrozenBitTrie` keeps no nodes; parent links answer the other queries, as proposed. It exposes `Options` and `Bytes` |
 | IP layer options | `IPLookupOptions.MapIPv4MappedAddresses`, on by default, answers the open question below |

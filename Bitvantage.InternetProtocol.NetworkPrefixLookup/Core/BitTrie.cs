@@ -17,7 +17,6 @@
 */
 
 using System.Collections;
-using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -49,7 +48,7 @@ namespace Bitvantage.InternetProtocol;
 ///         discards them.
 ///     </para>
 /// </remarks>
-/// <typeparam name="TKey">The key type, whose width must be a multiple of 8 from 8 to 256 bits.</typeparam>
+/// <typeparam name="TKey">The key type, whose width must be a multiple of 8 from 8 to 128 bits.</typeparam>
 /// <typeparam name="TPrefix">The type of the prefix object stored with each prefix.</typeparam>
 /// <typeparam name="TValue">The type of the value stored with each prefix.</typeparam>
 public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPrefix, TValue>
@@ -98,29 +97,11 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         }
     }
 
-    // stacks of nodes for lookups: one slot per level and one for the root
-    private interface INodeStack
-    {
-        [UnscopedRef]
-        ref Node At(int index);
-    }
-
+    // the nodes on a path, one per level: 16 levels of 8 bits for a 128-bit key, plus the root
     [InlineArray(17)]
-    private struct Stack17 : INodeStack
+    private struct NodeStack
     {
         private Node _element;
-
-        [UnscopedRef]
-        public ref Node At(int index) => ref Unsafe.Add(ref _element, index);
-    }
-
-    [InlineArray(33)]
-    private struct Stack33 : INodeStack
-    {
-        private Node _element;
-
-        [UnscopedRef]
-        public ref Node At(int index) => ref Unsafe.Add(ref _element, index);
     }
 
     // Shortcuts for the first 16 bits: for each 16-bit block, the node at depth 1 and the node at depth 2 on its path, or
@@ -150,11 +131,11 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     private long _version;
 
     /// <summary>Creates an empty trie.</summary>
-    /// <exception cref="NotSupportedException">The key width is not a multiple of 8 from 8 to 256.</exception>
+    /// <exception cref="NotSupportedException">The key width is not a multiple of 8 from 8 to 128.</exception>
     public BitTrie()
     {
-        if (TKey.Width % 8 != 0 || TKey.Width < 8 || TKey.Width > 256)
-            throw new NotSupportedException($"Key widths must be a multiple of 8 from 8 to 256 bits; {typeof(TKey).Name} has {TKey.Width}.");
+        if (TKey.Width % 8 != 0 || TKey.Width < 8 || TKey.Width > 128)
+            throw new NotSupportedException($"Key widths must be a multiple of 8 from 8 to 128 bits; {typeof(TKey).Name} has {TKey.Width}.");
         _hasTable = TKey.Width >= 16;
         _w = new Node();
         _published = new Published(_w, _hasTable);
@@ -218,17 +199,9 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         return true;
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private ref Entry Find(in TKey key)
     {
-        if (TKey.Width <= 128)
-            return ref Find<Stack17>(in key);
-        return ref Find<Stack33>(in key);
-    }
-
-    private ref Entry Find<TStack>(in TKey key) where TStack : struct, INodeStack
-    {
-        var stack = new TStack();
+        var stack = new NodeStack();
         var published = Volatile.Read(ref _published);
         var n = Volatile.Read(ref published.Root);
         var depth = 0;
@@ -241,12 +214,12 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             var depth2 = slot.Depth2;
             if (depth1 != null)
             {
-                stack.At(0) = n;
+                stack[0] = n;
                 n = depth1;
                 depth = 1;
                 if (depth2 != null)
                 {
-                    stack.At(1) = n;
+                    stack[1] = n;
                     n = depth2;
                     depth = 2;
                 }
@@ -256,7 +229,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         // descend as far as the key leads; a leaf below the last node ends the search
         while (true)
         {
-            stack.At(depth) = n;
+            stack[depth] = n;
             var octet = TKey.GetBits(key, depth << 3, 8);
             if (n.Kids.Test(octet))
             {
@@ -286,7 +259,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
                 return ref n.PrefixEntries[n.Prefixes.Rank(top) - 1];
             if (depth == 0)
                 return ref Unsafe.NullRef<Entry>();
-            n = stack.At(--depth);
+            n = stack[--depth];
         }
     }
 
@@ -310,12 +283,12 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     // the longest stored prefix that contains the prefix (bits, length): only prefixes no longer than length qualify
     private ref Entry FindForPrefix(in TKey bits, int length)
     {
-        var path = new Stack33();
+        var path = new NodeStack();
         var n = Root;
         var depth = 0;
         while (true)
         {
-            path.At(depth) = n;
+            path[depth] = n;
             if (length - (depth << 3) <= 8)
                 break;
 
@@ -339,7 +312,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
         for (; depth >= 0; depth--)
         {
-            n = path.At(depth);
+            n = path[depth];
             var octet = TKey.GetBits(bits, depth << 3, 8);
             var relative = length - (depth << 3);
             if (relative >= 8 && n.Fringes.Test(octet))
@@ -448,12 +421,12 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             c++;
         }
 
-        var path = new Stack33();
+        var path = new NodeStack();
         var n = Root;
         var depth = 0;
         while (true)
         {
-            path.At(depth) = n;
+            path[depth] = n;
             var octet = TKey.GetBits(key, depth << 3, 8);
             if (n.Kids.Test(octet))
             {
@@ -474,7 +447,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
         for (; depth >= 0; depth--)
         {
-            n = path.At(depth);
+            n = path[depth];
             var octet = TKey.GetBits(key, depth << 3, 8);
             if (n.Fringes.Test(octet))
                 Emit(in n.FringeEntries[n.Fringes.Rank(octet) - 1], list, span, ref count);
@@ -713,8 +686,8 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         if (!_batch) _stamp++;
 
         var item = new Leaf { Bits = TKey.Truncate(bits, length), Mask = TKey.MaskFor(length), Length = length, Entry = new Entry { Prefix = prefix, Value = value } };
-        var path = new Stack33();
-        Span<int> octets = stackalloc int[33];
+        var path = new NodeStack();
+        Span<int> octets = stackalloc int[17];
         var n = _w;
         var depth = 0;
         Node changed;
@@ -760,7 +733,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
             if (n.Kids.Test(octet))
             {
-                path.At(depth) = n;
+                path[depth] = n;
                 octets[depth] = octet;
                 n = n.KidNodes[n.Kids.Rank(octet) - 1];
                 depth++;
@@ -800,7 +773,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             changed.Count++;
             if (!_batch)
                 for (var i = 0; i < depth; i++)
-                    path.At(i).Count++;
+                    path[i].Count++;
         }
 
         Link(changed, n, ref path, octets, depth);
@@ -822,8 +795,8 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         if (!_batch) _stamp++;
 
         var key = TKey.Truncate(bits, length);
-        var path = new Stack33();
-        Span<int> octets = stackalloc int[33];
+        var path = new NodeStack();
+        Span<int> octets = stackalloc int[17];
         var n = _w;
         var depth = 0;
         Node changed;
@@ -852,7 +825,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
             if (n.Kids.Test(octet))
             {
-                path.At(depth) = n;
+                path[depth] = n;
                 octets[depth] = octet;
                 n = n.KidNodes[n.Kids.Rank(octet) - 1];
                 depth++;
@@ -874,7 +847,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         var original = n;
         while (depth > 0 && changed.Count <= 1)
         {
-            var parent = path.At(depth - 1);
+            var parent = path[depth - 1];
             var octet = octets[depth - 1];
             var parentCopy = Writable(parent);
             parentCopy.Count--;
@@ -892,7 +865,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
         if (!_batch)
             for (var i = 0; i < depth; i++)
-                path.At(i).Count--;
+                path[i].Count--;
 
         Link(changed, original, ref path, octets, depth);
         if (_batch)
@@ -912,7 +885,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     private Node Writable(Node n) => n.Stamp == _stamp ? n : n.Copy(_stamp);
 
     // publishes a changed node in place of the original with one reference write
-    private void Link(Node changed, Node original, ref Stack33 path, Span<int> octets, int depth)
+    private void Link(Node changed, Node original, ref NodeStack path, Span<int> octets, int depth)
     {
         while (changed != original)
         {
@@ -923,7 +896,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
                 return;
             }
 
-            var parent = path.At(depth - 1);
+            var parent = path[depth - 1];
             var at = parent.Kids.Rank(octets[depth - 1]) - 1;
             if (_batch && parent.Stamp != _stamp)
             {

@@ -140,13 +140,11 @@ public class BitTrieTests
     public void Bits32_queries_match_the_reference() => AssertAllForms<Bits32>(5000, 32);
 
     [Test]
-    public void Bits64_queries_match_the_reference() => AssertAllForms<Bits64>(3000, 64);
-
-    [Test]
     public void Bits128_queries_match_the_reference() => AssertAllForms<Bits128>(3000, 128);
 
     [Test]
-    public void Bits192_queries_match_the_reference() => AssertAllForms<Bits192>(2000, 192);
+    public void Keys_wider_than_128_bits_are_refused() =>
+        Assert.Throws<NotSupportedException>(() => _ = new BitTrie<Bits136, int, int>());
 
     [Test]
     public void Insertion_order_does_not_change_the_trie()
@@ -474,8 +472,8 @@ public class BitTrieTests
     [Test]
     public void Writes_from_several_threads_are_serialized()
     {
-        var prefixes = TestKeys.RandomPrefixes<Bits64>(8000, 13);
-        var trie = new BitTrie<Bits64, int, int>();
+        var prefixes = TestKeys.RandomPrefixes<Bits128>(8000, 13);
+        var trie = new BitTrie<Bits128, int, int>();
         Parallel.For(0, prefixes.Count, new ParallelOptions { MaxDegreeOfParallelism = 4 }, i => trie.Add(prefixes[i].Bits, prefixes[i].Length, i, i * 7));
         Assert.That(trie.Count, Is.EqualTo(prefixes.Count));
         Assert.That(trie.ToTextTree(Format), Is.EqualTo(Build(prefixes, Enumerable.Range(0, prefixes.Count)).ToTextTree(Format)));

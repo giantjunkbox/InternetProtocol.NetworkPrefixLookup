@@ -134,16 +134,13 @@ public readonly struct MyNetworkAdapter : IIPPrefixAdapter<MyNetwork>
 var lookup = new IPPrefixLookup<MyNetwork, MyNetworkAdapter, string>();
 ```
 
-## Keys other than IP addresses
+## The core
 
-The core works on bits only. `BitTrie<TKey, TPrefix, TValue>` takes any key type implementing `IBitKey<TKey>`;
-`Bits32`, `Bits64` and `Bits128` are included. A 48-bit MAC address prefix, left-aligned in a `Bits64`:
+The IP lookups are built on `BitTrie<TKey, TPrefix, TValue>` and its frozen form, which work on bits and lengths only,
+with `Bits32` keys for IPv4 and `Bits128` keys for IPv6. They are public for callers who want one address family
+without the IP layer. Other key types can implement `IBitKey<TSelf>`, up to 128 bits.
 
-```csharp
-var vendors = new BitTrie<Bits64, string, string>();
-vendors.Add(new Bits64(0x001A2BUL << 40), 24, "00:1A:2B", "Example vendor");
-vendors.TryGetMatch(new Bits64(macAddress << 16), out var oui, out var vendor);
-```
+For context such as a VRF, use one lookup per VRF rather than a wider key.
 
 ## Performance
 
@@ -159,7 +156,7 @@ RouteViews tables of September 2025.
 | 96,944 random IPv4 prefixes, from `IPAddress` | 154 ms | 88 ms | 1,405 ms |
 
 Loading the real IPv4 table as one batch takes 0.3 seconds and holds 32 MB, against 3.2 seconds and 416 MB in
-version 2. The frozen copy holds 62 MB, or 42 MB with the compressed layout. Prefer the compressed layout for prefixes
+version 2. The frozen copy holds 61 MB, or 41 MB with the compressed layout. Prefer the compressed layout for prefixes
 scattered across the address space, such as random /25 to /32 blocks: the default layout grew to 105 MB for the random
 table above, where the compressed one needs 8 MB and was faster.
 

@@ -130,6 +130,6 @@ dense value array is the only copy that sharing could shrink. On the real IPv4 t
 | One `int` index per prefix into 78,196 distinct values | 4.3 MB |
 | One 3-byte index per prefix into 78,196 distinct values | 3.3 MB |
 
-The best case saves 0.7 MB of a 62 MB frozen table, about 1%, and costs a second dependent load on every value-only
+The best case saves 0.7 MB of a 61 MB frozen table, about 1%, and costs a second dependent load on every value-only
 lookup, which is the lookup the dense array exists to speed up. Sharing pays only for large struct values, and a caller
 with those can store an index or a reference instead. So the library does not share values.

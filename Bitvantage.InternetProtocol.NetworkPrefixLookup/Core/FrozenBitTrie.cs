@@ -105,7 +105,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
 
     private readonly Entry[] _entries;
     private readonly TValue[]? _values;
-    private readonly ushort[] _lengths;
+    private readonly byte[] _lengths;
     private readonly int[] _parents; // the nearest shorter stored prefix containing each entry, or -1
 
     private readonly uint[] _root;
@@ -134,7 +134,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
 
         var bits = new TKey[count];
         _entries = new Entry[count];
-        _lengths = new ushort[count];
+        _lengths = new byte[count];
         _parents = new int[count];
         _values = options.ValueOnlyLookups ? new TValue[count] : null;
 
@@ -146,7 +146,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
             if (i == count)
                 throw new InvalidOperationException("The trie changed while it was being frozen.");
             bits[i] = key;
-            _lengths[i] = (ushort)length;
+            _lengths[i] = (byte)length;
             _entries[i] = new Entry { Prefix = prefix, Value = value };
             if (_values != null) _values[i] = value;
 
@@ -209,7 +209,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
     public long Bytes =>
         ArrayBytes(_root.Length, sizeof(uint)) + ArrayBytes(_tables.Length, sizeof(uint)) + ArrayBytes(_nodes.Length, Unsafe.SizeOf<CompressedNode>())
         + ArrayBytes(_answers.Length, sizeof(int)) + ArrayBytes(_entries.Length, Unsafe.SizeOf<Entry>())
-        + ArrayBytes(_values?.Length ?? 0, Unsafe.SizeOf<TValue>()) + ArrayBytes(_lengths.Length, sizeof(ushort)) + ArrayBytes(_parents.Length, sizeof(int));
+        + ArrayBytes(_values?.Length ?? 0, Unsafe.SizeOf<TValue>()) + ArrayBytes(_lengths.Length, sizeof(byte)) + ArrayBytes(_parents.Length, sizeof(int));
 
     private static long ArrayBytes(int length, int elementSize) => length == 0 ? 0 : 24 + (long)length * elementSize;
 
@@ -406,7 +406,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
     // The runs of entries in [lo, hi) longer than decided + bits, grouped by the slot their next `bits` bits select. The
     // entries come in address order, so the entries below one slot are contiguous: a shorter prefix that starts in a
     // slot's block covers the whole block, and so comes before the longer ones.
-    private struct Runs(int lo, int hi, int decided, int bits, TKey[] keys, ushort[] lengths)
+    private struct Runs(int lo, int hi, int decided, int bits, TKey[] keys, byte[] lengths)
     {
         private int _i = lo;
 
@@ -428,7 +428,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
         }
     }
 
-    private sealed class Builder(TKey[] keys, ushort[] lengths, int tableBits)
+    private sealed class Builder(TKey[] keys, byte[] lengths, int tableBits)
     {
         public uint[] Tables = Array.Empty<uint>();
         private int _nextTable;
