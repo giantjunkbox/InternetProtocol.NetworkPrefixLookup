@@ -368,8 +368,30 @@ public class BitTrieTests
         var statistics = trie.GetStatistics();
         Assert.That(statistics.Prefixes, Is.EqualTo(prefixes.Count));
         Assert.That(statistics.Nodes, Is.GreaterThan(1));
-        Assert.That(statistics.Bytes, Is.GreaterThan(1L << 20), "includes the 1 MB shortcut table");
+        Assert.That(statistics.Bytes, Is.GreaterThan(50_000));
         Assert.That(trie.Freeze().Bytes, Is.GreaterThan(0));
+    }
+
+    [Test]
+    public void Small_tries_stay_small()
+    {
+        // the shortcut table holds blocks only below first octets with a node at depth 1, and a frozen root grows with
+        // the number of prefixes
+        var empty = new BitTrie<Bits128, int, int>();
+        Assert.That(empty.GetStatistics().Bytes, Is.LessThan(4_000));
+        Assert.That(empty.Freeze().Bytes, Is.LessThan(2_000));
+        Assert.That(empty.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }).Bytes, Is.LessThan(2_000));
+
+        var small = new BitTrie<Bits32, int, int>();
+        foreach (var (bits, length) in TestKeys.RandomPrefixes<Bits32>(20, 9))
+            small.Add(bits, length, 0, 0);
+        Assert.That(small.GetStatistics().Bytes, Is.LessThan(40_000));
+        // leaf-pushed tables give each scattered long prefix its own child tables, about 2 KB each
+        Assert.That(small.Freeze().Bytes, Is.LessThan(100_000));
+        Assert.That(small.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }).Bytes, Is.LessThan(20_000));
+
+        var large = Build(TestKeys.RandomPrefixes<Bits32>(20_000, 10), Enumerable.Range(0, 20_000));
+        Assert.That(large.Freeze().Bytes, Is.GreaterThan(1L << 18), "a full 16-bit root from 4,096 prefixes");
     }
 
     [Test(Description = "Readers always find a /32 that is never removed, while a writer adds and removes every prefix on its path.")]

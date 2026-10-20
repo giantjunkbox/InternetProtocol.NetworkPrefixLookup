@@ -104,21 +104,40 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         private Node _element;
     }
 
-    // Shortcuts for the first 16 bits: for each 16-bit block, the node at depth 1 and the node at depth 2 on its path, or
-    // null. A write that replaces such a node updates the slots that point at it. A reader may briefly combine nodes of
-    // different versions; since a write changes one prefix, the result is still the answer from before or after it.
+    // TEMPORARY: selects the flat 65,536-slot table instead of the blocks, to measure both in one benchmark session
+    private static readonly bool FlatTable = Environment.GetEnvironmentVariable("BITTRIE_FLAT_TABLE") == "1";
+
     private struct Slot
     {
         public Node? Depth1;
         public Node? Depth2;
     }
 
-    // What readers see: the root and the shortcut table. A batch or Clear replaces both with one reference write, so a
-    // reader never combines a new root with an old table. A single change outside a batch updates them in place.
+    // Shortcuts for the first 16 bits, in one block per first octet that leads to a node at depth 1: the block holds that
+    // node and, for each second octet, the node at depth 2 below it, or null. Lookups start at the deepest of them. A
+    // block appears with its depth-1 node and goes with it, so a trie holds blocks only where they save work, and no
+    // write builds more than one block of 256 entries. A write that replaces a node at depth 1 or 2 updates its block in
+    // place. A reader may briefly combine nodes of different versions; since a write changes one prefix, the result is
+    // still the answer from before or after it.
+    private sealed class Block(Node depth1)
+    {
+        public Node Depth1 = depth1;
+        public Depth2Nodes Depth2;
+    }
+
+    [InlineArray(256)]
+    private struct Depth2Nodes
+    {
+        private Node? _element;
+    }
+
+    // What readers see: the root and the shortcut blocks. A batch or Clear replaces both with one reference write, so a
+    // reader never combines a new root with old blocks. A single change outside a batch updates them in place.
     private sealed class Published(Node root, bool table)
     {
         public Node Root = root;
-        public readonly Slot[]? Table = table ? new Slot[1 << 16] : null;
+        public readonly Block?[]? Blocks = table && !FlatTable ? new Block?[256] : null;
+        public readonly Slot[]? Table = table && FlatTable ? new Slot[1 << 16] : null;
     }
 
     private readonly Lock _lock = new();
@@ -205,6 +224,25 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         var published = Volatile.Read(ref _published);
         var n = Volatile.Read(ref published.Root);
         var depth = 0;
+
+        var blocks = published.Blocks;
+        if (blocks != null)
+        {
+            var block = blocks[TKey.GetTopBits(key, 8)];
+            if (block != null)
+            {
+                stack[0] = n;
+                n = block.Depth1;
+                depth = 1;
+                var depth2 = block.Depth2[TKey.GetBits(key, 8, 8)];
+                if (depth2 != null)
+                {
+                    stack[1] = n;
+                    n = depth2;
+                    depth = 2;
+                }
+            }
+        }
 
         var table = published.Table;
         if (table != null)
@@ -662,6 +700,18 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
                 if (published.Table != null)
                     for (var first = 0; first < 256; first++)
                         RefreshTable(published.Table, first);
+                if (published.Blocks != null)
+                {
+                    // A batch copies every node above a change, so a first octet whose depth-1 node is still the same
+                    // object has nothing changed below it, and its published block is still right.
+                    var old = _published.Blocks!;
+                    for (var first = 0; first < 256; first++)
+                    {
+                        var depth1 = Kid(_w, first);
+                        if (depth1 != null)
+                            published.Blocks[first] = old[first] is { } block && block.Depth1 == depth1 ? block : NewBlock(depth1);
+                    }
+                }
                 Volatile.Write(ref _published, published);
                 Interlocked.Increment(ref _version);
             }
@@ -1013,8 +1063,16 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     // after a write that replaced the node at the given depth on the path of key
     private void UpdateTable(in TKey key, int depth)
     {
+        if (depth > 2) return;
+        var blocks = _published.Blocks;
+        if (blocks != null)
+        {
+            UpdateBlock(blocks, in key, depth);
+            return;
+        }
+
         var table = _published.Table;
-        if (table == null || depth > 2) return;
+        if (table == null) return;
         var first = TKey.GetBits(key, 0, 8);
         if (depth == 2) RefreshSlot(table, first, TKey.GetBits(key, 8, 8), Kid(_w, first));
         else RefreshTable(table, first);
@@ -1043,6 +1101,51 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             Volatile.Write(ref slot.Depth1, depth1);
             Volatile.Write(ref slot.Depth2, depth2);
         }
+    }
+
+    private void UpdateBlock(Block?[] blocks, in TKey key, int depth)
+    {
+        var first = TKey.GetBits(key, 0, 8);
+        var depth1 = Kid(_w, first);
+        ref var slot = ref blocks[first];
+        var block = slot;
+        if (depth1 == null)
+        {
+            if (block != null) Volatile.Write(ref slot, null);
+            return;
+        }
+
+        if (block == null)
+        {
+            Volatile.Write(ref slot, NewBlock(depth1));
+            return;
+        }
+
+        if (depth == 2)
+        {
+            var second = TKey.GetBits(key, 8, 8);
+            Volatile.Write(ref block.Depth2[second], Kid(depth1, second));
+            return;
+        }
+
+        // a change at the root leaves the depth-1 node alone; a change at depth 1 replaced it with a copy whose children
+        // may differ
+        if (block.Depth1 == depth1) return;
+        Volatile.Write(ref block.Depth1, depth1);
+        for (var second = 0; second < 256; second++)
+        {
+            var depth2 = Kid(depth1, second);
+            if (block.Depth2[second] != depth2) Volatile.Write(ref block.Depth2[second], depth2);
+        }
+    }
+
+    // a block filled before readers can see it
+    private static Block NewBlock(Node depth1)
+    {
+        var block = new Block(depth1);
+        for (var second = 0; second < 256; second++)
+            block.Depth2[second] = Kid(depth1, second);
+        return block;
     }
 
     private static Node? Kid(Node n, int octet) => n.Kids.Test(octet) ? n.KidNodes[n.Kids.Rank(octet) - 1] : null;
@@ -1191,6 +1294,12 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     {
         var published = Volatile.Read(ref _published);
         long nodes = 0, bytes = published.Table == null ? 0 : 24L + 16L * published.Table.Length;
+        if (published.Blocks != null)
+        {
+            bytes += 24L + 8L * published.Blocks.Length;
+            foreach (var block in published.Blocks)
+                if (block != null) bytes += 24L + 8L * 256;
+        }
         var stack = new Stack<Node>();
         stack.Push(Volatile.Read(ref published.Root));
         while (stack.TryPop(out var n))

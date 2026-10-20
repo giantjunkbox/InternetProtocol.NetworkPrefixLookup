@@ -48,8 +48,10 @@ public sealed record FrozenBitTrieOptions
     public FrozenLayout Layout { get; init; } = FrozenLayout.LeafPushed;
 
     /// <summary>
-    ///     The number of key bits the root table decides, from 1 to 24, and at most the key width. The default is 16 for
-    ///     <see cref="FrozenLayout.LeafPushed" /> and 18 for <see cref="FrozenLayout.Compressed" />.
+    ///     The number of key bits the root table decides, from 1 to 24, and at most the key width. By default it grows
+    ///     with the number of prefixes, about 16 root entries per prefix, from 8 bits up to 16 for
+    ///     <see cref="FrozenLayout.LeafPushed" /> and 18 for <see cref="FrozenLayout.Compressed" />, so that a small table
+    ///     gets a small root.
     /// </summary>
     public int? RootBits { get; init; }
 
@@ -123,7 +125,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
         if (!Enum.IsDefined(options.Layout))
             throw new ArgumentException($"Unknown layout {options.Layout}.", nameof(options));
         _compressed = options.Layout == FrozenLayout.Compressed;
-        var rootBits = options.RootBits ?? (_compressed ? 18 : 16);
+        var rootBits = options.RootBits ?? DefaultRootBits(count, _compressed);
         if (rootBits is < 1 or > 24)
             throw new ArgumentOutOfRangeException(nameof(options), rootBits, "RootBits ranges from 1 to 24.");
         if (options.TableBits is < 1 or > 16)
@@ -197,6 +199,14 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
             _nodes = builder.Nodes.ToArray();
             _answers = builder.Answers.ToArray();
         }
+    }
+
+    // About 16 root entries per prefix, from 8 bits up to the layout's full root: a small table gets a small root, and
+    // the full root starts at 4,096 prefixes for leaf-pushed tables and 16,384 for compressed ones.
+    private static int DefaultRootBits(int count, bool compressed)
+    {
+        var log2 = count <= 1 ? 0 : 32 - BitOperations.LeadingZeroCount((uint)(count - 1));
+        return Math.Clamp(log2 + 4, 8, compressed ? 18 : 16);
     }
 
     /// <summary>The options the trie was built with.</summary>
