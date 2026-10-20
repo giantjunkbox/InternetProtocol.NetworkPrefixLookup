@@ -204,7 +204,8 @@ new root and a new block array privately and publish both with one reference wri
   lookup therefore sees the trie as it was at one moment during the call. Readers still take no locks. They are
   lock-free rather than wait-free: a lookup retries only when a second write begins before it ends, and a write takes
   several times as long as a lookup, so retries are occasional even under continuous writes, and each costs about one
-  lookup. `Version` is `_changes` halved.
+  lookup. On x86 the check is two loads and a compare, and measured free on the real tables; see
+  [Performance](#measured-baseline). `Version` is `_changes` halved.
 - A batch is all or nothing. Readers keep seeing the published root and blocks until the commit replaces both at once.
 - Enumeration during writes sees each entry whole, but is not a snapshot of the whole trie at one instant.
 
@@ -476,6 +477,20 @@ Timed one by one, 3,000 such small batches took a median of 817 µs with the fla
 and up to 47 ms, with about 150 full collections, because each commit allocated a new 1 MB table. With blocks: a median
 of 42 µs, 0.13 ms at the 99th percentile, 13 ms at most and one full collection. An empty trie holds 2.3 KB, and an empty
 IP lookup about 4.5 KB, where both used to start at 1 MB per address family.
+
+**The retry for lookups that overlap two writes** (one session, each case in its own process, the variants in the
+order A B C A B C; the switch between the variants was removed after this measurement). The second pass ran into heavy
+interference, so these are the medians of the first four rounds, in ms per million lookups from integers:
+
+| Lookups | No check | Retry loop around the search, as shipped | Check at the search's single exit |
+| --- | --- | --- | --- |
+| Real IPv4 table | 79.8 and 81.3 | 80.8 | 82.9 |
+| Real IPv6 table | 188.2 and 184.4 | 190.9 | 203.4 |
+| Small IPv4 table, every 1,054th prefix | 13.08 and 13.10 | 13.90 | 13.88 |
+
+On the real tables the check costs nothing measurable; on a small table that fits in cache it costs about 0.8 ns per
+lookup. The single-exit form, which saves a call, measured slower, presumably because the jump back makes the whole
+search one loop for the JIT. The numbers above this paragraph were measured before the check.
 
 **The IP layer** adds nothing measurable: `LayerBenchmarks` took 153.6 ms per million real IPv4 lookups on a bare
 `BitTrie` and through `IPNetworkLookup`, in one session.
