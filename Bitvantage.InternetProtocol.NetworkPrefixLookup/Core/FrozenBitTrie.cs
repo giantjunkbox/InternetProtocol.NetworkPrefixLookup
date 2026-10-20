@@ -48,10 +48,10 @@ public sealed record FrozenBitTrieOptions
     public FrozenLayout Layout { get; init; } = FrozenLayout.LeafPushed;
 
     /// <summary>
-    ///     The number of key bits the root table decides, from 1 to 24, and at most the key width. By default it grows
-    ///     with the number of prefixes, about 16 root entries per prefix, from 8 bits up to 16 for
-    ///     <see cref="FrozenLayout.LeafPushed" /> and 18 for <see cref="FrozenLayout.Compressed" />, so that a small table
-    ///     gets a small root.
+    ///     The number of key bits the root table decides, from 1 to 24, and at most the key width. By default it follows
+    ///     the number of prefixes, so that a small table gets a small root: for <see cref="FrozenLayout.LeafPushed" />, 8
+    ///     bits below 32 prefixes and 16 bits from there; for <see cref="FrozenLayout.Compressed" />, about 16 root
+    ///     entries per prefix, from 8 bits up to 18.
     /// </summary>
     public int? RootBits { get; init; }
 
@@ -201,12 +201,16 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
         }
     }
 
-    // About 16 root entries per prefix, from 8 bits up to the layout's full root: a small table gets a small root, and
-    // the full root starts at 4,096 prefixes for leaf-pushed tables and 16,384 for compressed ones.
+    // Measured on random and real IPv4 prefixes. Leaf-pushed tables are smallest with a root that is a multiple of their
+    // 8-bit child tables, but an 8-bit root made lookups 2.5 times slower at 64 prefixes, so only nearly empty tables,
+    // where the 256 KB root is almost all of the memory, get it. Compressed tables are as fast or faster with about 16
+    // root entries per prefix as with the full 18-bit root, in a fraction of the memory.
     private static int DefaultRootBits(int count, bool compressed)
     {
+        if (!compressed)
+            return count < 32 ? 8 : 16;
         var log2 = count <= 1 ? 0 : 32 - BitOperations.LeadingZeroCount((uint)(count - 1));
-        return Math.Clamp(log2 + 4, 8, compressed ? 18 : 16);
+        return Math.Clamp(log2 + 4, 8, 18);
     }
 
     /// <summary>The options the trie was built with.</summary>

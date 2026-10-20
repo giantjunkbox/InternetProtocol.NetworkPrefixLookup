@@ -437,7 +437,7 @@ Version 3 implements this interface. Where it differs from the proposal above:
 | Read-write core | `BitTrie` is built on the BART-style design measured as `BartTrie`, not on chunks, so there is nothing to tune or compact: no `BitTrieOptions`, no `Compact`, and `BitTrieStatistics` has no garbage counts. Its constructor throws `NotSupportedException` for widths that are not a multiple of 8 |
 | Key types | Only `Bits32` and `Bits128` ship, and key widths are limited to 128 bits. `Bits192` was for context such as a VRF, which one lookup per context serves better: in front of the address it would cost a trie level per 8 bits and waste the shortcut table and the frozen root. `Bits64` was for keys such as MAC address prefixes, which come in a few fixed lengths that a hash table handles |
 | Read-only core interface | Adds `TryGetValue(bits, length, out prefix, out value)`, an exact lookup that also returns the prefix object |
-| Frozen core | `FrozenBitTrie` keeps no nodes; parent links answer the other queries, as proposed. It exposes `Options` and `Bytes` |
+| Frozen core | `FrozenBitTrie` keeps no nodes; parent links answer the other queries, as proposed. It exposes `Options` and `Bytes`. Without `RootBits`, the root follows the number of prefixes instead of always being 16 or 18 bits, so small and empty tables stay small |
 | IP layer options | `IPLookupOptions.MapIPv4MappedAddresses`, on by default, answers the open question below |
 | IP layer batches | `IPPrefixLookup.BeginBatch` returns a `Batch` that publishes each family atomically, IPv4 first |
 | Frozen IP lookups | A frozen class's protected constructor takes the read-write lookup to copy, so adapter packages can define their own pairs |

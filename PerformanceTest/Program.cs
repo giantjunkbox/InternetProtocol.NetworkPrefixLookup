@@ -33,14 +33,58 @@ public static class Program
             return;
         }
 
+        if (args.Length > 0 && args[0] == "--memory-comparison")
+        {
+            ComparisonMemory();
+            return;
+        }
+
         // pass the command line through so BenchmarkDotNet options such as --filter work; with no filter, run
         // everything, leaving out the real tables when ROUTEVIEWS_DIR is not set
         var types = RouteViews.Available
-            ? new[] { typeof(RandomTableBenchmarks), typeof(MaxMindBenchmarks), typeof(RealTableBenchmarks), typeof(RealBuildBenchmarks), typeof(LayerBenchmarks), typeof(ShortcutTableBenchmarks), typeof(FrozenRootBenchmarks) }
-            : new[] { typeof(RandomTableBenchmarks), typeof(MaxMindBenchmarks), typeof(FrozenRootBenchmarks) };
+            ? new[] { typeof(RandomTableBenchmarks), typeof(MaxMindBenchmarks), typeof(RealTableBenchmarks), typeof(RealBuildBenchmarks), typeof(LayerBenchmarks), typeof(WriteBenchmarks), typeof(FrozenRootBenchmarks), typeof(ComparisonBenchmarks) }
+            : new[] { typeof(RandomTableBenchmarks), typeof(MaxMindBenchmarks), typeof(FrozenRootBenchmarks), typeof(ComparisonBenchmarks) };
         if (args.Length == 0)
             args = new[] { "--filter", "*" };
         BenchmarkSwitcher.FromTypes(types).Run(args);
+    }
+
+    /// <summary>The tables of <see cref="ComparisonData" />, reported like PerformanceTest.V2's --memory.</summary>
+    private static void ComparisonMemory()
+    {
+        long Heap()
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            return GC.GetTotalMemory(true);
+        }
+
+        foreach (var name in ComparisonData.Names)
+        {
+            var data = ComparisonData.Get(name);
+            var before = Heap();
+            var sw = Stopwatch.StartNew();
+            var lookup = new NetworkPrefixLookup<int>();
+            for (var i = 0; i < data.Prefixes.Length; i++)
+                lookup.TryAdd(data.Prefixes[i], data.Values[i]);
+            var seconds = sw.Elapsed.TotalSeconds;
+            var held = Heap() - before;
+            var frozen = lookup.Freeze();
+            var frozenHeld = Heap() - before - held;
+            var compressed = lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }, new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });
+            var compressedHeld = Heap() - before - held - frozenHeld;
+
+            var allocated = GC.GetAllocatedBytesForCurrentThread();
+            foreach (var address in data.Addresses.Take(100_000))
+                lookup.TryGetMatch(address, out _, out _);
+            var perLookup = (GC.GetAllocatedBytesForCurrentThread() - allocated) / 100_000.0;
+            Console.WriteLine($"{name,-10} v3: {held / 1048576.0,8:F1} MB held, built in {seconds:F2} s, {perLookup:F0} bytes allocated per lookup; " +
+                              $"frozen {frozenHeld / 1048576.0:F1} MB, compressed {compressedHeld / 1048576.0:F1} MB");
+            GC.KeepAlive(lookup);
+            GC.KeepAlive(frozen);
+            GC.KeepAlive(compressed);
+        }
     }
 
     /// <summary>Memory held by each form on the real tables, and bytes allocated per lookup.</summary>

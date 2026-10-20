@@ -171,7 +171,8 @@ Version 2 numbers come from separate runs on the same machine.
 The read-write table is a multibit trie in the style of Go's BART: each node decides 8 bits of the key and keeps its
 prefixes, children and lone longer prefixes in arrays compressed with 256-bit sets and popcounts. A write copies the
 one node it changes and links the copy in with a single reference write, so readers never see a half-made change and
-the garbage collector frees replaced nodes. A 65,536-entry table skips the first two levels of every lookup. Frozen
+the garbage collector frees replaced nodes. Shortcut blocks, one per busy first octet, skip the first two levels of
+most lookups, and an empty table holds only a few KB, so one lookup per VRF is cheap. Frozen
 tables push every answer down into flat lookup tables, so a lookup reads only tables. The shape of the trie depends
 only on what it holds, never on the order of the writes.
 

@@ -89,7 +89,7 @@ ROUTEVIEWS_DIR=/tmp/routeviews dotnet run -c Release --project PerformanceTest
 ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 3 minutes
 ```
 
-**Test baseline:** all 40 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
+**Test baseline:** all 41 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
 text with `Environment.NewLine`, so it passes with either line ending. Keep `.gitattributes` at `text=auto`.
 
 The whole solution builds with no warnings. Do not add any.
@@ -118,7 +118,8 @@ The whole solution builds with no warnings. Do not add any.
   with `Volatile.Write`. Copy the node, finish the copy, then link it in. A node is private only when its `Stamp` is
   the current one, and an array may change in place only when its `Shared` bit is clear.
 - During a batch nothing readers can see may change: copy every node on the path to the private root, and adjust
-  counts only on private nodes. A batch commit and `Clear` publish the root and the shortcut table together.
+  counts only on private nodes. A batch commit and `Clear` publish the root and the shortcut blocks together.
+- Shortcut blocks are created and dropped with the depth-1 nodes they serve; no write may build more than one.
 - Every write must do bounded work: no step may grow with the table's size.
 - Backward compatibility with the v2 API is not required, but keep public API changes deliberate and documented in
   `Documentation/Interface.md`.

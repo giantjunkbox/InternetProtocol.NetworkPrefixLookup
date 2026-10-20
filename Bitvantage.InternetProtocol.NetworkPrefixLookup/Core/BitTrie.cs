@@ -104,15 +104,6 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         private Node _element;
     }
 
-    // TEMPORARY: selects the flat 65,536-slot table instead of the blocks, to measure both in one benchmark session
-    private static readonly bool FlatTable = Environment.GetEnvironmentVariable("BITTRIE_FLAT_TABLE") == "1";
-
-    private struct Slot
-    {
-        public Node? Depth1;
-        public Node? Depth2;
-    }
-
     // Shortcuts for the first 16 bits, in one block per first octet that leads to a node at depth 1: the block holds that
     // node and, for each second octet, the node at depth 2 below it, or null. Lookups start at the deepest of them. A
     // block appears with its depth-1 node and goes with it, so a trie holds blocks only where they save work, and no
@@ -136,8 +127,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     private sealed class Published(Node root, bool table)
     {
         public Node Root = root;
-        public readonly Block?[]? Blocks = table && !FlatTable ? new Block?[256] : null;
-        public readonly Slot[]? Table = table && FlatTable ? new Slot[1 << 16] : null;
+        public readonly Block?[]? Blocks = table ? new Block?[256] : null;
     }
 
     private readonly Lock _lock = new();
@@ -235,26 +225,6 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
                 n = block.Depth1;
                 depth = 1;
                 var depth2 = block.Depth2[TKey.GetBits(key, 8, 8)];
-                if (depth2 != null)
-                {
-                    stack[1] = n;
-                    n = depth2;
-                    depth = 2;
-                }
-            }
-        }
-
-        var table = published.Table;
-        if (table != null)
-        {
-            ref var slot = ref table[TKey.GetTopBits(key, 16)];
-            var depth1 = slot.Depth1;
-            var depth2 = slot.Depth2;
-            if (depth1 != null)
-            {
-                stack[0] = n;
-                n = depth1;
-                depth = 1;
                 if (depth2 != null)
                 {
                     stack[1] = n;
@@ -697,9 +667,6 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             {
                 Trim(_w, _stamp);
                 var published = new Published(_w, _hasTable);
-                if (published.Table != null)
-                    for (var first = 0; first < 256; first++)
-                        RefreshTable(published.Table, first);
                 if (published.Blocks != null)
                 {
                     // A batch copies every node above a change, so a first octet whose depth-1 node is still the same
@@ -1063,48 +1030,8 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     // after a write that replaced the node at the given depth on the path of key
     private void UpdateTable(in TKey key, int depth)
     {
-        if (depth > 2) return;
         var blocks = _published.Blocks;
-        if (blocks != null)
-        {
-            UpdateBlock(blocks, in key, depth);
-            return;
-        }
-
-        var table = _published.Table;
-        if (table == null) return;
-        var first = TKey.GetBits(key, 0, 8);
-        if (depth == 2) RefreshSlot(table, first, TKey.GetBits(key, 8, 8), Kid(_w, first));
-        else RefreshTable(table, first);
-    }
-
-    private void RefreshTable(Slot[] table, int first)
-    {
-        var depth1 = Kid(_w, first);
-        for (var second = 0; second < 256; second++)
-            RefreshSlot(table, first, second, depth1);
-    }
-
-    private static void RefreshSlot(Slot[] table, int first, int second, Node? depth1)
-    {
-        ref var slot = ref table[(first << 8) | second];
-        var depth2 = depth1 == null ? null : Kid(depth1, second);
-
-        // a reader that finds a node at depth 2 must also find one at depth 1, so set depth 1 first and clear it last
-        if (depth2 == null)
-        {
-            Volatile.Write(ref slot.Depth2, null);
-            Volatile.Write(ref slot.Depth1, depth1);
-        }
-        else
-        {
-            Volatile.Write(ref slot.Depth1, depth1);
-            Volatile.Write(ref slot.Depth2, depth2);
-        }
-    }
-
-    private void UpdateBlock(Block?[] blocks, in TKey key, int depth)
-    {
+        if (blocks == null || depth > 2) return;
         var first = TKey.GetBits(key, 0, 8);
         var depth1 = Kid(_w, first);
         ref var slot = ref blocks[first];
@@ -1293,7 +1220,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     public BitTrieStatistics GetStatistics()
     {
         var published = Volatile.Read(ref _published);
-        long nodes = 0, bytes = published.Table == null ? 0 : 24L + 16L * published.Table.Length;
+        long nodes = 0, bytes = 0;
         if (published.Blocks != null)
         {
             bytes += 24L + 8L * published.Blocks.Length;

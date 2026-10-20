@@ -140,9 +140,15 @@ is the answer. Otherwise it backtracks from the deepest node up: in each node a 
 prefix inside the stride, then the `Prefixes AND Ancestors` test finds the longest base index. The first hit is the
 longest match.
 
-For keys of 16 bits or more, a 65,536-slot **shortcut table** holds, for every value of the first 16 bits, the node at
-depth 1 and the node at depth 2 on that path, or null. A lookup starts there and skips the first two levels. Writes that
-replace a node at depth 1 refresh the 256 slots under its first octet; writes at depth 2 refresh one slot.
+For keys of 16 bits or more, **shortcut blocks** let a lookup skip the first two levels. There is one block for each
+first octet that leads to a node at depth 1; it holds that node and, for each second octet, the node at depth 2 below
+it, or null. A 256-entry array points at the blocks. A block is built, filled, when its depth-1 node appears and dropped
+when the node goes, so a trie holds blocks only where they save work: an empty trie holds none, the real IPv4 table 215
+(435 KB) and the real IPv6 table 6 (12 KB). A write that replaces a depth-1 node updates its block's 256 entries in place; a write at
+depth 2 updates one entry. No write builds more than one block, so there is no threshold and no large build.
+
+An earlier version used one flat table of 65,536 slots, allocated with every trie. In one session the blocks made real
+IPv4 lookups 0.91 of the flat table's time, IPv6 0.94 and the random table 0.83, because the blocks take less cache.
 
 The other queries reuse the walk:
 
@@ -179,15 +185,15 @@ the writer reads it; the root's count is the trie's `Count`.
 
 ### What readers see
 
-`_published` holds an object with the root and the shortcut table. Readers read it once per call. A single write
-outside a batch updates the root reference or a child reference, and then the table slots, in place. A batch commit and
-`Clear` build a new root and a new table privately and publish both with one reference write.
+`_published` holds an object with the root and the block array. Readers read it once per call. A single write outside a
+batch updates the root reference or a child reference, and then the blocks, in place. A batch commit and `Clear` build a
+new root and a new block array privately and publish both with one reference write.
 
 - Each lookup sees the trie as it was before or after any single write. A write changes one prefix and touches one
-  path, so a reader that combines a newer table slot with an older root, or the reverse, still gets an answer that was
-  correct before or after that write. Slots are written in an order that never shows a depth-2 node without its depth-1
-  node.
-- A batch is all or nothing. Readers keep seeing the published root and table until the commit replaces both at once.
+  path, so a reader that combines a newer block entry with an older root, or the reverse, still gets an answer that was
+  correct before or after that write. A new block is filled before it is linked in, and a block always holds its
+  depth-1 node.
+- A batch is all or nothing. Readers keep seeing the published root and blocks until the commit replaces both at once.
 - Enumeration during writes sees each entry whole, but is not a snapshot of the whole trie at one instant.
 
 ### The writer lock
@@ -201,7 +207,9 @@ A batch must therefore end on the thread that started it.
 During a batch the writer works on `_w`, a root that readers cannot see. A change copies every node on its path up to
 that root, because changing a published parent in place would be visible. Subtree counts are adjusted only after those
 copies exist, so an abandoned batch leaves the published nodes untouched. `Commit` trims the private nodes' arrays to
-exact size, marks them shared, builds the new shortcut table and publishes. `Dispose` without `Commit` points `_w`
+exact size, marks them shared, builds a new block array and publishes. A batch copies every node above a change, so a
+first octet whose depth-1 node is still the same object has nothing changed below it: its block is reused, and only the
+blocks under changed first octets are rebuilt. `Dispose` without `Commit` points `_w`
 back at the published root. Constructing a trie from a sequence is a batch.
 
 `Version` counts published changes: one per write outside a batch, one per commit, one per `Clear`.
@@ -226,9 +234,20 @@ of a compressed node.
 holds a longer prefix. Every other entry holds the final answer for its whole block, so a lookup reads only tables.
 `RootBits` and `TableBits` choose other shapes, such as 24/8 for IPv4.
 
-**Compressed**, after Poptrie: a root over the first 18 bits, then nodes that each decide 6 bits. A node is two 64-bit
+**Compressed**, after Poptrie: a root over the first 18 bits of a full routing table, then nodes that each decide 6
+bits. A node is two 64-bit
 masks and two offsets: one mask marks the slots that lead to a child node, the other the slots where a run of equal
 answers starts. A popcount up to the slot finds the child or the answer.
+
+**Root size.** Unless `RootBits` is set, the root follows the number of prefixes, because a fixed root costs 256 KB
+(leaf-pushed) or 1 MB (compressed) even in an empty table. Measured on random and real IPv4 prefixes:
+
+- Leaf-pushed tables get 8 bits below 32 prefixes and 16 bits from there. Their size is smallest with a root that is a
+  multiple of the 8-bit child tables, but at 64 random prefixes the 8-bit root made lookups 2.5 times slower (5 ns
+  against 2 ns) to save 207 of 367 KB, so only nearly empty tables, such as an unused address family, get it.
+- Compressed tables get about 16 root entries per prefix, from 8 bits up to 18. That was as fast or faster than the
+  full root and took a fraction of the memory: 45 KB against 1.07 MB at 256 random prefixes, 161 KB against 1.13 MB at
+  1,000, and 606 KB against 1.36 MB at 4,000.
 
 **Building** reads the entries in address order, where a containing prefix always comes before the prefixes inside
 it. For a block of keys, `FillAnswers` writes each entry that ends within the next table's bits over the slots it
@@ -378,6 +397,22 @@ objects rather than conversion.
 | Frozen, leaf-pushed 16/8 | 61.2 MB | 58.7 MB |
 | Frozen, compressed 18 | 40.5 MB | 12.3 MB |
 
+**Shortcut blocks against the flat table** (`WriteBenchmarks` and lookups, one session, two jobs; the flat table
+was removed after this measurement):
+
+| Benchmark | Flat 65,536-slot table | Blocks |
+| --- | --- | --- |
+| 1,000,000 real IPv4 lookups | 131 ms | 117 ms (0.91) |
+| 1,000,000 real IPv6 lookups | 286 ms | 264 ms (0.94) |
+| 1,000,000 random-table lookups | 88 ms | 71 ms (0.83) |
+| Small batch on the real IPv4 table, 10 removals and 10 additions | 1,366 µs, 2.2 MB allocated | 29 µs, 104 KB |
+| 2,110 single writes on the real IPv4 table | 2.32 ms | 2.03 ms |
+
+Timed one by one, 3,000 such small batches took a median of 817 µs with the flat table, 5.2 ms at the 99th percentile
+and up to 47 ms, with about 150 full collections, because each commit allocated a new 1 MB table. With blocks: a median
+of 42 µs, 0.13 ms at the 99th percentile, 13 ms at most and one full collection. An empty trie holds 2.3 KB, and an empty
+IP lookup about 4.5 KB, where both used to start at 1 MB per address family.
+
 **The IP layer** adds nothing measurable: `LayerBenchmarks` took 153.6 ms per million real IPv4 lookups on a bare
 `BitTrie` and through `IPNetworkLookup`, in one session.
 
@@ -396,7 +431,7 @@ prototype `BartTrie` 147 to 156 ms. On IPv6 the library took 341 ms and the prot
 
 ### Where the time goes
 
-- A read-write lookup reads one shortcut-table slot, then for each node below depth 2 tests a bit and ranks it with
+- A read-write lookup reads one shortcut block, then for each node below depth 2 tests a bit and ranks it with
   four popcounts to find the child, and finally backtracks through the nodes it passed. Each node visited is a likely
   cache miss on the real tables.
 - A leaf-pushed lookup reads the root entry and one child table per 8 bits still undecided: about 2 reads on real IPv4
@@ -416,6 +451,7 @@ prototype `BartTrie` 147 to 156 ms. On IPv6 the library took 341 ms and the prot
 | Choose the frozen layout from the data | Leaf-pushed for clustered tables, compressed for scattered ones | Not tried; the caller chooses today |
 | A 24-bit root for frozen IPv4 tables | Already possible with `RootBits = 24`: 0.37 of the read-write time in the prototype, at about twice the memory | Option exists |
 | Pruned backtracking, best match per shortcut slot, child positions cached per node | | Tried in the prototype, slower; see [Bart-Comparison.md](Bart-Comparison.md#remedies-tried) |
+| Shortcut blocks per first octet instead of a flat 65,536-slot table | Small tries hold almost nothing; batch commits stop allocating 1 MB | Done; see below |
 
 [Optimization-Log.md](Optimization-Log.md#what-did-not-help) lists more ideas that did not help.
 
@@ -448,6 +484,8 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 - **Leaf-pushed frozen tables grow with scattered prefixes**: 105 MB for the 96,944 random prefixes of the version 2
   benchmark, where the compressed layout needs 8 MB.
 - **Freezing blocks writers** for its duration: 0.2 to 1 second on the real tables.
+- **Small frozen leaf-pushed tables** of 32 prefixes or more keep the full 16-bit root, 256 KB, for speed. Set
+  `RootBits = 8` or use the compressed layout when many small frozen tables must be kept, such as one per VRF.
 - **Batches are atomic per address family**, not across both.
 - **Range writes** outside a batch change a range's pieces one at a time.
 - **Enumeration is not a snapshot** while writes run.
