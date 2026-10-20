@@ -30,7 +30,11 @@ namespace PerformanceTest;
 /// </summary>
 public static class RouteViews
 {
-    public sealed record Table(IPNetwork[] Networks, int[] Asns, UInt128[] Keys, IPAddress[] Addresses);
+    public sealed record Table(IPNetwork[] Networks, int[] Asns, UInt128[] Keys, IPAddress[] Addresses)
+    {
+        // IPv4 keys as 4-byte integers, so that a benchmark loop streams 4 MB of keys instead of 16 MB
+        public uint[] IPv4Keys { get; } = Keys.Select(k => (uint)k).ToArray();
+    }
 
     private static readonly Lazy<Table> V4 = new(() => Load("rv2", 32));
     private static readonly Lazy<Table> V6 = new(() => Load("rv6", 128));

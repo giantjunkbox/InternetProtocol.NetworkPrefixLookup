@@ -187,6 +187,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     // ---- lookups ---------------------------------------------------------------------------------------------------
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatch(in TKey key, out TPrefix prefix, out TValue value)
     {
         ref var entry = ref Find(in key);
@@ -203,6 +204,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     }
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatchValue(in TKey key, out TValue value)
     {
         ref var entry = ref Find(in key);

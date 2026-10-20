@@ -273,6 +273,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
     }
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatch(in TKey key, out TPrefix prefix, out TValue value)
     {
         var i = Find(in key);
@@ -290,6 +291,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
     }
 
     /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatchValue(in TKey key, out TValue value)
     {
         var i = Find(in key);

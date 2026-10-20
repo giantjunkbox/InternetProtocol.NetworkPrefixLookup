@@ -53,8 +53,8 @@ public class RealTableBenchmarks
     {
         var lookup = V4.Value.ReadWrite;
         long sum = 0;
-        foreach (var key in RouteViews.IPv4.Keys)
-            sum += lookup.TryGetMatchIPv4((uint)key, out var network, out var asn) ? network.PrefixLength + asn : -1;
+        foreach (var key in RouteViews.IPv4.IPv4Keys)
+            sum += lookup.TryGetMatchIPv4(key, out var network, out var asn) ? network.PrefixLength + asn : -1;
         return sum;
     }
 
@@ -63,8 +63,8 @@ public class RealTableBenchmarks
     {
         var lookup = V4.Value.LeafPushed;
         long sum = 0;
-        foreach (var key in RouteViews.IPv4.Keys)
-            sum += lookup.TryGetMatchIPv4((uint)key, out var network, out var asn) ? network.PrefixLength + asn : -1;
+        foreach (var key in RouteViews.IPv4.IPv4Keys)
+            sum += lookup.TryGetMatchIPv4(key, out var network, out var asn) ? network.PrefixLength + asn : -1;
         return sum;
     }
 
@@ -73,8 +73,8 @@ public class RealTableBenchmarks
     {
         var lookup = V4.Value.Compressed;
         long sum = 0;
-        foreach (var key in RouteViews.IPv4.Keys)
-            sum += lookup.TryGetMatchIPv4((uint)key, out var network, out var asn) ? network.PrefixLength + asn : -1;
+        foreach (var key in RouteViews.IPv4.IPv4Keys)
+            sum += lookup.TryGetMatchIPv4(key, out var network, out var asn) ? network.PrefixLength + asn : -1;
         return sum;
     }
 
@@ -83,8 +83,8 @@ public class RealTableBenchmarks
     {
         var lookup = V4.Value.LeafPushed;
         long sum = 0;
-        foreach (var key in RouteViews.IPv4.Keys)
-            sum += lookup.TryGetMatchValueIPv4((uint)key, out var asn) ? asn : -1;
+        foreach (var key in RouteViews.IPv4.IPv4Keys)
+            sum += lookup.TryGetMatchValueIPv4(key, out var asn) ? asn : -1;
         return sum;
     }
 
