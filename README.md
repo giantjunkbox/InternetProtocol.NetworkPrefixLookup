@@ -5,7 +5,7 @@ Fast longest-prefix-match lookups for IPv4 and IPv6 networks, and for any other 
 - **Lookups that allocate nothing**, from `IPAddress`, byte spans or integers.
 - **Read-write tables** where any number of threads read without locks while one writes, and every write does a bounded
   amount of work: no pauses for growth or compaction.
-- **Frozen tables** for data that is loaded once and then only read, about twice as fast again.
+- **Frozen tables** for data that is loaded once and then only read, nearly twice as fast again.
 - **Your network type**: `System.Net.IPNetwork` is built in, and small packages add `NetworkPrefix`, `IPNetwork2`,
   `IPAddressRange` ranges and MaxMind databases.
 - **No dependencies** in the core package. .NET 10.
@@ -147,7 +147,27 @@ vendors.TryGetMatch(new Bits64(macAddress << 16), out var oui, out var vendor);
 
 ## Performance
 
-Measurements are being taken and will be added here.
+One million lookups in a 4-core cloud container on .NET 10. Lookups allocate nothing. The real tables are the CAIDA
+RouteViews tables of September 2025.
+
+| Table | Read-write | Frozen | Version 2 |
+| --- | --- | --- | --- |
+| Real IPv4, 1,054,037 prefixes, from `IPAddress` | 227 ms | | 3,466 ms |
+| Real IPv4, from `uint` | 170 ms | 94 ms, 74 ms value only | |
+| Real IPv6, 239,603 prefixes, from `IPAddress` | 417 ms | | 2,632 ms |
+| Real IPv6, from `UInt128` | 368 ms | 213 ms, 162 ms value only | |
+| 96,944 random IPv4 prefixes, from `IPAddress` | 154 ms | 88 ms | 1,405 ms |
+
+Loading the real IPv4 table as one batch takes 0.3 seconds and holds 32 MB, against 3.2 seconds and 416 MB in
+version 2. The frozen copy holds 62 MB, or 42 MB with the compressed layout. Prefer the compressed layout for prefixes
+scattered across the address space, such as random /25 to /32 blocks: the default layout grew to 105 MB for the random
+table above, where the compressed one needs 8 MB and was faster.
+
+Loaded into a lookup, a MaxMind database answers about 80 times faster than MaxMind's reader read-write, and about 180
+times faster frozen, on MaxMind's small test database.
+
+[Documentation/Architecture.md](Documentation/Architecture.md#performance) has the details and how they were measured.
+Version 2 numbers come from separate runs on the same machine.
 
 ## How it works
 

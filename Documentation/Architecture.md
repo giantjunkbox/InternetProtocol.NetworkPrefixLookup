@@ -316,7 +316,104 @@ sums its arrays.
 
 ## Performance
 
-Measurements are being taken and will be added here.
+### Measured baseline
+
+All numbers come from a 4-core cloud container (Intel Xeon, 2.8 GHz) on .NET 10.0.13 with BenchmarkDotNet 0.15.8, on
+2026-10-19 and 20. Lookups allocate nothing in either form. Timings in this container drift by about 10% between
+sessions, so compare ratios within a table rather than times across tables.
+
+**The version 2 benchmarks.** `RandomTableBenchmarks` repeats the benchmarks of version 2 on the same seeded data:
+96,944 distinct random IPv4 prefixes and 1,000,000 random addresses. Version 2 cannot run in the same process, because
+its assembly has the same name, so its row comes from its own `PerformanceTest`, run about an hour earlier.
+
+| Benchmark | Version 2 | Version 3, read-write | Version 3, frozen |
+| --- | --- | --- | --- |
+| 1,000,000 lookups by `IPAddress` | 1,405 ms, 61 MB allocated | 154 ms, nothing allocated | 88 ms leaf-pushed |
+| 1,000,000 lookups by `uint` | | 119 ms | 56 ms leaf-pushed |
+| 100,000 adds, one at a time | 427 ms, 95 MB allocated | 434 ms, 217 MB allocated | |
+| 100,000 adds, one batch | | 79 ms, 21 MB allocated | |
+| Freezing | | | 193 ms, 111 MB allocated |
+| Memory held | 37.0 MB, earlier session | 9.1 MB | 105.4 MB leaf-pushed, 8.3 MB compressed |
+
+Scattered long prefixes, as in this random data, give the leaf-pushed layout a child table under almost every root
+entry, so its tables outgrow the cache. In a separate session the compressed layout was faster as well as smaller here:
+0.36 of the read-write time against 0.48 for leaf-pushed. Real routing tables are clustered and favor leaf-pushed.
+
+**Real tables.** `RealTableBenchmarks`: one million lookups from precomputed keys, random addresses inside randomly
+chosen announced prefixes of the CAIDA RouteViews tables of 2025-09-30. Version 2 is from
+[Optimization-Log.md](Optimization-Log.md#results-on-real-tables), an earlier session.
+
+| Lookup | Real IPv4, 1,054,037 prefixes | Ratio | Real IPv6, 239,603 prefixes | Ratio |
+| --- | --- | --- | --- | --- |
+| Version 2, by `IPAddress` | 3,466 ms | | 2,632 ms | |
+| Read-write, by `uint` or `UInt128` | 170 ms | 1.00 | 368 ms | 1.00 |
+| Read-write, by `IPAddress` | 227 ms | 1.34 | 417 ms | 1.14 |
+| Frozen, leaf-pushed 16/8 | 94 ms | 0.56 | 213 ms | 0.59 |
+| Frozen, leaf-pushed, value only | 74 ms | 0.44 | 162 ms | 0.45 |
+| Frozen, compressed 18 | 133 ms | 0.79 | 280 ms | 0.77 |
+
+The `IPAddress` rows read a million separate `IPAddress` objects, so much of their extra time is cache misses on those
+objects rather than conversion.
+
+**Building the real tables** (`RealBuildBenchmarks`):
+
+| Build | Real IPv4 | Real IPv6 |
+| --- | --- | --- |
+| Version 2, one at a time, earlier session | 3,246 ms, 966 MB allocated | 700 ms, 244 MB |
+| One at a time | 885 ms, 1,108 MB allocated | |
+| One batch | 301 ms, 100 MB allocated | 107 ms, 35 MB |
+| Freezing, leaf-pushed | 220 ms | |
+| Freezing, compressed | 240 ms | |
+
+**Memory held** (`--memory`, heap growth after full collections, not counting the callers' prefix objects):
+
+| Form | Real IPv4 | Real IPv6 |
+| --- | --- | --- |
+| Version 2, earlier session | 415.6 MB | 106.2 MB |
+| Read-write, 25,083 and 33,330 nodes | 31.9 MB | 15.6 MB |
+| Frozen, leaf-pushed 16/8 | 62.2 MB | 58.9 MB |
+| Frozen, compressed 18 | 41.5 MB | 12.6 MB |
+
+**The IP layer** adds nothing measurable: `LayerBenchmarks` took 153.6 ms per million real IPv4 lookups on a bare
+`BitTrie` and through `IPNetworkLookup`, in one session.
+
+**MaxMind** (`MaxMindBenchmarks`): 100,000 lookups in MaxMind's GeoIP2 Country test database. The database is small and
+fits in cache, so this shows the cost per lookup, not what a full GeoIP2 database would give.
+
+| Variant | Time | Allocated |
+| --- | --- | --- |
+| `Reader.Find`, which decodes the record every time | 608 ms | 469 MB |
+| Loaded, read-write | 7.6 ms | 0 |
+| Loaded, frozen | 3.4 ms | 0 |
+| Loading the database | 4.1 ms | 4.9 MB |
+
+**Against the prototype.** Back to back, `BitTrie` alone took 142 to 154 ms per million real IPv4 lookups and the
+prototype `BartTrie` 147 to 156 ms. On IPv6 the library took 341 ms and the prototype 331 ms.
+
+### Where the time goes
+
+- A read-write lookup reads one shortcut-table slot, then for each node below depth 2 tests a bit and ranks it with
+  four popcounts to find the child, and finally backtracks through the nodes it passed. Each node visited is a likely
+  cache miss on the real tables.
+- A leaf-pushed lookup reads the root entry and one child table per 8 bits still undecided: about 2 reads on real IPv4
+  and 4.6 on IPv6, measured in the prototype. Then it reads the entry with the prefix and value, at a random place in an
+  array of 24 MB on real IPv4, which costs about as much as finding it; the value-only lookup reads a smaller array.
+- A write copies one node, about 200 bytes, and one array of up to 256 elements. That is 1.4 KB per write on the real
+  IPv4 table in the prototype and 2.2 KB on the random table here, which is why writing one prefix at a time allocates
+  more than version 2 did. A batch copies each node once.
+
+### Optimization candidates
+
+| Idea | Expected effect | Status |
+| --- | --- | --- |
+| Copy only the array that changes, not the node and the array | Less allocation per write, fewer collections under churn | Not tried |
+| Branch-free level steps in the read-write lookup | Fewer mispredicted branches, mainly on small tables | Not tried |
+| Build a batch bottom-up from sorted input | Faster bulk loads than adding one prefix at a time to private nodes | Not tried |
+| Choose the frozen layout from the data | Leaf-pushed for clustered tables, compressed for scattered ones | Not tried; the caller chooses today |
+| A 24-bit root for frozen IPv4 tables | Already possible with `RootBits = 24`: 0.37 of the read-write time in the prototype, at about twice the memory | Option exists |
+| Pruned backtracking, best match per shortcut slot, child positions cached per node | | Tried in the prototype, slower; see [Bart-Comparison.md](Bart-Comparison.md#remedies-tried) |
+
+[Optimization-Log.md](Optimization-Log.md#what-did-not-help) lists more ideas that did not help.
 
 ## Testing and benchmarking
 
@@ -341,8 +438,11 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 - **Garbage under heavy churn.** Copy-on-write allocates about 1.4 KB per write on the real IPv4 table, mostly the copied
   array of the changed node. In the prototype a million writes at full speed caused 195 collections and pauses of up to
   38 ms. At ordinary routing-table update rates this is rare; copying smaller pieces would reduce it.
-- **Small tables that fit in cache** look up about three times slower than in the prototype's binary trie with a
-  16-bit index, because a lookup walks several levels and backtracks. Freeze such tables.
+- **Small tables that fit in cache** look up several times slower than in the prototype's binary trie with an index,
+  because a lookup walks several levels and backtracks: on the version 2 benchmark data, 154 ms per million lookups
+  against 29 ms in an earlier session. Freeze such tables, with the compressed layout if their prefixes are scattered.
+- **Leaf-pushed frozen tables grow with scattered prefixes**: 105 MB for the 96,944 random prefixes of the version 2
+  benchmark, where the compressed layout needs 8 MB.
 - **Freezing blocks writers** for its duration: 0.2 to 1 second on the real tables.
 - **Batches are atomic per address family**, not across both.
 - **Range writes** outside a batch change a range's pieces one at a time.
