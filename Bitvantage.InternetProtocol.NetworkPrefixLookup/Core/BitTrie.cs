@@ -227,18 +227,12 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         return Volatile.Read(ref _changes) - (before & ~1L) <= 2;
     }
 
+    // One method rather than a retry loop around a search, which cost a call per lookup.
     private ref Entry Find(in TKey key)
     {
-        while (true)
-        {
-            var before = Volatile.Read(ref _changes);
-            ref var entry = ref FindOnce(in key);
-            if (Settled(before)) return ref entry;
-        }
-    }
-
-    private ref Entry FindOnce(in TKey key)
-    {
+        retry:
+        var before = Volatile.Read(ref _changes);
+        ref var found = ref Unsafe.NullRef<Entry>();
         var stack = new NodeStack();
         var published = Volatile.Read(ref _published);
         var n = Volatile.Read(ref published.Root);
@@ -279,7 +273,10 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             {
                 ref var leaf = ref n.LeafEntries[n.Leaves.Rank(octet) - 1];
                 if (TKey.MatchesUnderMask(key, leaf.Bits, leaf.Mask))
-                    return ref leaf.Entry;
+                {
+                    found = ref leaf.Entry;
+                    goto done;
+                }
             }
 
             break;
@@ -291,13 +288,26 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         {
             var octet = TKey.GetBits(key, depth << 3, 8);
             if (n.Fringes.Test(octet))
-                return ref n.FringeEntries[n.Fringes.Rank(octet) - 1];
+            {
+                found = ref n.FringeEntries[n.Fringes.Rank(octet) - 1];
+                break;
+            }
+
             if (n.Prefixes.AndTop(in ArtTables.Ancestors[ArtTables.OctetToIndex(octet)], out var top))
-                return ref n.PrefixEntries[n.Prefixes.Rank(top) - 1];
+            {
+                found = ref n.PrefixEntries[n.Prefixes.Rank(top) - 1];
+                break;
+            }
+
             if (depth == 0)
-                return ref Unsafe.NullRef<Entry>();
+                break;
             n = stack[--depth];
         }
+
+        done:
+        if (!Settled(before))
+            goto retry;
+        return ref found;
     }
 
     /// <inheritdoc />
