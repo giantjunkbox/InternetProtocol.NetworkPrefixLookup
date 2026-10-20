@@ -147,6 +147,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
     // TEMP: lets ConsistencyBenchmarks measure lookups without the check in the same session; removed once measured
     private static readonly bool Retry = Environment.GetEnvironmentVariable("BITTRIE_NO_RETRY") != "1";
+    private static readonly bool Wrapped = Environment.GetEnvironmentVariable("BITTRIE_FIND") == "wrapped";
 
     /// <summary>Creates an empty trie.</summary>
     /// <exception cref="NotSupportedException">The key width is not a multiple of 8 from 8 to 128.</exception>
@@ -227,8 +228,80 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         return Volatile.Read(ref _changes) - (before & ~1L) <= 2;
     }
 
+    private ref Entry Find(in TKey key) => ref Wrapped ? ref FindWrapped(in key) : ref FindFolded(in key);
+
+    private ref Entry FindWrapped(in TKey key)
+    {
+        while (true)
+        {
+            var before = Volatile.Read(ref _changes);
+            ref var entry = ref FindOnce(in key);
+            if (Settled(before)) return ref entry;
+        }
+    }
+
+    private ref Entry FindOnce(in TKey key)
+    {
+        var stack = new NodeStack();
+        var published = Volatile.Read(ref _published);
+        var n = Volatile.Read(ref published.Root);
+        var depth = 0;
+
+        var blocks = published.Blocks;
+        if (blocks != null)
+        {
+            var block = blocks[TKey.GetTopBits(key, 8)];
+            if (block != null)
+            {
+                stack[0] = n;
+                n = block.Depth1;
+                depth = 1;
+                var depth2 = block.Depth2[TKey.GetBits(key, 8, 8)];
+                if (depth2 != null)
+                {
+                    stack[1] = n;
+                    n = depth2;
+                    depth = 2;
+                }
+            }
+        }
+
+        while (true)
+        {
+            stack[depth] = n;
+            var octet = TKey.GetBits(key, depth << 3, 8);
+            if (n.Kids.Test(octet))
+            {
+                n = n.KidNodes[n.Kids.Rank(octet) - 1];
+                depth++;
+                continue;
+            }
+
+            if (n.Leaves.Test(octet))
+            {
+                ref var leaf = ref n.LeafEntries[n.Leaves.Rank(octet) - 1];
+                if (TKey.MatchesUnderMask(key, leaf.Bits, leaf.Mask))
+                    return ref leaf.Entry;
+            }
+
+            break;
+        }
+
+        while (true)
+        {
+            var octet = TKey.GetBits(key, depth << 3, 8);
+            if (n.Fringes.Test(octet))
+                return ref n.FringeEntries[n.Fringes.Rank(octet) - 1];
+            if (n.Prefixes.AndTop(in ArtTables.Ancestors[ArtTables.OctetToIndex(octet)], out var top))
+                return ref n.PrefixEntries[n.Prefixes.Rank(top) - 1];
+            if (depth == 0)
+                return ref Unsafe.NullRef<Entry>();
+            n = stack[--depth];
+        }
+    }
+
     // One method rather than a retry loop around a search, which cost a call per lookup.
-    private ref Entry Find(in TKey key)
+    private ref Entry FindFolded(in TKey key)
     {
         retry:
         var before = Volatile.Read(ref _changes);

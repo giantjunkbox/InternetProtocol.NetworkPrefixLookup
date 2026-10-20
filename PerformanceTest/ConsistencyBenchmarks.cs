@@ -31,8 +31,9 @@ namespace PerformanceTest;
 [SimpleJob(launchCount: 2, warmupCount: 5, iterationCount: 20)]
 public class ConsistencyBenchmarks
 {
-    // in this order, A B A B, so that drift during the session shows up as a difference between the two runs of a variant
-    [Params("1-NoRetry", "2-Retry", "3-NoRetry", "4-Retry")]
+    // in this order, A B C A B C, so that drift during the session shows up as a difference between the two runs of a
+    // variant; Wrapped retries around a separate search, Folded checks at the search's single exit
+    [Params("1-NoRetry", "2-Wrapped", "3-Folded", "4-NoRetry", "5-Wrapped", "6-Folded")]
     public string Variant = "";
 
     private IPNetworkLookup<int> _v4 = null!;
@@ -46,6 +47,7 @@ public class ConsistencyBenchmarks
     public void Setup()
     {
         Environment.SetEnvironmentVariable("BITTRIE_NO_RETRY", Variant.EndsWith("NoRetry") ? "1" : "0");
+        Environment.SetEnvironmentVariable("BITTRIE_FIND", Variant.EndsWith("Wrapped") ? "wrapped" : "folded");
         _v4 = RouteViews.Build(RouteViews.IPv4);
         _v6 = RouteViews.Build(RouteViews.IPv6);
         var table = RouteViews.IPv4;
