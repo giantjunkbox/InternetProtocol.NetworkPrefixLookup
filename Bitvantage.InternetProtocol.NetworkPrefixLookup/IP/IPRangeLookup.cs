@@ -16,9 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-using System.Collections;
 using System.Collections.Immutable;
-using System.Net;
 
 namespace Bitvantage.InternetProtocol;
 
@@ -40,7 +38,7 @@ namespace Bitvantage.InternetProtocol;
 ///         covering piece is smaller. Split them into ranges that nest or do not touch if that matters.
 ///     </para>
 ///     <para>
-///         Counting, listing, <see cref="TryGetValue" />, <see cref="ContainsPrefix" /> and <see cref="Remove" /> work on
+///         Counting, listing, <c>TryGetValue</c>, <c>ContainsPrefix</c> and <see cref="Remove" /> work on
 ///         whole ranges, matched exactly by their first and last address. A range is read once, when it is added;
 ///         changing a stored range object afterwards changes nothing in the lookup.
 ///     </para>
@@ -52,26 +50,29 @@ namespace Bitvantage.InternetProtocol;
 /// <typeparam name="TRange">The range type.</typeparam>
 /// <typeparam name="TAdapter">Reads the range type.</typeparam>
 /// <typeparam name="TValue">The value type.</typeparam>
-public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<TRange, TValue>
+public class IPRangeLookup<TRange, TAdapter, TValue> : IPRangeLookupBase<TRange, TAdapter, TValue, ReadWriteForm>
     where TAdapter : struct, IIPRangeAdapter<TRange>
 {
-    // The read-only members are the same as in FrozenIPRangeLookup; keep the two in step.
-    private readonly BitTrie<Bits32, TRange, RangePiece<TRange, TValue>> _v4 = new();
-    private readonly BitTrie<Bits128, TRange, RangePiece<TRange, TValue>> _v6 = new();
-    private readonly bool _map;
+    private readonly BitTrie<Bits32, TRange, RangePiece<TRange, TValue>> _v4;
+    private readonly BitTrie<Bits128, TRange, RangePiece<TRange, TValue>> _v6;
     private readonly Lock _lock = new();
 
-    // the ranges readers see, and the writer's view, which is ahead only during a batch
-    private ImmutableSortedDictionary<RangeKey, RangeClaim<TRange, TValue>> _published = ImmutableSortedDictionary<RangeKey, RangeClaim<TRange, TValue>>.Empty;
+    // the writer's view of the ranges, which runs ahead of the published one only during a batch
     private ImmutableSortedDictionary<RangeKey, RangeClaim<TRange, TValue>> _pending = ImmutableSortedDictionary<RangeKey, RangeClaim<TRange, TValue>>.Empty;
     private bool _batch;
 
     /// <summary>Creates an empty lookup.</summary>
     /// <param name="options">Lookup options; by default every address is looked up as given.</param>
     public IPRangeLookup(IPLookupOptions? options = null)
+        : this(new BitTrie<Bits32, TRange, RangePiece<TRange, TValue>>(), new BitTrie<Bits128, TRange, RangePiece<TRange, TValue>>(), options)
     {
-        Options = options ?? new IPLookupOptions();
-        _map = Options.MapIPv4MappedAddresses;
+    }
+
+    private IPRangeLookup(BitTrie<Bits32, TRange, RangePiece<TRange, TValue>> v4, BitTrie<Bits128, TRange, RangePiece<TRange, TValue>> v6, IPLookupOptions? options)
+        : base(v4, v6, options ?? new IPLookupOptions(), ImmutableSortedDictionary<RangeKey, RangeClaim<TRange, TValue>>.Empty)
+    {
+        _v4 = v4;
+        _v6 = v6;
     }
 
     /// <summary>Creates a lookup holding the given ranges, loaded as one batch.</summary>
@@ -87,9 +88,6 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
         batch.Commit();
     }
 
-    /// <summary>The options the lookup was created with.</summary>
-    public IPLookupOptions Options { get; }
-
     /// <summary>
     ///     A number that changes with every published change, so a caller can cache lookup results and check that they are
     ///     still current with one comparison.
@@ -97,140 +95,6 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
     /// <remarks>Read it before the lookups whose results it is to vouch for: a value read after them may already count a change they missed.</remarks>
     public long Version => _v4.Version + _v6.Version;
 
-    private ImmutableSortedDictionary<RangeKey, RangeClaim<TRange, TValue>> Ranges => Volatile.Read(ref _published);
-
-    // ---- lookups ---------------------------------------------------------------------------------------------------
-
-    /// <inheritdoc />
-    public bool TryGetMatch(IPAddress address, out TRange prefix, out TValue value)
-    {
-        var found = IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
-            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out var piece)
-            : _v6.TryGetMatch(new Bits128(v6), out prefix, out piece);
-        value = piece.Value;
-        return found;
-    }
-
-    /// <inheritdoc />
-    public bool TryGetMatch(ReadOnlySpan<byte> address, out TRange prefix, out TValue value)
-    {
-        var found = IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
-            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out var piece)
-            : _v6.TryGetMatch(new Bits128(v6), out prefix, out piece);
-        value = piece.Value;
-        return found;
-    }
-
-    /// <inheritdoc />
-    public bool TryGetMatchIPv4(uint address, out TRange prefix, out TValue value)
-    {
-        var found = _v4.TryGetMatch(new Bits32(address), out prefix, out var piece);
-        value = piece.Value;
-        return found;
-    }
-
-    /// <inheritdoc />
-    public bool TryGetMatchIPv6(UInt128 address, out TRange prefix, out TValue value)
-    {
-        var found = IPAddressBits.IsIPv4(address, _map, out var v4)
-            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out var piece)
-            : _v6.TryGetMatch(new Bits128(address), out prefix, out piece);
-        value = piece.Value;
-        return found;
-    }
-
-    /// <inheritdoc />
-    public bool TryGetMatchValue(IPAddress address, out TValue value)
-    {
-        var found = IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
-            ? _v4.TryGetMatchValue(new Bits32(v4), out var piece)
-            : _v6.TryGetMatchValue(new Bits128(v6), out piece);
-        value = piece.Value;
-        return found;
-    }
-
-    /// <inheritdoc />
-    public bool TryGetMatchValue(ReadOnlySpan<byte> address, out TValue value)
-    {
-        var found = IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
-            ? _v4.TryGetMatchValue(new Bits32(v4), out var piece)
-            : _v6.TryGetMatchValue(new Bits128(v6), out piece);
-        value = piece.Value;
-        return found;
-    }
-
-    /// <inheritdoc />
-    public bool TryGetMatchValueIPv4(uint address, out TValue value)
-    {
-        var found = _v4.TryGetMatchValue(new Bits32(address), out var piece);
-        value = piece.Value;
-        return found;
-    }
-
-    /// <inheritdoc />
-    public bool TryGetMatchValueIPv6(UInt128 address, out TValue value)
-    {
-        var found = IPAddressBits.IsIPv4(address, _map, out var v4)
-            ? _v4.TryGetMatchValue(new Bits32(v4), out var piece)
-            : _v6.TryGetMatchValue(new Bits128(address), out piece);
-        value = piece.Value;
-        return found;
-    }
-
-    /// <summary>Finds the smallest stored range that contains the whole of a range, which may be the range itself.</summary>
-    /// <param name="network">The range to look up.</param>
-    /// <param name="prefix">The matching range.</param>
-    /// <param name="value">Its value.</param>
-    /// <returns>True when a stored range contains the range.</returns>
-    public bool TryGetMatch(TRange network, out TRange prefix, out TValue value) =>
-        RangePieces<TRange, TAdapter, TValue>.TryGetMatch(_v4, _v6, network, out prefix, out value);
-
-    /// <summary>Gets the value of exactly this range.</summary>
-    /// <param name="prefix">The range.</param>
-    /// <param name="value">Its value, when stored.</param>
-    /// <returns>True when the range is stored.</returns>
-    public bool TryGetValue(TRange prefix, out TValue value)
-    {
-        var found = Ranges.TryGetValue(RangePieces<TRange, TAdapter, TValue>.KeyOf(prefix), out var claim);
-        value = claim.Value;
-        return found;
-    }
-
-    /// <summary>True when exactly this range is stored.</summary>
-    /// <param name="prefix">The range.</param>
-    public bool ContainsPrefix(TRange prefix) => Ranges.ContainsKey(RangePieces<TRange, TAdapter, TValue>.KeyOf(prefix));
-
-    /// <summary>Every stored range that contains an address, smallest first.</summary>
-    /// <param name="address">An IPv4 or IPv6 address.</param>
-    public IReadOnlyList<PrefixEntry<TRange, TValue>> GetMatches(IPAddress address) =>
-        RangePieces<TRange, TAdapter, TValue>.Matches(IPAddressBits.IsIPv4(address, _map, out var v4, out var v6) ? _v4.GetMatches(new Bits32(v4)) : _v6.GetMatches(new Bits128(v6)));
-
-    /// <summary>Writes every stored range that contains an address into a span, smallest first.</summary>
-    /// <param name="address">An IPv4 or IPv6 address.</param>
-    /// <param name="destination">Where to write the matches. Overlapping ranges can need any number of entries.</param>
-    /// <returns>The number of matches written.</returns>
-    /// <exception cref="ArgumentException">The destination is too small.</exception>
-    public int GetMatches(IPAddress address, Span<PrefixEntry<TRange, TValue>> destination)
-    {
-        var matches = GetMatches(address);
-        if (matches.Count > destination.Length)
-            throw new ArgumentException("The destination is too small for the matches.", nameof(destination));
-        for (var i = 0; i < matches.Count; i++)
-            destination[i] = matches[i];
-        return matches.Count;
-    }
-
-    /// <summary>The number of stored ranges, IPv4 and IPv6.</summary>
-    public int Count => Ranges.Count;
-
-    /// <summary>Returns the IPv4 ranges and then the IPv6 ranges, each in address order, a larger range first at the same address.</summary>
-    public IEnumerator<PrefixEntry<TRange, TValue>> GetEnumerator()
-    {
-        foreach (var claim in Ranges.Values)
-            yield return new PrefixEntry<TRange, TValue>(claim.Range, claim.Value);
-    }
-
-    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
     // ---- writes ----------------------------------------------------------------------------------------------------
 

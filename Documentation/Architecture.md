@@ -45,16 +45,14 @@ contains a given prefix, and look prefixes up exactly.
 | --- | --- |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup/Keys/` | `IBitKey<TSelf>`, `Bits32` and `Bits128` |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup/Core/` | `BitTrie`, `FrozenBitTrie`, `IReadOnlyBitTrie`, `BitSet256` and the ART tables, `PrefixEntry`, `NoValue` |
-| `Bitvantage.InternetProtocol.NetworkPrefixLookup/IP/` | Adapter interfaces, `IPAddressBits`, `IPPrefixLookup`, `IPRangeLookup`, their frozen forms, `IPNetworkLookup` |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup/IP/` | Adapter interfaces, `IPAddressBits`, `IPPrefixLookup`, `IPRangeLookup`, their frozen forms and shared base classes, `IPNetworkLookup` |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup.*/` | One adapter package each |
 | `Test/` | NUnit tests: `Core/`, `IP/`, `Adapters/`, and MaxMind test databases in `Data/` |
 | `PerformanceTest/` | BenchmarkDotNet benchmarks and a memory report |
 | `Prototypes/GenericTrie/` | The prototypes the design was measured with; not part of the solution |
 
-`IPPrefixLookup` and `FrozenIPPrefixLookup` share their read-only members word for word, as do `IPRangeLookup` and
-`FrozenIPRangeLookup`. The classes differ only in the type of their two cores, and keeping concrete field types lets
-the JIT call the cores directly instead of through an interface. A change to one class's lookups must be made to the
-other too; a comment in each says so.
+The read-only members of `IPPrefixLookup` and `FrozenIPPrefixLookup` are written once, in `IPPrefixLookupBase`, and
+those of the two range lookups in `IPRangeLookupBase`; see [The IP layer](#the-ip-layer).
 
 ## Layers
 
@@ -286,6 +284,17 @@ Freezing holds the source trie's writer lock while it reads, so writes wait; rea
 and routes each call by family. `TAdapter` is a struct implementing `IIPPrefixAdapter<TPrefix>`, whose static members
 read a prefix's family, network bits and length. Generic code over a struct is specialized by the JIT, so reading the
 caller's type costs no indirection.
+
+**One copy of the read-only members.** The read-write and frozen lookups answer the same queries from different trie
+types. Their read-only members live once, in `IPPrefixLookupBase<TPrefix, TAdapter, TValue, TForm>`, and for ranges in
+`IPRangeLookupBase`. The base holds each family's trie through `IReadOnlyBitTrie`, but never calls through it, which
+would be an interface call that does not inline. `TForm` is an empty struct, `ReadWriteForm` or `FrozenForm`. Each
+call into a trie tests `typeof(TForm)` and casts the trie to that form's sealed class with `Unsafe.As`. The JIT
+compiles generic code separately for each struct type argument and resolves the test as it compiles, so each form
+keeps only its direct, inlinable call. A struct wrapper around each trie, with an interface constraint, would do the
+same, but the range tries hold the internal `RangePiece`, which a public base class's type arguments cannot name. The
+base classes and the two marker structs are public, because public classes derive from them, and are hidden from
+IntelliSense. Their constructors are `private protected`, so only the library can derive from them.
 
 - **Addresses** convert without allocating: IPv4 through the obsolete `IPAddress.Address` property, which was about
   30% faster end to end than `TryWriteBytes`, and IPv6 through `TryWriteBytes` into a stack buffer. The span, `uint` and
