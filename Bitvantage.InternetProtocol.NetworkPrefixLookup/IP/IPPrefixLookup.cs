@@ -239,9 +239,14 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IPPrefixLookupBase<TPre
     /// <param name="ipv6">The layout of the IPv6 tables; the default is leaf-pushed, with a root sized to the table.</param>
     public FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> Freeze(FrozenBitTrieOptions? ipv4 = null, FrozenBitTrieOptions? ipv6 = null) => new(this, ipv4, ipv6);
 
-    internal FrozenBitTrie<Bits32, TPrefix, TValue> FreezeIPv4(FrozenBitTrieOptions? options) => _v4.Freeze(options);
-
-    internal FrozenBitTrie<Bits128, TPrefix, TValue> FreezeIPv6(FrozenBitTrieOptions? options) => _v6.Freeze(options);
+    // Both families under both writer locks, taken in BeginBatch's order, so that no batch commits between the two and
+    // the copy is the lookup at one moment.
+    internal (FrozenBitTrie<Bits32, TPrefix, TValue> IPv4, FrozenBitTrie<Bits128, TPrefix, TValue> IPv6) FreezeParts(FrozenBitTrieOptions? ipv4, FrozenBitTrieOptions? ipv6)
+    {
+        using (_v4.WriterLock.EnterScope())
+        using (_v6.WriterLock.EnterScope())
+            return (_v4.Freeze(ipv4), _v6.Freeze(ipv6));
+    }
 
     /// <summary>Counts the nodes and estimates the memory each address family holds.</summary>
     public IPLookupStatistics GetStatistics() => new(_v4.GetStatistics(), _v6.GetStatistics());

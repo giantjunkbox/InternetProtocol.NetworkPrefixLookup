@@ -315,6 +315,8 @@ it: in the shared code, the read-write form calls only `BitTrie.Find` and the fr
   `::ffff:0:0/96` is stored and listed but answers no address lookup. The check costs one test of a flag on IPv6
   lookups only.
 - **Batches** begin a batch on both tries. On commit each family publishes atomically, IPv4 first.
+- **Freezing** holds both tries' writer locks, taken in the order batches take them, so the frozen copy is the lookup at
+  one moment even though a reader of the read-write lookup can see one family's batch a moment before the other's.
 - **`Version`** is the sum of the two tries' versions, which changes whenever either does.
 - **Concrete classes** such as `IPNetworkLookup<TValue>` fix the prefix and adapter types, and redeclare `Freeze` with
   `new` to return their own frozen class. A frozen class's protected constructor takes the read-write lookup, so

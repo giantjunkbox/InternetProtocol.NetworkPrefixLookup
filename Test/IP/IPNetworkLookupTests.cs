@@ -289,6 +289,47 @@ public class IPNetworkLookupTests
         Assert.That(Match(lookup, "11.1.2.3"), Is.EqualTo("11.0.0.0/8"));
     }
 
+    [Test(Description = "Batches replace the one IPv4 and the one IPv6 prefix with a pair holding the same value while another thread freezes; every frozen copy must hold one pair.")]
+    public void Freeze_copies_both_families_at_one_moment()
+    {
+        var lookup = new IPNetworkLookup<int>();
+        lookup.Add(N("10.0.0.0/8"), 0);
+        lookup.Add(N("2001:db8::/32"), 0);
+        var stop = false;
+        var writer = new Thread(() =>
+        {
+            for (var i = 1; !Volatile.Read(ref stop); i++)
+            {
+                using var batch = lookup.BeginBatch();
+                lookup.AddOrUpdate(N("10.0.0.0/8"), i);
+                lookup.AddOrUpdate(N("2001:db8::/32"), i);
+                batch.Commit();
+            }
+        }) { IsBackground = true };
+        writer.Start();
+
+        int copies = 0, mixed = 0;
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            while (clock.ElapsedMilliseconds < 1000)
+            {
+                var frozen = lookup.Freeze();
+                frozen.TryGetMatchValueIPv4(0x0A000001, out var ipv4);
+                frozen.TryGetMatchValue(IPAddress.Parse("2001:db8::1"), out var ipv6);
+                if (ipv4 != ipv6) mixed++;
+                copies++;
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref stop, true);
+            writer.Join();
+        }
+
+        Assert.That(mixed, Is.Zero, $"{mixed:N0} of {copies:N0} copies mixed two batches");
+    }
+
     [Test]
     public void Address_conversions_check_the_family()
     {

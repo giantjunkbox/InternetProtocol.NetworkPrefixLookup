@@ -37,15 +37,16 @@ public class FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> : IPPrefixLookupBas
     /// <param name="ipv4">The layout of the IPv4 tables, or null for the default.</param>
     /// <param name="ipv6">The layout of the IPv6 tables, or null for the default.</param>
     protected internal FrozenIPPrefixLookup(IPPrefixLookup<TPrefix, TAdapter, TValue> source, FrozenBitTrieOptions? ipv4, FrozenBitTrieOptions? ipv6)
-        : this((source ?? throw new ArgumentNullException(nameof(source))).FreezeIPv4(ipv4), source.FreezeIPv6(ipv6), source.Options)
+        : this((source ?? throw new ArgumentNullException(nameof(source))).FreezeParts(ipv4, ipv6), source.Options)
     {
     }
 
-    private FrozenIPPrefixLookup(FrozenBitTrie<Bits32, TPrefix, TValue> v4, FrozenBitTrie<Bits128, TPrefix, TValue> v6, IPLookupOptions options)
-        : base(v4, v6, options)
+    // both families, frozen together under the read-write lookup's locks
+    private FrozenIPPrefixLookup((FrozenBitTrie<Bits32, TPrefix, TValue> V4, FrozenBitTrie<Bits128, TPrefix, TValue> V6) parts, IPLookupOptions options)
+        : base(parts.V4, parts.V6, options)
     {
-        _v4 = v4;
-        _v6 = v6;
+        _v4 = parts.V4;
+        _v6 = parts.V6;
     }
 
     /// <summary>The memory held by both address families' tables and entries, in bytes.</summary>

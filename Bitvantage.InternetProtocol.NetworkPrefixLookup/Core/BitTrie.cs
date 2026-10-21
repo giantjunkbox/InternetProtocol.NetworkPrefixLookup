@@ -1378,6 +1378,9 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             return new FrozenBitTrie<TKey, TPrefix, TValue>(ItemsWithKeys(), Count, options ?? new FrozenBitTrieOptions());
     }
 
+    // the writer lock, for the IP lookup's Freeze, which holds both families' locks so that no batch commits in between
+    internal Lock WriterLock => _lock;
+
     /// <summary>Counts the nodes and estimates the memory the trie holds.</summary>
     public BitTrieStatistics GetStatistics()
     {
