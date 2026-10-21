@@ -21,6 +21,7 @@ using System.Collections.Immutable;
 using System.ComponentModel;
 using System.Net;
 using System.Runtime.CompilerServices;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Bitvantage.InternetProtocol;
 
@@ -68,7 +69,7 @@ public abstract class IPRangeLookupBase<TRange, TAdapter, TValue, TForm> : IRead
     // ---- lookups ---------------------------------------------------------------------------------------------------
 
     /// <inheritdoc />
-    public bool TryGetMatch(IPAddress address, out TRange prefix, out TValue value)
+    public bool TryGetMatch(IPAddress address, [MaybeNullWhen(false)] out TRange prefix, [MaybeNullWhen(false)] out TValue value)
     {
         var found = IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
             ? Match4(new Bits32(v4), out prefix, out var piece)
@@ -78,7 +79,7 @@ public abstract class IPRangeLookupBase<TRange, TAdapter, TValue, TForm> : IRead
     }
 
     /// <inheritdoc />
-    public bool TryGetMatch(ReadOnlySpan<byte> address, out TRange prefix, out TValue value)
+    public bool TryGetMatch(ReadOnlySpan<byte> address, [MaybeNullWhen(false)] out TRange prefix, [MaybeNullWhen(false)] out TValue value)
     {
         var found = IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
             ? Match4(new Bits32(v4), out prefix, out var piece)
@@ -88,7 +89,7 @@ public abstract class IPRangeLookupBase<TRange, TAdapter, TValue, TForm> : IRead
     }
 
     /// <inheritdoc />
-    public bool TryGetMatchIPv4(uint address, out TRange prefix, out TValue value)
+    public bool TryGetMatchIPv4(uint address, [MaybeNullWhen(false)] out TRange prefix, [MaybeNullWhen(false)] out TValue value)
     {
         var found = Match4(new Bits32(address), out prefix, out var piece);
         value = piece.Value;
@@ -96,7 +97,7 @@ public abstract class IPRangeLookupBase<TRange, TAdapter, TValue, TForm> : IRead
     }
 
     /// <inheritdoc />
-    public bool TryGetMatchIPv6(UInt128 address, out TRange prefix, out TValue value)
+    public bool TryGetMatchIPv6(UInt128 address, [MaybeNullWhen(false)] out TRange prefix, [MaybeNullWhen(false)] out TValue value)
     {
         var found = IPAddressBits.IsIPv4(address, _map, out var v4)
             ? Match4(new Bits32(v4), out prefix, out var piece)
@@ -106,7 +107,7 @@ public abstract class IPRangeLookupBase<TRange, TAdapter, TValue, TForm> : IRead
     }
 
     /// <inheritdoc />
-    public bool TryGetMatchValue(IPAddress address, out TValue value)
+    public bool TryGetMatchValue(IPAddress address, [MaybeNullWhen(false)] out TValue value)
     {
         var found = IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
             ? MatchValue4(new Bits32(v4), out var piece)
@@ -116,7 +117,7 @@ public abstract class IPRangeLookupBase<TRange, TAdapter, TValue, TForm> : IRead
     }
 
     /// <inheritdoc />
-    public bool TryGetMatchValue(ReadOnlySpan<byte> address, out TValue value)
+    public bool TryGetMatchValue(ReadOnlySpan<byte> address, [MaybeNullWhen(false)] out TValue value)
     {
         var found = IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
             ? MatchValue4(new Bits32(v4), out var piece)
@@ -126,7 +127,7 @@ public abstract class IPRangeLookupBase<TRange, TAdapter, TValue, TForm> : IRead
     }
 
     /// <inheritdoc />
-    public bool TryGetMatchValueIPv4(uint address, out TValue value)
+    public bool TryGetMatchValueIPv4(uint address, [MaybeNullWhen(false)] out TValue value)
     {
         var found = MatchValue4(new Bits32(address), out var piece);
         value = piece.Value;
@@ -134,7 +135,7 @@ public abstract class IPRangeLookupBase<TRange, TAdapter, TValue, TForm> : IRead
     }
 
     /// <inheritdoc />
-    public bool TryGetMatchValueIPv6(UInt128 address, out TValue value)
+    public bool TryGetMatchValueIPv6(UInt128 address, [MaybeNullWhen(false)] out TValue value)
     {
         var found = IPAddressBits.IsIPv4(address, _map, out var v4)
             ? MatchValue4(new Bits32(v4), out var piece)
@@ -148,14 +149,14 @@ public abstract class IPRangeLookupBase<TRange, TAdapter, TValue, TForm> : IRead
     /// <param name="prefix">The matching range.</param>
     /// <param name="value">Its value.</param>
     /// <returns>True when a stored range contains the range.</returns>
-    public bool TryGetMatch(TRange network, out TRange prefix, out TValue value) =>
+    public bool TryGetMatch(TRange network, [MaybeNullWhen(false)] out TRange prefix, [MaybeNullWhen(false)] out TValue value) =>
         RangePieces<TRange, TAdapter, TValue>.TryGetMatch(_ipv4, _ipv6, network, out prefix, out value);
 
     /// <summary>Gets the value of exactly this range.</summary>
     /// <param name="prefix">The range.</param>
     /// <param name="value">Its value, when stored.</param>
     /// <returns>True when the range is stored.</returns>
-    public bool TryGetValue(TRange prefix, out TValue value)
+    public bool TryGetValue(TRange prefix, [MaybeNullWhen(false)] out TValue value)
     {
         var found = Ranges.TryGetValue(RangePieces<TRange, TAdapter, TValue>.KeyOf(prefix), out var claim);
         value = claim.Value;
@@ -209,12 +210,12 @@ public abstract class IPRangeLookupBase<TRange, TAdapter, TValue, TForm> : IRead
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool Match4(in Bits32 key, out TRange prefix, out RangePiece<TRange, TValue> piece) => ReadWrite
+    private bool Match4(in Bits32 key, [MaybeNullWhen(false)] out TRange prefix, out RangePiece<TRange, TValue> piece) => ReadWrite
         ? Unsafe.As<BitTrie<Bits32, TRange, RangePiece<TRange, TValue>>>(_ipv4).TryGetMatch(in key, out prefix, out piece)
         : Unsafe.As<FrozenBitTrie<Bits32, TRange, RangePiece<TRange, TValue>>>(_ipv4).TryGetMatch(in key, out prefix, out piece);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool Match6(in Bits128 key, out TRange prefix, out RangePiece<TRange, TValue> piece) => ReadWrite
+    private bool Match6(in Bits128 key, [MaybeNullWhen(false)] out TRange prefix, out RangePiece<TRange, TValue> piece) => ReadWrite
         ? Unsafe.As<BitTrie<Bits128, TRange, RangePiece<TRange, TValue>>>(_ipv6).TryGetMatch(in key, out prefix, out piece)
         : Unsafe.As<FrozenBitTrie<Bits128, TRange, RangePiece<TRange, TValue>>>(_ipv6).TryGetMatch(in key, out prefix, out piece);
 

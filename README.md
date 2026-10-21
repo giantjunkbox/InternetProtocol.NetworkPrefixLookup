@@ -120,9 +120,10 @@ The default layout is the fastest for routing tables. The compressed layout uses
 when prefixes are scattered across the address space, such as random /25 to /32 blocks:
 
 ```csharp
-var compressed = new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed };
-var small = routes.Freeze(compressed, compressed); // IPv4 and IPv6 layouts
+var small = routes.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });
 ```
+
+`Freeze(ipv4, ipv6)` takes a different layout for each address family.
 
 ## Ranges
 

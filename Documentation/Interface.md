@@ -442,6 +442,8 @@ Version 3 implements this interface. Where it differs from the proposal above:
 | Read-only core interface | Adds `TryGetValue(bits, length, out prefix, out value)`, an exact lookup that also returns the prefix object |
 | Frozen core | `FrozenBitTrie` keeps no nodes; parent links answer the other queries, as proposed. It exposes `Options` and `Bytes`. Without `RootBits`, the root follows the number of prefixes instead of always being 16 or 18 bits, so small and empty tables stay small |
 | IP layer options | `IPLookupOptions.MapIPv4MappedAddresses` looks up an IPv4-mapped address as the IPv4 address it holds. The owner chose to leave it off by default, since routing tables and packet classification are the main use cases, and to have MaxMind lookups turn it on by default |
+| Freezing | `Freeze(options)` applies one layout to both address families, and `Freeze(ipv4, ipv6)`, with no defaults, takes one for each. A single `Freeze(ipv4 = null, ipv6 = null)` let `Freeze(compressed)` compress only IPv4 |
+| Null state | Every `Try…` method's `out` parameters carry `[MaybeNullWhen(false)]`, as `Dictionary.TryGetValue`'s do |
 | Address conversions | `IPAddressBits.ToIPv4Bits` and `ToIPv6Bits` throw `ArgumentException` for an address of the other family |
 | Shared base classes | `IPPrefixLookupBase` and `IPRangeLookupBase` hold the read-only members of each read-write and frozen pair once, specialized by the marker structs `ReadWriteForm` and `FrozenForm`. They are public only because the public lookups derive from them; they are hidden from IntelliSense, and only the library can derive from them |
 | IP layer batches | `IPPrefixLookup.BeginBatch` returns a `Batch` that publishes each family atomically, IPv4 first |

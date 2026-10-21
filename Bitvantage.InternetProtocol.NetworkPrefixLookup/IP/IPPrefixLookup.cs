@@ -30,7 +30,7 @@ namespace Bitvantage.InternetProtocol;
 ///         of threads may read while one writes, reads take no locks, and every write does a bounded amount of work.
 ///     </para>
 ///     <para>
-///         For a table that is loaded once and then only read, <see cref="Freeze" /> builds a copy with faster lookups.
+///         For a table that is loaded once and then only read, <see cref="Freeze(FrozenBitTrieOptions?)" /> builds a copy with faster lookups.
 ///     </para>
 /// </remarks>
 /// <typeparam name="TPrefix">The prefix type.</typeparam>
@@ -235,9 +235,15 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IPPrefixLookupBase<TPre
     ///     Builds a read-only copy with faster lookups. Later changes to this lookup do not affect it. Writes wait while
     ///     the copy is built; reads do not.
     /// </summary>
-    /// <param name="ipv4">The layout of the IPv4 tables; the default is leaf-pushed, with a root sized to the table.</param>
-    /// <param name="ipv6">The layout of the IPv6 tables; the default is leaf-pushed, with a root sized to the table.</param>
-    public FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> Freeze(FrozenBitTrieOptions? ipv4 = null, FrozenBitTrieOptions? ipv6 = null) => new(this, ipv4, ipv6);
+    /// <param name="options">
+    ///     The layout of both address families' tables; the default is leaf-pushed, with a root sized to each table.
+    /// </param>
+    public FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> Freeze(FrozenBitTrieOptions? options = null) => new(this, options, options);
+
+    /// <summary>Builds a read-only copy with a different layout for each address family. See <see cref="Freeze(FrozenBitTrieOptions?)" />.</summary>
+    /// <param name="ipv4">The layout of the IPv4 tables.</param>
+    /// <param name="ipv6">The layout of the IPv6 tables.</param>
+    public FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> Freeze(FrozenBitTrieOptions ipv4, FrozenBitTrieOptions ipv6) => new(this, ipv4, ipv6);
 
     // Both families under both writer locks, taken in BeginBatch's order, so that no batch commits between the two and
     // the copy is the lookup at one moment.

@@ -20,6 +20,7 @@ using System.Collections;
 using System.ComponentModel;
 using System.Net;
 using System.Runtime.CompilerServices;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Bitvantage.InternetProtocol;
 
@@ -72,49 +73,49 @@ public abstract class IPPrefixLookupBase<TPrefix, TAdapter, TValue, TForm> : IRe
     // ---- lookups ---------------------------------------------------------------------------------------------------
 
     /// <inheritdoc />
-    public bool TryGetMatch(IPAddress address, out TPrefix prefix, out TValue value) =>
+    public bool TryGetMatch(IPAddress address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
             ? Match4(new Bits32(v4), out prefix, out value)
             : Match6(new Bits128(v6), out prefix, out value);
 
     /// <inheritdoc />
-    public bool TryGetMatch(ReadOnlySpan<byte> address, out TPrefix prefix, out TValue value) =>
+    public bool TryGetMatch(ReadOnlySpan<byte> address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
             ? Match4(new Bits32(v4), out prefix, out value)
             : Match6(new Bits128(v6), out prefix, out value);
 
     /// <inheritdoc />
-    public bool TryGetMatchIPv4(uint address, out TPrefix prefix, out TValue value) => Match4(new Bits32(address), out prefix, out value);
+    public bool TryGetMatchIPv4(uint address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => Match4(new Bits32(address), out prefix, out value);
 
     /// <inheritdoc />
-    public bool TryGetMatchIPv6(UInt128 address, out TPrefix prefix, out TValue value) =>
+    public bool TryGetMatchIPv6(UInt128 address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4)
             ? Match4(new Bits32(v4), out prefix, out value)
             : Match6(new Bits128(address), out prefix, out value);
 
     /// <inheritdoc />
-    public bool TryGetMatchValue(IPAddress address, out TValue value) =>
+    public bool TryGetMatchValue(IPAddress address, [MaybeNullWhen(false)] out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
             ? MatchValue4(new Bits32(v4), out value)
             : MatchValue6(new Bits128(v6), out value);
 
     /// <inheritdoc />
-    public bool TryGetMatchValue(ReadOnlySpan<byte> address, out TValue value) =>
+    public bool TryGetMatchValue(ReadOnlySpan<byte> address, [MaybeNullWhen(false)] out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
             ? MatchValue4(new Bits32(v4), out value)
             : MatchValue6(new Bits128(v6), out value);
 
     /// <inheritdoc />
-    public bool TryGetMatchValueIPv4(uint address, out TValue value) => MatchValue4(new Bits32(address), out value);
+    public bool TryGetMatchValueIPv4(uint address, [MaybeNullWhen(false)] out TValue value) => MatchValue4(new Bits32(address), out value);
 
     /// <inheritdoc />
-    public bool TryGetMatchValueIPv6(UInt128 address, out TValue value) =>
+    public bool TryGetMatchValueIPv6(UInt128 address, [MaybeNullWhen(false)] out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4)
             ? MatchValue4(new Bits32(v4), out value)
             : MatchValue6(new Bits128(address), out value);
 
     /// <inheritdoc />
-    public bool TryGetMatch(TPrefix network, out TPrefix prefix, out TValue value)
+    public bool TryGetMatch(TPrefix network, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value)
     {
         IPAddressBits.ThrowIfNull(network);
         return TAdapter.IsIPv4(network)
@@ -123,7 +124,7 @@ public abstract class IPPrefixLookupBase<TPrefix, TAdapter, TValue, TForm> : IRe
     }
 
     /// <inheritdoc />
-    public bool TryGetValue(TPrefix prefix, out TValue value)
+    public bool TryGetValue(TPrefix prefix, [MaybeNullWhen(false)] out TValue value)
     {
         IPAddressBits.ThrowIfNull(prefix);
         return TAdapter.IsIPv4(prefix)
@@ -167,42 +168,42 @@ public abstract class IPPrefixLookupBase<TPrefix, TAdapter, TValue, TForm> : IRe
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool Match4(in Bits32 key, out TPrefix prefix, out TValue value) => ReadWrite
+    private bool Match4(in Bits32 key, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => ReadWrite
         ? Unsafe.As<BitTrie<Bits32, TPrefix, TValue>>(_ipv4).TryGetMatch(in key, out prefix, out value)
         : Unsafe.As<FrozenBitTrie<Bits32, TPrefix, TValue>>(_ipv4).TryGetMatch(in key, out prefix, out value);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool Match6(in Bits128 key, out TPrefix prefix, out TValue value) => ReadWrite
+    private bool Match6(in Bits128 key, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => ReadWrite
         ? Unsafe.As<BitTrie<Bits128, TPrefix, TValue>>(_ipv6).TryGetMatch(in key, out prefix, out value)
         : Unsafe.As<FrozenBitTrie<Bits128, TPrefix, TValue>>(_ipv6).TryGetMatch(in key, out prefix, out value);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool MatchValue4(in Bits32 key, out TValue value) => ReadWrite
+    private bool MatchValue4(in Bits32 key, [MaybeNullWhen(false)] out TValue value) => ReadWrite
         ? Unsafe.As<BitTrie<Bits32, TPrefix, TValue>>(_ipv4).TryGetMatchValue(in key, out value)
         : Unsafe.As<FrozenBitTrie<Bits32, TPrefix, TValue>>(_ipv4).TryGetMatchValue(in key, out value);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool MatchValue6(in Bits128 key, out TValue value) => ReadWrite
+    private bool MatchValue6(in Bits128 key, [MaybeNullWhen(false)] out TValue value) => ReadWrite
         ? Unsafe.As<BitTrie<Bits128, TPrefix, TValue>>(_ipv6).TryGetMatchValue(in key, out value)
         : Unsafe.As<FrozenBitTrie<Bits128, TPrefix, TValue>>(_ipv6).TryGetMatchValue(in key, out value);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool MatchPrefix4(in Bits32 bits, int length, out TPrefix prefix, out TValue value) => ReadWrite
+    private bool MatchPrefix4(in Bits32 bits, int length, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => ReadWrite
         ? Unsafe.As<BitTrie<Bits32, TPrefix, TValue>>(_ipv4).TryGetMatch(in bits, length, out prefix, out value)
         : Unsafe.As<FrozenBitTrie<Bits32, TPrefix, TValue>>(_ipv4).TryGetMatch(in bits, length, out prefix, out value);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool MatchPrefix6(in Bits128 bits, int length, out TPrefix prefix, out TValue value) => ReadWrite
+    private bool MatchPrefix6(in Bits128 bits, int length, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => ReadWrite
         ? Unsafe.As<BitTrie<Bits128, TPrefix, TValue>>(_ipv6).TryGetMatch(in bits, length, out prefix, out value)
         : Unsafe.As<FrozenBitTrie<Bits128, TPrefix, TValue>>(_ipv6).TryGetMatch(in bits, length, out prefix, out value);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool Value4(in Bits32 bits, int length, out TValue value) => ReadWrite
+    private bool Value4(in Bits32 bits, int length, [MaybeNullWhen(false)] out TValue value) => ReadWrite
         ? Unsafe.As<BitTrie<Bits32, TPrefix, TValue>>(_ipv4).TryGetValue(in bits, length, out value)
         : Unsafe.As<FrozenBitTrie<Bits32, TPrefix, TValue>>(_ipv4).TryGetValue(in bits, length, out value);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private bool Value6(in Bits128 bits, int length, out TValue value) => ReadWrite
+    private bool Value6(in Bits128 bits, int length, [MaybeNullWhen(false)] out TValue value) => ReadWrite
         ? Unsafe.As<BitTrie<Bits128, TPrefix, TValue>>(_ipv6).TryGetValue(in bits, length, out value)
         : Unsafe.As<FrozenBitTrie<Bits128, TPrefix, TValue>>(_ipv6).TryGetValue(in bits, length, out value);
 

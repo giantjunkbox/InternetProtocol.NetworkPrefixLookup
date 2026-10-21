@@ -64,12 +64,18 @@ public class IPAddressRangeLookup<TValue> : IPRangeLookup<IPAddressRange, IPAddr
     ///     Builds a read-only copy with faster lookups. Later changes to this lookup do not affect it. Writes wait while
     ///     the copy is built; reads do not.
     /// </summary>
-    /// <param name="ipv4">The layout of the IPv4 tables; the default is leaf-pushed, with a root sized to the table.</param>
-    /// <param name="ipv6">The layout of the IPv6 tables; the default is leaf-pushed, with a root sized to the table.</param>
-    public new FrozenIPAddressRangeLookup<TValue> Freeze(FrozenBitTrieOptions? ipv4 = null, FrozenBitTrieOptions? ipv6 = null) => new(this, ipv4, ipv6);
+    /// <param name="options">
+    ///     The layout of both address families' tables; the default is leaf-pushed, with a root sized to each table.
+    /// </param>
+    public new FrozenIPAddressRangeLookup<TValue> Freeze(FrozenBitTrieOptions? options = null) => new(this, options, options);
+
+    /// <summary>Builds a read-only copy with a different layout for each address family. See <see cref="Freeze(FrozenBitTrieOptions?)" />.</summary>
+    /// <param name="ipv4">The layout of the IPv4 tables.</param>
+    /// <param name="ipv6">The layout of the IPv6 tables.</param>
+    public new FrozenIPAddressRangeLookup<TValue> Freeze(FrozenBitTrieOptions ipv4, FrozenBitTrieOptions ipv6) => new(this, ipv4, ipv6);
 }
 
-/// <summary>A read-only set of <see cref="IPAddressRange" /> ranges, built by <see cref="IPAddressRangeLookup{TValue}.Freeze" />.</summary>
+/// <summary>A read-only set of <see cref="IPAddressRange" /> ranges, built by <see cref="IPAddressRangeLookup{TValue}.Freeze(FrozenBitTrieOptions?)" />.</summary>
 /// <typeparam name="TValue">The value type.</typeparam>
 public class FrozenIPAddressRangeLookup<TValue> : FrozenIPRangeLookup<IPAddressRange, IPAddressRangeAdapter, TValue>
 {

@@ -19,6 +19,7 @@
 using System.Collections;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Bitvantage.InternetProtocol;
 
@@ -186,7 +187,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool TryGetMatch(in TKey key, out TPrefix prefix, out TValue value)
+    public bool TryGetMatch(in TKey key, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value)
     {
         ref var entry = ref Find(in key);
         if (Unsafe.IsNullRef(ref entry))
@@ -203,7 +204,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool TryGetMatchValue(in TKey key, out TValue value)
+    public bool TryGetMatchValue(in TKey key, [MaybeNullWhen(false)] out TValue value)
     {
         ref var entry = ref Find(in key);
         if (Unsafe.IsNullRef(ref entry))
@@ -300,7 +301,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     }
 
     /// <inheritdoc />
-    public bool TryGetMatch(in TKey bits, int length, out TPrefix prefix, out TValue value)
+    public bool TryGetMatch(in TKey bits, int length, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value)
     {
         CheckLength(length);
         ref var entry = ref FindForPrefix(in bits, length);
@@ -372,7 +373,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     }
 
     /// <inheritdoc />
-    public bool TryGetValue(in TKey bits, int length, out TValue value)
+    public bool TryGetValue(in TKey bits, int length, [MaybeNullWhen(false)] out TValue value)
     {
         CheckLength(length);
         ref var entry = ref FindPublished(in bits, length);
@@ -387,7 +388,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     }
 
     /// <inheritdoc />
-    public bool TryGetValue(in TKey bits, int length, out TPrefix prefix, out TValue value)
+    public bool TryGetValue(in TKey bits, int length, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value)
     {
         CheckLength(length);
         ref var entry = ref FindPublished(in bits, length);
@@ -422,7 +423,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
     // The writer's view of exactly this prefix, which includes an uncommitted batch, for the range lookups, which work
     // out a change from what is stored before they write it.
-    internal bool TryGetPendingValue(in TKey bits, int length, out TPrefix prefix, out TValue value)
+    internal bool TryGetPendingValue(in TKey bits, int length, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value)
     {
         using (_lock.EnterScope())
         {

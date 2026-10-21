@@ -17,6 +17,7 @@
 */
 
 using System.Net;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Bitvantage.InternetProtocol;
 
@@ -55,65 +56,65 @@ public interface IReadOnlyIPPrefixLookup<TPrefix, TValue> : IReadOnlyCollection<
     /// <param name="prefix">The matching prefix.</param>
     /// <param name="value">Its value.</param>
     /// <returns>True when a stored prefix contains the address.</returns>
-    bool TryGetMatch(IPAddress address, out TPrefix prefix, out TValue value);
+    bool TryGetMatch(IPAddress address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>Finds the longest stored prefix that contains an address given as bytes.</summary>
     /// <param name="address">4 bytes for IPv4 or 16 for IPv6, in network order.</param>
     /// <param name="prefix">The matching prefix.</param>
     /// <param name="value">Its value.</param>
     /// <returns>True when a stored prefix contains the address.</returns>
-    bool TryGetMatch(ReadOnlySpan<byte> address, out TPrefix prefix, out TValue value);
+    bool TryGetMatch(ReadOnlySpan<byte> address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>Finds the longest stored IPv4 prefix that contains an IPv4 address.</summary>
     /// <param name="address">The address, with its first bit in the most significant bit: 10.1.2.3 is 0x0A010203.</param>
     /// <param name="prefix">The matching prefix.</param>
     /// <param name="value">Its value.</param>
     /// <returns>True when a stored prefix contains the address.</returns>
-    bool TryGetMatchIPv4(uint address, out TPrefix prefix, out TValue value);
+    bool TryGetMatchIPv4(uint address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>Finds the longest stored prefix that contains an IPv6 address.</summary>
     /// <param name="address">The address, with its first bit in the most significant bit.</param>
     /// <param name="prefix">The matching prefix.</param>
     /// <param name="value">Its value.</param>
     /// <returns>True when a stored prefix contains the address.</returns>
-    bool TryGetMatchIPv6(UInt128 address, out TPrefix prefix, out TValue value);
+    bool TryGetMatchIPv6(UInt128 address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>Finds the value of the longest stored prefix that contains an address.</summary>
     /// <param name="address">An IPv4 or IPv6 address.</param>
     /// <param name="value">The value of the match.</param>
     /// <returns>True when a stored prefix contains the address.</returns>
-    bool TryGetMatchValue(IPAddress address, out TValue value);
+    bool TryGetMatchValue(IPAddress address, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>Finds the value of the longest stored prefix that contains an address given as bytes.</summary>
     /// <param name="address">4 bytes for IPv4 or 16 for IPv6, in network order.</param>
     /// <param name="value">The value of the match.</param>
     /// <returns>True when a stored prefix contains the address.</returns>
-    bool TryGetMatchValue(ReadOnlySpan<byte> address, out TValue value);
+    bool TryGetMatchValue(ReadOnlySpan<byte> address, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>Finds the value of the longest stored IPv4 prefix that contains an IPv4 address.</summary>
     /// <param name="address">The address, with its first bit in the most significant bit.</param>
     /// <param name="value">The value of the match.</param>
     /// <returns>True when a stored prefix contains the address.</returns>
-    bool TryGetMatchValueIPv4(uint address, out TValue value);
+    bool TryGetMatchValueIPv4(uint address, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>Finds the value of the longest stored prefix that contains an IPv6 address.</summary>
     /// <param name="address">The address, with its first bit in the most significant bit.</param>
     /// <param name="value">The value of the match.</param>
     /// <returns>True when a stored prefix contains the address.</returns>
-    bool TryGetMatchValueIPv6(UInt128 address, out TValue value);
+    bool TryGetMatchValueIPv6(UInt128 address, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>Finds the longest stored prefix that contains a network, which may be the network itself.</summary>
     /// <param name="network">The network to look up.</param>
     /// <param name="prefix">The matching prefix.</param>
     /// <param name="value">Its value.</param>
     /// <returns>True when a stored prefix contains the network.</returns>
-    bool TryGetMatch(TPrefix network, out TPrefix prefix, out TValue value);
+    bool TryGetMatch(TPrefix network, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>Gets the value of exactly this prefix.</summary>
     /// <param name="prefix">The prefix.</param>
     /// <param name="value">Its value, when stored.</param>
     /// <returns>True when the prefix is stored.</returns>
-    bool TryGetValue(TPrefix prefix, out TValue value);
+    bool TryGetValue(TPrefix prefix, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>True when exactly this prefix is stored.</summary>
     /// <param name="prefix">The prefix.</param>

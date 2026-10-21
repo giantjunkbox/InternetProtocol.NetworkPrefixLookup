@@ -17,6 +17,7 @@
 */
 
 using System.Net.Sockets;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Bitvantage.InternetProtocol;
 
@@ -130,7 +131,7 @@ internal static class RangePieces<TRange, TAdapter, TValue> where TAdapter : str
 
     // the smallest stored range that contains the whole range: it has a piece that contains the range's first address
     public static bool TryGetMatch(IReadOnlyBitTrie<Bits32, TRange, RangePiece<TRange, TValue>> v4, IReadOnlyBitTrie<Bits128, TRange, RangePiece<TRange, TValue>> v6,
-        TRange network, out TRange range, out TValue value)
+        TRange network, [MaybeNullWhen(false)] out TRange range, [MaybeNullWhen(false)] out TValue value)
     {
         var key = KeyOf(network);
         var pieces = key.IsIPv6 ? v6.GetMatches(new Bits128(key.First)) : v4.GetMatches(new Bits32((uint)key.First));

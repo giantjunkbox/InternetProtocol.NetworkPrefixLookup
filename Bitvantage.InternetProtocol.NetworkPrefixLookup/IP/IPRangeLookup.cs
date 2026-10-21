@@ -391,9 +391,15 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IPRangeLookupBase<TRange,
     ///     Builds a read-only copy with faster lookups. Later changes to this lookup do not affect it. Writes wait while
     ///     the copy is built; reads do not.
     /// </summary>
-    /// <param name="ipv4">The layout of the IPv4 tables; the default is leaf-pushed, with a root sized to the table.</param>
-    /// <param name="ipv6">The layout of the IPv6 tables; the default is leaf-pushed, with a root sized to the table.</param>
-    public FrozenIPRangeLookup<TRange, TAdapter, TValue> Freeze(FrozenBitTrieOptions? ipv4 = null, FrozenBitTrieOptions? ipv6 = null) => new(this, ipv4, ipv6);
+    /// <param name="options">
+    ///     The layout of both address families' tables; the default is leaf-pushed, with a root sized to each table.
+    /// </param>
+    public FrozenIPRangeLookup<TRange, TAdapter, TValue> Freeze(FrozenBitTrieOptions? options = null) => new(this, options, options);
+
+    /// <summary>Builds a read-only copy with a different layout for each address family. See <see cref="Freeze(FrozenBitTrieOptions?)" />.</summary>
+    /// <param name="ipv4">The layout of the IPv4 tables.</param>
+    /// <param name="ipv6">The layout of the IPv6 tables.</param>
+    public FrozenIPRangeLookup<TRange, TAdapter, TValue> Freeze(FrozenBitTrieOptions ipv4, FrozenBitTrieOptions ipv6) => new(this, ipv4, ipv6);
 
     internal (FrozenBitTrie<Bits32, TRange, RangePiece<TRange, TValue>> IPv4, FrozenBitTrie<Bits128, TRange, RangePiece<TRange, TValue>> IPv6, ImmutableSortedDictionary<RangeKey, RangeClaim<TRange, TValue>> Ranges)
         FreezeParts(FrozenBitTrieOptions? ipv4, FrozenBitTrieOptions? ipv6)

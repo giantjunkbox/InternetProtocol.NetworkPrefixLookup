@@ -20,6 +20,7 @@ using System.Collections;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Bitvantage.InternetProtocol;
 
@@ -289,7 +290,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool TryGetMatch(in TKey key, out TPrefix prefix, out TValue value)
+    public bool TryGetMatch(in TKey key, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value)
     {
         var i = Find(in key);
         if (i < 0)
@@ -307,7 +308,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool TryGetMatchValue(in TKey key, out TValue value)
+    public bool TryGetMatchValue(in TKey key, [MaybeNullWhen(false)] out TValue value)
     {
         var i = Find(in key);
         if (i < 0)
@@ -321,7 +322,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
     }
 
     /// <inheritdoc />
-    public bool TryGetMatch(in TKey bits, int length, out TPrefix prefix, out TValue value)
+    public bool TryGetMatch(in TKey bits, int length, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value)
     {
         CheckLength(length);
         var i = FindForPrefix(in bits, length);
@@ -339,7 +340,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
     }
 
     /// <inheritdoc />
-    public bool TryGetValue(in TKey bits, int length, out TValue value)
+    public bool TryGetValue(in TKey bits, int length, [MaybeNullWhen(false)] out TValue value)
     {
         CheckLength(length);
         var i = FindExact(in bits, length);
@@ -354,7 +355,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
     }
 
     /// <inheritdoc />
-    public bool TryGetValue(in TKey bits, int length, out TPrefix prefix, out TValue value)
+    public bool TryGetValue(in TKey bits, int length, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value)
     {
         CheckLength(length);
         var i = FindExact(in bits, length);

@@ -16,6 +16,8 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+using System.Diagnostics.CodeAnalysis;
+
 namespace Bitvantage.InternetProtocol;
 
 /// <summary>
@@ -45,13 +47,13 @@ public interface IReadOnlyBitTrie<TKey, TPrefix, TValue> : IReadOnlyCollection<P
     /// <param name="prefix">The prefix object of the match.</param>
     /// <param name="value">The value of the match.</param>
     /// <returns>True when a stored prefix contains the key.</returns>
-    bool TryGetMatch(in TKey key, out TPrefix prefix, out TValue value);
+    bool TryGetMatch(in TKey key, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>Finds the value of the longest stored prefix that contains a full-width key.</summary>
     /// <param name="key">The key to look up.</param>
     /// <param name="value">The value of the match.</param>
     /// <returns>True when a stored prefix contains the key.</returns>
-    bool TryGetMatchValue(in TKey key, out TValue value);
+    bool TryGetMatchValue(in TKey key, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>Finds the longest stored prefix that contains the given prefix, which may be the prefix itself.</summary>
     /// <param name="bits">The prefix bits.</param>
@@ -59,14 +61,14 @@ public interface IReadOnlyBitTrie<TKey, TPrefix, TValue> : IReadOnlyCollection<P
     /// <param name="prefix">The prefix object of the match.</param>
     /// <param name="value">The value of the match.</param>
     /// <returns>True when a stored prefix contains the given prefix.</returns>
-    bool TryGetMatch(in TKey bits, int length, out TPrefix prefix, out TValue value);
+    bool TryGetMatch(in TKey bits, int length, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>Gets the value of exactly this prefix.</summary>
     /// <param name="bits">The prefix bits.</param>
     /// <param name="length">The prefix length.</param>
     /// <param name="value">The value, when the prefix is stored.</param>
     /// <returns>True when the prefix is stored.</returns>
-    bool TryGetValue(in TKey bits, int length, out TValue value);
+    bool TryGetValue(in TKey bits, int length, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>Gets the prefix object and value of exactly this prefix.</summary>
     /// <param name="bits">The prefix bits.</param>
@@ -74,7 +76,7 @@ public interface IReadOnlyBitTrie<TKey, TPrefix, TValue> : IReadOnlyCollection<P
     /// <param name="prefix">The prefix object, when the prefix is stored.</param>
     /// <param name="value">The value, when the prefix is stored.</param>
     /// <returns>True when the prefix is stored.</returns>
-    bool TryGetValue(in TKey bits, int length, out TPrefix prefix, out TValue value);
+    bool TryGetValue(in TKey bits, int length, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>True when exactly this prefix is stored.</summary>
     /// <param name="bits">The prefix bits.</param>

@@ -331,6 +331,22 @@ public class IPNetworkLookupTests
     }
 
     [Test]
+    public void One_freeze_layout_applies_to_both_families()
+    {
+        var lookup = new IPNetworkLookup<int>();
+        var random = new Random(31);
+        for (var i = 0; i < 2000; i++)
+        {
+            lookup.TryAdd(new IPNetwork(IPAddressBits.FromIPv4Bits((uint)random.Next()), 32), i);
+            lookup.TryAdd(new IPNetwork(IPAddressBits.FromIPv6Bits(((UInt128)(ulong)random.NextInt64() << 64) | (ulong)random.NextInt64()), 128), i);
+        }
+
+        var compressed = new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed };
+        Assert.That(lookup.Freeze(compressed).Bytes, Is.EqualTo(lookup.Freeze(compressed, compressed).Bytes));
+        Assert.That(lookup.Freeze(compressed, new FrozenBitTrieOptions()).Bytes, Is.GreaterThan(lookup.Freeze(compressed).Bytes), "scattered IPv6 host routes take more room leaf-pushed");
+    }
+
+    [Test]
     public void Address_conversions_check_the_family()
     {
         Assert.That(IPAddressBits.ToIPv4Bits(IPAddress.Parse("10.1.2.3")), Is.EqualTo(0x0A010203u));
