@@ -1,4 +1,4 @@
-# Architecture
+﻿# Architecture
 
 This document describes how version 3 of `Bitvantage.InternetProtocol.NetworkPrefixLookup` stores prefixes and answers
 longest-prefix-match queries. It is written for people who want to change the internals. For usage see the
@@ -62,7 +62,7 @@ other too; a comment in each says so.
 | --- | --- | --- |
 | IP layer | `IPPrefixLookup`, `IPRangeLookup`, `IPNetworkLookup`, the adapter packages, their frozen forms | `IPAddress`, address families, the caller's prefix or range type |
 | Core | `BitTrie<TKey, TPrefix, TValue>`, `FrozenBitTrie<TKey, TPrefix, TValue>` | Bits and lengths only |
-| Keys | `IBitKey<TSelf>` and the four key types | Bit arithmetic for one fixed width |
+| Keys | `IBitKey<TSelf>`, `Bits32` and `Bits128` | Bit arithmetic for one fixed width |
 
 The core stores a *prefix object* and a *value* with each prefix. The prefix object is whatever the caller wants back
 from a lookup: the IP layer stores the caller's `IPNetwork`, `NetworkPrefix` or range. Routing tables and the core
@@ -202,10 +202,13 @@ new root and a new block array privately and publish both with one reference wri
   Every lookup reads it before and after, behind a read barrier, and looks again when the two readings show that two
   or more writes overlapped it, that is when the second exceeds the first, rounded down to even, by more than 2. A
   lookup therefore sees the trie as it was at one moment during the call. Readers still take no locks. They are
-  lock-free rather than wait-free: a lookup retries only when a second write begins before it ends, and a write takes
-  several times as long as a lookup, so retries are occasional even under continuous writes, and each costs about one
-  lookup. On x86 the check is two loads and a compare, and measured free on the real tables; see
-  [Performance](#measured-baseline). `Version` is `_changes` halved.
+  lock-free rather than wait-free, like Linux's seqlocks: a lookup retries when a write finishes and another begins
+  while it runs. At ordinary update rates that takes a reader thread paused in the middle of a lookup. Under a writer
+  running flat out, the chance is about a lookup's time over a write's, so on the real tables, with lookups of 80 to
+  200 ns and writes of about 0.8 µs, roughly one lookup in five to ten retries once, and few twice; each retry costs
+  about one lookup. On x86 the check is two loads and a compare, and measured free on the real tables; see
+  [Performance](#measured-baseline). `Version` is `_changes` halved, and must be read before the lookups it is to
+  vouch for.
 - A batch is all or nothing. Readers keep seeing the published root and blocks until the commit replaces both at once.
 - Enumeration during writes sees each entry whole, but is not a snapshot of the whole trie at one instant.
 

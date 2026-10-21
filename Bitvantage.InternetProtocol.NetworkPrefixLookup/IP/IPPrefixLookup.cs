@@ -75,6 +75,7 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     ///     A number that changes with every published change to either family, so a caller can cache lookup results and
     ///     check that they are still current with one comparison.
     /// </summary>
+    /// <remarks>Read it before the lookups whose results it is to vouch for: a value read after them may already count a change they missed.</remarks>
     public long Version => _v4.Version + _v6.Version;
 
     // ---- lookups ---------------------------------------------------------------------------------------------------

@@ -31,6 +31,7 @@ public static class IPAddressBits
 {
     /// <summary>The bits of an IPv4 address: 10.1.2.3 becomes 0x0A010203.</summary>
     /// <param name="address">An IPv4 address.</param>
+    /// <exception cref="ArgumentNullException">The address is null.</exception>
     /// <exception cref="ArgumentException">The address is not IPv4.</exception>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static uint ToIPv4Bits(IPAddress address)
@@ -43,6 +44,7 @@ public static class IPAddressBits
 
     /// <summary>The bits of an IPv6 address. The scope ID is ignored.</summary>
     /// <param name="address">An IPv6 address.</param>
+    /// <exception cref="ArgumentNullException">The address is null.</exception>
     /// <exception cref="ArgumentException">The address is not IPv6.</exception>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static UInt128 ToIPv6Bits(IPAddress address)

@@ -175,6 +175,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     ///     A number that changes with every published change, so a caller can cache lookup results and check that they are
     ///     still current with one comparison.
     /// </summary>
+    /// <remarks>Read it before the lookups whose results it is to vouch for: a value read after them may already count a change they missed.</remarks>
     public long Version => Volatile.Read(ref _changes) >> 1;
 
     // the root that readers see
