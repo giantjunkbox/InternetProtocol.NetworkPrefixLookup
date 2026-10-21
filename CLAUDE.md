@@ -52,13 +52,16 @@ interface differs from the proposal. `Documentation/Adapter-Survey.md` explains 
   - `Keys/`: `IBitKey<TSelf>`, `Bits32` and `Bits128`.
   - `Core/`: `BitTrie` (the read-write trie), `FrozenBitTrie`, `IReadOnlyBitTrie`, `BitSet256` with the ART tables,
     `PrefixEntry`, `NoValue`.
-  - `IP/`: the adapter interfaces, `IPAddressBits`, `IPPrefixLookup`, `IPRangeLookup`, their frozen forms, and
+  - `IP/`: the adapter interfaces, `IPAddressBits`, `IPPrefixLookup`, `IPRangeLookup`, their frozen forms and shared
+    base classes, and
     `IPNetworkLookup` for `System.Net.IPNetwork`.
 - `Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix/`, `.IPNetwork2/`, `.IPAddressRange/`, `.MaxMind/`: the
   adapter packages, each an adapter struct and a read-write and frozen class pair. The MaxMind package also has
   `MaxMindDatabase.Load`.
-- `IPPrefixLookup.cs` and `FrozenIPPrefixLookup.cs` share their read-only members word for word, as do
-  `IPRangeLookup.cs` and `FrozenIPRangeLookup.cs`. Change both of a pair together.
+- The read-only members of each read-write and frozen IP lookup pair are written once, in `IPPrefixLookupBase` and
+  `IPRangeLookupBase`. A marker type argument, `ReadWriteForm` or `FrozenForm`, lets the JIT call each form's sealed
+  trie type directly; see "One copy of the read-only members" in `Documentation/Architecture.md`. Make every lookup's
+  call into a trie through those typed calls, not through `IReadOnlyBitTrie`, which would not inline.
 - `Test/` contains NUnit tests in `Core/`, `IP/` and `Adapters/`, and two MaxMind test databases in `Data/MaxMind/`
   (Apache-2.0 or MIT, notice included). `PerformanceTest/` contains BenchmarkDotNet benchmarks and a memory report.
 - `Prototypes/GenericTrie/` holds the prototypes the design was measured with. It is not in the solution and references

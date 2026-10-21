@@ -296,6 +296,12 @@ same, but the range tries hold the internal `RangePiece`, which a public base cl
 base classes and the two marker structs are public, because public classes derive from them, and are hidden from
 IntelliSense. Their constructors are `private protected`, so only the library can derive from them.
 
+Measured against the duplicated classes it replaced, in one session with old and new back to back, the shared base
+was as fast or faster in all five cases: IPv4 and IPv6 from integers, read-write and frozen, and IPv4 from `IPAddress`
+with a reference-type prefix, whose generic code the runtime shares across reference types. The JIT's output confirms
+it: in the shared code, the read-write form calls only `BitTrie.Find` and the frozen form only
+`FrozenBitTrie.FindLeafPushed` and `FindCompressed`, with each trie's `TryGetMatch` inlined, as before.
+
 - **Addresses** convert without allocating: IPv4 through the obsolete `IPAddress.Address` property, which was about
   30% faster end to end than `TryWriteBytes`, and IPv6 through `TryWriteBytes` into a stack buffer. The span, `uint` and
   `UInt128` overloads skip `IPAddress` entirely. `IPAddressBits` exposes the conversions for adapter authors; its public

@@ -42,7 +42,7 @@ public static class Program
         // pass the command line through so BenchmarkDotNet options such as --filter work; with no filter, run
         // everything, leaving out the real tables when ROUTEVIEWS_DIR is not set
         var types = RouteViews.Available
-            ? new[] { typeof(RandomTableBenchmarks), typeof(MaxMindBenchmarks), typeof(RealTableBenchmarks), typeof(RealBuildBenchmarks), typeof(LayerBenchmarks), typeof(WriteBenchmarks), typeof(FrozenRootBenchmarks), typeof(ComparisonBenchmarks), typeof(SharedBaseBenchmarks) }
+            ? new[] { typeof(RandomTableBenchmarks), typeof(MaxMindBenchmarks), typeof(RealTableBenchmarks), typeof(RealBuildBenchmarks), typeof(LayerBenchmarks), typeof(WriteBenchmarks), typeof(FrozenRootBenchmarks), typeof(ComparisonBenchmarks) }
             : new[] { typeof(RandomTableBenchmarks), typeof(MaxMindBenchmarks), typeof(FrozenRootBenchmarks), typeof(ComparisonBenchmarks) };
         if (args.Length == 0)
             args = new[] { "--filter", "*" };
