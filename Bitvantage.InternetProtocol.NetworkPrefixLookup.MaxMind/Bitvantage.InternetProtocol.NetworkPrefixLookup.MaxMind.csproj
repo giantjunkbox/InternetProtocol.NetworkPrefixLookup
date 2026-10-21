@@ -11,9 +11,9 @@
 		<PackageIcon>icon.png</PackageIcon>
 		<RepositoryType>git</RepositoryType>
 		<PackageTags>network;networking;geoip;maxmind;mmdb;asn;prefix table;longest prefix match</PackageTags>
-		<VersionPrefix>2.0.0</VersionPrefix>
-		<FileVersion>2.0.0</FileVersion>
-		<AssemblyVersion>2.0.0</AssemblyVersion>
+		<VersionPrefix>3.0.0</VersionPrefix>
+		<FileVersion>3.0.0</FileVersion>
+		<AssemblyVersion>3.0.0</AssemblyVersion>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 		<PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
 		<Description>Longest-prefix-match lookups for MaxMind.Db networks, and a loader that reads a whole MaxMind DB file into a lookup</Description>

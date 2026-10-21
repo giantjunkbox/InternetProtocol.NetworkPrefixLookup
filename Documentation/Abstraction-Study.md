@@ -446,7 +446,7 @@ Status after building version 3 of the library:
 8. **Third-party adapters.** Done: the IPNetwork2, IPAddressRange and MaxMind packages, with a MaxMind loader that is
    checked against MaxMind's reader.
 9. **Packaging and documentation.** Done: four adapter packages beside the dependency-free core, and an updated README,
-   [Architecture.md](Architecture.md) and CLAUDE.md. The package versions were left at 2.0.0 for the owner to set.
+   [Architecture.md](Architecture.md) and CLAUDE.md. Every package is at version 3.0.0, as the owner chose.
 
 ## Risks
 

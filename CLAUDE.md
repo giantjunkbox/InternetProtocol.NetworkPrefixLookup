@@ -29,10 +29,17 @@ Decisions made by the user:
 - One read-write design in which every write does bounded work, with no pauses for growth or compaction. There is no
   separate real-time mode, because two nearly identical code paths are not worth keeping. A separate form is justified
   only when it is clearly faster, as the frozen form is.
+- Lookups see the table as it was at one moment: a lookup that overlaps two writes retries, as described under "What
+  readers see" in `Documentation/Architecture.md`.
+- Addresses are looked up as given by default. `IPLookupOptions.MapIPv4MappedAddresses` maps IPv4-mapped addresses to
+  IPv4, strictly: a mapped address gets exactly the answer of the IPv4 address it holds. MaxMind lookups turn it on by
+  default, and the MaxMind loader loads MaxMind's alias networks only on request.
+- Public API compatibility is not a concern while version 3 is unreleased.
+- The package names as they are, and version 3.0.0 for every package.
+- No code generators or scripts in other languages: the repository stays C#.
 
-Choices made while building version 3 that the user has not yet reviewed: the read-write core follows the BART-style
-prototype (`Documentation/Bart-Comparison.md`); IPv4-mapped IPv6 addresses are looked up as IPv4 by default; the MaxMind
-loader skips MaxMind's IPv4 alias networks by default; package names; and the package versions, left at 2.0.0.
+Choice made while building version 3 that the user has not yet reviewed: the read-write core follows the BART-style
+prototype (`Documentation/Bart-Comparison.md`).
 
 The public interface is described in `Documentation/Interface.md`, whose Status section lists where the shipped
 interface differs from the proposal. `Documentation/Adapter-Survey.md` explains which libraries get adapter packages.
@@ -102,7 +109,7 @@ ROUTEVIEWS_DIR=/tmp/routeviews dotnet run -c Release --project PerformanceTest
 ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 3 minutes
 ```
 
-**Test baseline:** all 45 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
+**Test baseline:** all 48 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
 text with `Environment.NewLine`, so it passes with either line ending. Keep `.gitattributes` at `text=auto`.
 
 The whole solution builds with no warnings. Do not add any.
@@ -136,7 +143,7 @@ The whole solution builds with no warnings. Do not add any.
 - Every write must do bounded work: no step may grow with the table's size.
 - Backward compatibility with the v2 API is not required, but keep public API changes deliberate and documented in
   `Documentation/Interface.md`.
-- Target .NET 10 only. Do not add other target frameworks or bump package versions unless asked.
+- Target .NET 10 only. Do not add other target frameworks or change package versions unless asked.
 
 ## Performance work
 

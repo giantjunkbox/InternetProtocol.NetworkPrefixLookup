@@ -11,9 +11,9 @@
 		<PackageIcon>icon.png</PackageIcon>
 		<RepositoryType>git</RepositoryType>
 		<PackageTags>network;networking;ip range;IPAddressRange;cidr;longest prefix match</PackageTags>
-		<VersionPrefix>2.0.0</VersionPrefix>
-		<FileVersion>2.0.0</FileVersion>
-		<AssemblyVersion>2.0.0</AssemblyVersion>
+		<VersionPrefix>3.0.0</VersionPrefix>
+		<FileVersion>3.0.0</FileVersion>
+		<AssemblyVersion>3.0.0</AssemblyVersion>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 		<PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
 		<Description>Lookups of the smallest IP address range containing an address, for NetTools.IPAddressRange from the IPAddressRange package</Description>

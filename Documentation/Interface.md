@@ -448,7 +448,8 @@ Version 3 implements this interface. Where it differs from the proposal above:
 | Value-less lookups | `NoValueLookupExtensions` adds `TryAdd(prefix)`, `Add(prefix)`, `TryGetMatch(address, out prefix)` and `ContainsMatch(address)` |
 | Ranges | As proposed, in `IPRangeLookup` and `FrozenIPRangeLookup`. `GetMatches` returns ranges smallest first and, with overlapping ranges, can need more than 129 entries |
 | Adapter packages | As in the table above. The MaxMind loader is `MaxMindDatabase.Load<T>`, which stores MaxMind's IPv4 networks once, as IPv4. `IncludeAliasedNetworks` also stores them under `::/96`, where an IPv6 database keeps them, and under its three alias networks, so that every address answers as `Reader.Find` does |
-| Package versions | Left at 2.0.0 in every project, for the owner to set |
+| Package names | As in the table above, approved by the owner |
+| Package versions | 3.0.0 for every package |
 
 ## Open questions
 
