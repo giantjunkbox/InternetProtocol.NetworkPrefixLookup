@@ -82,17 +82,24 @@ public static class MaxMindDatabase
         using var batch = lookup.BeginBatch();
         foreach (var node in reader.FindAll<T>(options.Injectables, options.CacheSize))
         {
-            var network = ToNetwork(node.Start, node.PrefixLength);
-            if (!options.IncludeAliasedNetworks && IsAliased(network))
-                continue;
-            lookup.TryAdd(network, node.Data);
-            // the same network as the database stores it, so that IPv4-compatible addresses find it
-            if (compatible && network.NetworkAddress.AddressFamily == AddressFamily.InterNetwork)
-                lookup.TryAdd(new Network(IPAddressBits.FromIPv6Bits(IPAddressBits.ToIPv4Bits(network.NetworkAddress)), network.PrefixLength + 96), node.Data);
+            Add(ToNetwork(node.Start, node.PrefixLength), node.Data);
+            // a record above the IPv4 part of an IPv6 tree covers every IPv4 address, as Reader.Find answers them
+            if (node.PrefixLength < 0 && node.Start.AddressFamily == AddressFamily.InterNetwork)
+                Add(new Network(IPAddress.Any, 0), node.Data);
         }
 
         batch.Commit();
         return lookup;
+
+        void Add(Network network, T data)
+        {
+            if (!options.IncludeAliasedNetworks && IsAliased(network))
+                return;
+            lookup.TryAdd(network, data);
+            // the same network as the database stores it, so that IPv4-compatible addresses find it
+            if (compatible && network.NetworkAddress.AddressFamily == AddressFamily.InterNetwork)
+                lookup.TryAdd(new Network(IPAddressBits.FromIPv6Bits(IPAddressBits.ToIPv4Bits(network.NetworkAddress)), network.PrefixLength + 96), data);
+        }
     }
 
     /// <summary>Opens a database file and reads every network into a read-write lookup. See <see cref="Load{T}(Reader,MaxMindLoadOptions?)" />.</summary>
@@ -106,7 +113,8 @@ public static class MaxMindDatabase
     }
 
     // FindAll reports a network in the IPv4 part of an IPv6 tree as IPv4, with the prefix length less 96. A network above
-    // that part, such as ::/64, would come out with a negative length, so it goes back to IPv6.
+    // that part, such as ::/64, would come out with a negative length, so it goes back to IPv6; Load also stores it as
+    // 0.0.0.0/0, because it holds the whole IPv4 part.
     private static Network ToNetwork(IPAddress start, int length) =>
         length < 0 && start.AddressFamily == AddressFamily.InterNetwork ? new Network(IPAddress.IPv6Any, length + 96) : new Network(start, length);
 

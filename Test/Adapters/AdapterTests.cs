@@ -195,6 +195,64 @@ public class AdapterTests
         Assert.That(found, Is.GreaterThan(50), "enough probes land in a network");
     }
 
+    // A minimal MaxMind DB: a search tree of 24-bit records, one data record { "id": 1 }, and metadata. records(i) gives
+    // node i's left and right record: a node number, nodeCount for no data, or -1 for the data record.
+    private static byte[] TinyDatabase(int nodeCount, Func<int, (int Left, int Right)> records, int ipVersion)
+    {
+        var tree = new byte[nodeCount * 6];
+        for (var i = 0; i < nodeCount; i++)
+        {
+            var (left, right) = records(i);
+            Write24(tree, i * 6, left == -1 ? nodeCount + 16 : left);
+            Write24(tree, i * 6 + 3, right == -1 ? nodeCount + 16 : right);
+        }
+
+        var data = new byte[] { 0xE1, 0x42, (byte)'i', (byte)'d', 0xC1, 0x01 };
+        var meta = new List<byte> { 0xAB, 0xCD, 0xEF };
+        meta.AddRange("MaxMind.com"u8.ToArray());
+        meta.Add(0xE9);
+        void Key(string key)
+        {
+            meta.Add((byte)(0x40 | key.Length));
+            meta.AddRange(System.Text.Encoding.ASCII.GetBytes(key));
+        }
+
+        Key("binary_format_major_version"); meta.AddRange(new byte[] { 0xA1, 2 });
+        Key("binary_format_minor_version"); meta.Add(0xA0);
+        Key("build_epoch"); meta.AddRange(new byte[] { 0x00, 0x02 });
+        Key("database_type"); meta.Add(0x44); meta.AddRange("Test"u8.ToArray());
+        Key("description"); meta.Add(0xE0);
+        Key("ip_version"); meta.AddRange(new byte[] { 0xA1, (byte)ipVersion });
+        Key("languages"); meta.AddRange(new byte[] { 0x00, 0x04 });
+        Key("node_count"); meta.AddRange(new byte[] { 0xC2, (byte)(nodeCount >> 8), (byte)nodeCount });
+        Key("record_size"); meta.AddRange(new byte[] { 0xA1, 24 });
+        return tree.Concat(new byte[16]).Concat(data).Concat(meta).ToArray();
+
+        static void Write24(byte[] bytes, int at, int value)
+        {
+            bytes[at] = (byte)(value >> 16);
+            bytes[at + 1] = (byte)(value >> 8);
+            bytes[at + 2] = (byte)value;
+        }
+    }
+
+    [Test]
+    public void A_record_above_the_IPv4_networks_answers_IPv4_addresses_as_the_reader_does()
+    {
+        // an IPv6 tree whose only record is ::/64, which holds the whole IPv4 part at ::/96
+        var bytes = TinyDatabase(64, i => (i == 63 ? -1 : i + 1, 64), 6);
+        using var reader = new Reader(new MemoryStream(bytes));
+        var lookup = MaxMindDatabase.Load<Dictionary<string, object>>(reader);
+        var full = MaxMindDatabase.Load<Dictionary<string, object>>(reader, new MaxMindLoadOptions { IncludeAliasedNetworks = true });
+        foreach (var text in new[] { "::", "::1", "0:0:0:1::", "1.2.3.4", "::ffff:1.2.3.4", "::1.2.3.4" })
+        {
+            var address = IPAddress.Parse(text);
+            var expected = reader.Find<Dictionary<string, object>>(address) != null;
+            Assert.That(lookup.TryGetMatchValue(address, out _), Is.EqualTo(expected), text);
+            Assert.That(full.TryGetMatchValue(address, out _), Is.EqualTo(expected), $"{text}, aliases loaded");
+        }
+    }
+
     [Test]
     public void The_loader_skips_the_IPv4_aliases_by_default()
     {
