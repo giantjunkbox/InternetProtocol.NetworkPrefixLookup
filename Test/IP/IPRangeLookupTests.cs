@@ -361,15 +361,21 @@ public class IPRangeLookupTests
     }
 
     [Test]
-    public void Mapped_addresses_find_IPv4_ranges()
+    public void Mapped_addresses_find_IPv4_ranges_when_mapping_is_on()
     {
-        var lookup = Lookup("10.0.0.1-10.0.0.3", "::ffff:10.0.0.0-::ffff:10.0.0.9");
-        foreach (var form in Forms(lookup))
+        var plain = Lookup("10.0.0.1-10.0.0.3", "::ffff:10.0.0.0-::ffff:10.0.0.9");
+        foreach (var form in Forms(plain))
+            Assert.That(Match(form, "::ffff:10.0.0.2"), Is.EqualTo("::ffff:10.0.0.0-::ffff:10.0.0.9"), "looked up as given");
+
+        var map = new IPRangeLookup<TestRange, TestRangeAdapter, string>(new IPLookupOptions { MapIPv4MappedAddresses = true });
+        map.Add(R("10.0.0.1-10.0.0.3"), "10.0.0.1-10.0.0.3");
+        map.Add(R("::ffff:10.0.0.0-::ffff:10.0.0.9"), "::ffff:10.0.0.0-::ffff:10.0.0.9");
+        foreach (var form in Forms(map))
         {
             Assert.That(Match(form, "::ffff:10.0.0.2"), Is.EqualTo("10.0.0.1-10.0.0.3"));
-            Assert.That(Match(form, "::ffff:10.0.0.5"), Is.EqualTo("::ffff:10.0.0.0-::ffff:10.0.0.9"), "an IPv6 range when no IPv4 range holds it");
+            Assert.That(Match(form, "::ffff:10.0.0.5"), Is.Null, "the answer of 10.0.0.5");
             Assert.That(Match(form, "10.0.0.5"), Is.Null);
-            Assert.That(form.GetMatches(IPAddress.Parse("::ffff:10.0.0.2")).Select(m => m.Value), Is.EqualTo(new[] { "10.0.0.1-10.0.0.3", "::ffff:10.0.0.0-::ffff:10.0.0.9" }));
+            Assert.That(form.GetMatches(IPAddress.Parse("::ffff:10.0.0.2")).Select(m => m.Value), Is.EqualTo(new[] { "10.0.0.1-10.0.0.3" }));
         }
     }
 }

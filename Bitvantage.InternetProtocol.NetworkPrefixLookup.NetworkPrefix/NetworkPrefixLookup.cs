@@ -45,14 +45,14 @@ public readonly struct NetworkPrefixAdapter : IIPPrefixAdapter<NetworkPrefix>
 public class NetworkPrefixLookup<TValue> : IPPrefixLookup<NetworkPrefix, NetworkPrefixAdapter, TValue>
 {
     /// <summary>Creates an empty lookup.</summary>
-    /// <param name="options">Lookup options; the defaults map IPv4-mapped IPv6 addresses to IPv4.</param>
+    /// <param name="options">Lookup options; by default every address is looked up as given.</param>
     public NetworkPrefixLookup(IPLookupOptions? options = null) : base(options)
     {
     }
 
     /// <summary>Creates a lookup holding the given prefixes, loaded as one batch.</summary>
     /// <param name="items">The prefixes and their values.</param>
-    /// <param name="options">Lookup options; the defaults map IPv4-mapped IPv6 addresses to IPv4.</param>
+    /// <param name="options">Lookup options; by default every address is looked up as given.</param>
     /// <exception cref="ArgumentException">A prefix appears more than once.</exception>
     public NetworkPrefixLookup(IEnumerable<KeyValuePair<NetworkPrefix, TValue>> items, IPLookupOptions? options = null) : base(items, options)
     {
@@ -87,14 +87,14 @@ public class FrozenNetworkPrefixLookup<TValue> : FrozenIPPrefixLookup<NetworkPre
 public class NetworkPrefixLookup : NetworkPrefixLookup<NoValue>
 {
     /// <summary>Creates an empty set.</summary>
-    /// <param name="options">Lookup options; the defaults map IPv4-mapped IPv6 addresses to IPv4.</param>
+    /// <param name="options">Lookup options; by default every address is looked up as given.</param>
     public NetworkPrefixLookup(IPLookupOptions? options = null) : base(options)
     {
     }
 
     /// <summary>Creates a set holding the given prefixes, loaded as one batch.</summary>
     /// <param name="prefixes">The prefixes.</param>
-    /// <param name="options">Lookup options; the defaults map IPv4-mapped IPv6 addresses to IPv4.</param>
+    /// <param name="options">Lookup options; by default every address is looked up as given.</param>
     /// <exception cref="ArgumentException">A prefix appears more than once.</exception>
     public NetworkPrefixLookup(IEnumerable<NetworkPrefix> prefixes, IPLookupOptions? options = null)
         : base((prefixes ?? throw new ArgumentNullException(nameof(prefixes))).Select(p => KeyValuePair.Create(p, default(NoValue))), options)

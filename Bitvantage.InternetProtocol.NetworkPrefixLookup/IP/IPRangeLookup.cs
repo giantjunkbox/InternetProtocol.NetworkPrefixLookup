@@ -67,7 +67,7 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
     private bool _batch;
 
     /// <summary>Creates an empty lookup.</summary>
-    /// <param name="options">Lookup options; the defaults map IPv4-mapped IPv6 addresses to IPv4.</param>
+    /// <param name="options">Lookup options; by default every address is looked up as given.</param>
     public IPRangeLookup(IPLookupOptions? options = null)
     {
         Options = options ?? new IPLookupOptions();
@@ -76,7 +76,7 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
 
     /// <summary>Creates a lookup holding the given ranges, loaded as one batch.</summary>
     /// <param name="items">The ranges and their values.</param>
-    /// <param name="options">Lookup options; the defaults map IPv4-mapped IPv6 addresses to IPv4.</param>
+    /// <param name="options">Lookup options; by default every address is looked up as given.</param>
     /// <exception cref="ArgumentException">A range appears more than once.</exception>
     public IPRangeLookup(IEnumerable<KeyValuePair<TRange, TValue>> items, IPLookupOptions? options = null) : this(options)
     {
@@ -104,7 +104,7 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
     public bool TryGetMatch(IPAddress address, out TRange prefix, out TValue value)
     {
         var found = IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
-            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out var piece) || (v6 != 0 && _v6.TryGetMatch(new Bits128(v6), out prefix, out piece))
+            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out var piece)
             : _v6.TryGetMatch(new Bits128(v6), out prefix, out piece);
         value = piece.Value;
         return found;
@@ -114,7 +114,7 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
     public bool TryGetMatch(ReadOnlySpan<byte> address, out TRange prefix, out TValue value)
     {
         var found = IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
-            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out var piece) || (v6 != 0 && _v6.TryGetMatch(new Bits128(v6), out prefix, out piece))
+            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out var piece)
             : _v6.TryGetMatch(new Bits128(v6), out prefix, out piece);
         value = piece.Value;
         return found;
@@ -132,7 +132,7 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
     public bool TryGetMatchIPv6(UInt128 address, out TRange prefix, out TValue value)
     {
         var found = IPAddressBits.IsIPv4(address, _map, out var v4)
-            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out var piece) || _v6.TryGetMatch(new Bits128(address), out prefix, out piece)
+            ? _v4.TryGetMatch(new Bits32(v4), out prefix, out var piece)
             : _v6.TryGetMatch(new Bits128(address), out prefix, out piece);
         value = piece.Value;
         return found;
@@ -142,7 +142,7 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
     public bool TryGetMatchValue(IPAddress address, out TValue value)
     {
         var found = IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
-            ? _v4.TryGetMatchValue(new Bits32(v4), out var piece) || (v6 != 0 && _v6.TryGetMatchValue(new Bits128(v6), out piece))
+            ? _v4.TryGetMatchValue(new Bits32(v4), out var piece)
             : _v6.TryGetMatchValue(new Bits128(v6), out piece);
         value = piece.Value;
         return found;
@@ -152,7 +152,7 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
     public bool TryGetMatchValue(ReadOnlySpan<byte> address, out TValue value)
     {
         var found = IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
-            ? _v4.TryGetMatchValue(new Bits32(v4), out var piece) || (v6 != 0 && _v6.TryGetMatchValue(new Bits128(v6), out piece))
+            ? _v4.TryGetMatchValue(new Bits32(v4), out var piece)
             : _v6.TryGetMatchValue(new Bits128(v6), out piece);
         value = piece.Value;
         return found;
@@ -170,7 +170,7 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
     public bool TryGetMatchValueIPv6(UInt128 address, out TValue value)
     {
         var found = IPAddressBits.IsIPv4(address, _map, out var v4)
-            ? _v4.TryGetMatchValue(new Bits32(v4), out var piece) || _v6.TryGetMatchValue(new Bits128(address), out piece)
+            ? _v4.TryGetMatchValue(new Bits32(v4), out var piece)
             : _v6.TryGetMatchValue(new Bits128(address), out piece);
         value = piece.Value;
         return found;
@@ -199,20 +199,12 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
     /// <param name="prefix">The range.</param>
     public bool ContainsPrefix(TRange prefix) => Ranges.ContainsKey(RangePieces<TRange, TAdapter, TValue>.KeyOf(prefix));
 
-    /// <summary>
-    ///     Every stored range that contains an address, smallest first. An IPv4-mapped address that is looked up as IPv4
-    ///     gets the IPv4 ranges first and then the IPv6 ones.
-    /// </summary>
+    /// <summary>Every stored range that contains an address, smallest first.</summary>
     /// <param name="address">An IPv4 or IPv6 address.</param>
-    public IReadOnlyList<PrefixEntry<TRange, TValue>> GetMatches(IPAddress address)
-    {
-        if (!IPAddressBits.IsIPv4(address, _map, out var v4, out var v6))
-            return RangePieces<TRange, TAdapter, TValue>.Matches(_v6.GetMatches(new Bits128(v6)));
-        var matches = RangePieces<TRange, TAdapter, TValue>.Matches(_v4.GetMatches(new Bits32(v4)));
-        return v6 == 0 ? matches : [.. matches, .. RangePieces<TRange, TAdapter, TValue>.Matches(_v6.GetMatches(new Bits128(v6)))];
-    }
+    public IReadOnlyList<PrefixEntry<TRange, TValue>> GetMatches(IPAddress address) =>
+        RangePieces<TRange, TAdapter, TValue>.Matches(IPAddressBits.IsIPv4(address, _map, out var v4, out var v6) ? _v4.GetMatches(new Bits32(v4)) : _v6.GetMatches(new Bits128(v6)));
 
-    /// <summary>Writes every stored range that contains an address into a span, in the order of <see cref="GetMatches(IPAddress)" />.</summary>
+    /// <summary>Writes every stored range that contains an address into a span, smallest first.</summary>
     /// <param name="address">An IPv4 or IPv6 address.</param>
     /// <param name="destination">Where to write the matches. Overlapping ranges can need any number of entries.</param>
     /// <returns>The number of matches written.</returns>

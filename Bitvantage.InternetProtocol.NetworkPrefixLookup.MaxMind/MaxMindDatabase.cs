@@ -30,9 +30,9 @@ public sealed record MaxMindLoadOptions
     ///     database keeps them, and loads the networks under <c>::ffff:0:0/96</c>, <c>2001::/32</c> and
     ///     <c>2002::/16</c>, which it points at them. Every IPv4 network is then stored four more times, and every
     ///     address finds what <see cref="Reader.Find{T}(IPAddress,InjectableValues?)" /> finds. The default is false:
-    ///     only the IPv4 networks are stored, and with <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> on an
-    ///     IPv4-mapped address still finds its IPv4 network. IPv4-compatible addresses such as <c>::10.1.2.3</c>, and
-    ///     Teredo and 6to4 addresses, then find only the IPv6 networks that cover them.
+    ///     only the IPv4 networks are stored, and an IPv4-mapped address still finds its IPv4 network, because MaxMind
+    ///     lookups turn <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> on by default. IPv4-compatible addresses
+    ///     such as <c>::10.1.2.3</c>, and Teredo and 6to4 addresses, then find only the IPv6 networks that cover them.
     /// </summary>
     public bool IncludeAliasedNetworks { get; init; }
 
@@ -45,7 +45,10 @@ public sealed record MaxMindLoadOptions
     /// <summary>Values to inject while decoding records, as in <see cref="Reader.FindAll{T}" />.</summary>
     public InjectableValues? Injectables { get; init; }
 
-    /// <summary>Options for the lookup that is returned.</summary>
+    /// <summary>
+    ///     Options for the lookup that is returned. The default looks up IPv4-mapped IPv6 addresses as IPv4, as MaxMind's
+    ///     reader does.
+    /// </summary>
     public IPLookupOptions? LookupOptions { get; init; }
 }
 

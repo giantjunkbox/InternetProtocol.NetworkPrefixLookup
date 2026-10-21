@@ -288,10 +288,14 @@ caller's type costs no indirection.
   30% faster end to end than `TryWriteBytes`, and IPv6 through `TryWriteBytes` into a stack buffer. The span, `uint` and
   `UInt128` overloads skip `IPAddress` entirely. `IPAddressBits` exposes the conversions for adapter authors; its public
   conversions check the address family, and the lookups use unchecked copies after sorting the address by family.
-- **IPv4-mapped addresses** such as `::ffff:10.1.2.3` are looked up as IPv4 when `IPLookupOptions.MapIPv4MappedAddresses`
-  is on, the default. On a miss they are looked up again as IPv6, so that IPv6 prefixes inside `::ffff:0:0/96`, or
-  covering it, still answer; the second lookup costs only misses of mapped addresses. `GetMatches` returns the IPv4
-  matches and then the IPv6 ones. Prefixes are always stored and looked up as given.
+- **IPv4-mapped addresses** such as `::ffff:10.1.2.3` are looked up as the IPv4 address they hold when
+  `IPLookupOptions.MapIPv4MappedAddresses` is on, so that they always get the same answer as the IPv4 address. It is off
+  by default: the main use cases are routing tables and packet classification, where every address should be looked up
+  as given and a mapped address on the wire is malformed or crafted (RFC 4942, section 2.2). Turn it on for addresses
+  from dual-mode sockets. MaxMind lookups turn it on by default, because MaxMind's own reader answers mapped addresses
+  from the IPv4 networks. Prefixes are always stored and looked up as given, so with mapping on an IPv6 prefix inside
+  `::ffff:0:0/96` is stored and listed but answers no address lookup. The check costs one test of a flag on IPv6
+  lookups only.
 - **Batches** begin a batch on both tries. On commit each family publishes atomically, IPv4 first.
 - **`Version`** is the sum of the two tries' versions, which changes whenever either does.
 - **Concrete classes** such as `IPNetworkLookup<TValue>` fix the prefix and adapter types, and redeclare `Freeze` with
@@ -333,8 +337,8 @@ Each package defines an adapter struct and a read-write and frozen class pair. T
 - **MaxMind** adds `MaxMindDatabase.Load<T>`, which reads every network through `Reader.FindAll<T>` into one batch.
   MaxMind's IPv6 databases keep the IPv4 networks under `::/96`, which `FindAll` reports as IPv4, and point
   `::ffff:0:0/96`, `2001::/32` and `2002::/16` at them, so a full walk returns every IPv4 network four times. The loader
-  skips the three aliases by default; with IPv4-mapped addresses mapped, `::ffff:` addresses still find their IPv4
-  network. `IncludeAliasedNetworks` loads the aliases and stores each IPv4 network once more under `::/96`, for exact
+  skips the three aliases by default, and the lookup it returns maps IPv4-mapped addresses, so `::ffff:` addresses still
+  find their IPv4 network without a second copy of it. `IncludeAliasedNetworks` loads the aliases and stores each IPv4 network once more under `::/96`, for exact
   agreement with `Reader.Find` at every address, which the tests check at every network boundary of two MaxMind test
   databases, in IPv4, IPv4-compatible and IPv4-mapped form.
 
@@ -548,7 +552,7 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 | Test class | What it checks |
 | --- | --- |
 | `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 16-, 32- and 128-bit keys (16 is a test-only type), before and after removals; canonical shape; batches commit and discard; `Version`; lock-free readers during churn; lookups that overlap several writes; concurrent writers |
-| `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; IPv4-mapped addresses and their IPv6 fallback; address conversions; writes and batches; a reader during churn |
+| `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; IPv4-mapped addresses with mapping off and on; address conversions; writes and batches; a reader during churn |
 | `IP/IPRangeLookupTests` | Exact coverage, the fewest pieces, nested ranges and removal, random nested ranges against brute force, batches, writes that see the open batch, ranges read once, the frozen form |
 | `Adapters/AdapterTests` | Each adapter package in both forms; MaxMind databases against `Reader.Find`, at IPv4, IPv4-compatible and IPv4-mapped addresses |
 

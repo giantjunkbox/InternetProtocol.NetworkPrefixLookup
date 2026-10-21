@@ -45,14 +45,14 @@ public readonly struct IPNetworkAdapter : IIPPrefixAdapter<IPNetwork>
 public class IPNetworkLookup<TValue> : IPPrefixLookup<IPNetwork, IPNetworkAdapter, TValue>
 {
     /// <summary>Creates an empty lookup.</summary>
-    /// <param name="options">Lookup options; the defaults map IPv4-mapped IPv6 addresses to IPv4.</param>
+    /// <param name="options">Lookup options; by default every address is looked up as given.</param>
     public IPNetworkLookup(IPLookupOptions? options = null) : base(options)
     {
     }
 
     /// <summary>Creates a lookup holding the given networks, loaded as one batch.</summary>
     /// <param name="items">The networks and their values.</param>
-    /// <param name="options">Lookup options; the defaults map IPv4-mapped IPv6 addresses to IPv4.</param>
+    /// <param name="options">Lookup options; by default every address is looked up as given.</param>
     /// <exception cref="ArgumentException">A network appears more than once.</exception>
     public IPNetworkLookup(IEnumerable<KeyValuePair<IPNetwork, TValue>> items, IPLookupOptions? options = null) : base(items, options)
     {

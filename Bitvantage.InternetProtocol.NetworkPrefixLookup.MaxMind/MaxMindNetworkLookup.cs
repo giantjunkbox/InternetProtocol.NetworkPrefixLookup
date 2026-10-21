@@ -47,17 +47,20 @@ public readonly struct MaxMindNetworkAdapter : IIPPrefixAdapter<Network>
 /// <typeparam name="TValue">The value type; <see cref="NoValue" /> for a set of prefixes without values.</typeparam>
 public class MaxMindNetworkLookup<TValue> : IPPrefixLookup<Network, MaxMindNetworkAdapter, TValue>
 {
+    // MaxMind's IPv6 databases answer IPv4-mapped addresses from the IPv4 networks, so these lookups map them by default
+    private static readonly IPLookupOptions MapMapped = new() { MapIPv4MappedAddresses = true };
+
     /// <summary>Creates an empty lookup.</summary>
-    /// <param name="options">Lookup options; the defaults map IPv4-mapped IPv6 addresses to IPv4.</param>
-    public MaxMindNetworkLookup(IPLookupOptions? options = null) : base(options)
+    /// <param name="options">Lookup options; by default IPv4-mapped IPv6 addresses are looked up as IPv4, as MaxMind's reader does.</param>
+    public MaxMindNetworkLookup(IPLookupOptions? options = null) : base(options ?? MapMapped)
     {
     }
 
     /// <summary>Creates a lookup holding the given prefixes, loaded as one batch.</summary>
     /// <param name="items">The prefixes and their values.</param>
-    /// <param name="options">Lookup options; the defaults map IPv4-mapped IPv6 addresses to IPv4.</param>
+    /// <param name="options">Lookup options; by default IPv4-mapped IPv6 addresses are looked up as IPv4, as MaxMind's reader does.</param>
     /// <exception cref="ArgumentException">A prefix appears more than once.</exception>
-    public MaxMindNetworkLookup(IEnumerable<KeyValuePair<Network, TValue>> items, IPLookupOptions? options = null) : base(items, options)
+    public MaxMindNetworkLookup(IEnumerable<KeyValuePair<Network, TValue>> items, IPLookupOptions? options = null) : base(items, options ?? MapMapped)
     {
     }
 

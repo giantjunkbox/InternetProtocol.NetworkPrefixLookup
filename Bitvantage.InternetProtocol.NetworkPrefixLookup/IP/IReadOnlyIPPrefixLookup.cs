@@ -24,12 +24,17 @@ namespace Bitvantage.InternetProtocol;
 public sealed record IPLookupOptions
 {
     /// <summary>
-    ///     Looks up IPv4-mapped IPv6 addresses, such as <c>::ffff:10.1.2.3</c>, as the IPv4 address they hold. Dual-mode
-    ///     sockets report IPv4 clients this way. The default is true. Only address lookups are mapped; prefixes are
-    ///     stored and looked up as given. A mapped address that no IPv4 prefix contains is then looked up as IPv6, so
-    ///     IPv6 prefixes inside <c>::ffff:0:0/96</c> still answer, after the IPv4 prefixes.
+    ///     Looks up IPv4-mapped IPv6 addresses, such as <c>::ffff:10.1.2.3</c>, as the IPv4 address they hold, so that
+    ///     <c>::ffff:10.1.2.3</c> always gets the same answer as <c>10.1.2.3</c>. Turn this on for addresses from a
+    ///     dual-mode socket, which reports IPv4 clients this way. The default is false: every address is looked up as
+    ///     given, which suits packets, where a mapped address is malformed or crafted (RFC 4942, section 2.2). MaxMind
+    ///     lookups turn it on by default.
     /// </summary>
-    public bool MapIPv4MappedAddresses { get; init; } = true;
+    /// <remarks>
+    ///     Only address lookups are mapped; prefixes are stored and looked up as given. With this on, an IPv6 prefix
+    ///     inside <c>::ffff:0:0/96</c> is stored and listed, but no address lookup returns it.
+    /// </remarks>
+    public bool MapIPv4MappedAddresses { get; init; }
 }
 
 /// <summary>
@@ -39,9 +44,7 @@ public sealed record IPLookupOptions
 /// <remarks>
 ///     Methods named <c>Match</c> find the longest stored prefix that contains an address or prefix. <c>TryGetValue</c>
 ///     and <c>ContainsPrefix</c> match a prefix exactly. Enumeration returns the IPv4 prefixes and then the IPv6
-///     prefixes, each in address order with a shorter prefix before a longer one at the same address. With
-///     <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> on, an IPv4-mapped address matches IPv4 prefixes first and
-///     IPv6 prefixes after them.
+///     prefixes, each in address order with a shorter prefix before a longer one at the same address.
 /// </remarks>
 /// <typeparam name="TPrefix">The prefix type.</typeparam>
 /// <typeparam name="TValue">The value type.</typeparam>
@@ -116,18 +119,14 @@ public interface IReadOnlyIPPrefixLookup<TPrefix, TValue> : IReadOnlyCollection<
     /// <param name="prefix">The prefix.</param>
     bool ContainsPrefix(TPrefix prefix);
 
-    /// <summary>
-    ///     Every stored prefix that contains an address, longest first. An IPv4-mapped address that is looked up as IPv4
-    ///     gets the IPv4 prefixes first and then the IPv6 ones.
-    /// </summary>
+    /// <summary>Every stored prefix that contains an address, longest first.</summary>
     /// <param name="address">An IPv4 or IPv6 address.</param>
     IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(IPAddress address);
 
     /// <summary>Writes every stored prefix that contains an address into a span, in the order of <see cref="GetMatches(IPAddress)" />.</summary>
     /// <param name="address">An IPv4 or IPv6 address.</param>
     /// <param name="destination">
-    ///     Where to write the matches. For prefixes, 129 entries always suffice, or 162 for an IPv4-mapped address that is
-    ///     looked up as IPv4; overlapping ranges can need any number.
+    ///     Where to write the matches. For prefixes, 129 entries always suffice; overlapping ranges can need any number.
     /// </param>
     /// <returns>The number of matches written.</returns>
     /// <exception cref="ArgumentException">The destination is too small.</exception>

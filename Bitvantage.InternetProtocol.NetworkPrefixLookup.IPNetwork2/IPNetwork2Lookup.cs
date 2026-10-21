@@ -47,14 +47,14 @@ public readonly struct IPNetwork2Adapter : IIPPrefixAdapter<IPNetwork2>
 public class IPNetwork2Lookup<TValue> : IPPrefixLookup<IPNetwork2, IPNetwork2Adapter, TValue>
 {
     /// <summary>Creates an empty lookup.</summary>
-    /// <param name="options">Lookup options; the defaults map IPv4-mapped IPv6 addresses to IPv4.</param>
+    /// <param name="options">Lookup options; by default every address is looked up as given.</param>
     public IPNetwork2Lookup(IPLookupOptions? options = null) : base(options)
     {
     }
 
     /// <summary>Creates a lookup holding the given prefixes, loaded as one batch.</summary>
     /// <param name="items">The prefixes and their values.</param>
-    /// <param name="options">Lookup options; the defaults map IPv4-mapped IPv6 addresses to IPv4.</param>
+    /// <param name="options">Lookup options; by default every address is looked up as given.</param>
     /// <exception cref="ArgumentException">A prefix appears more than once.</exception>
     public IPNetwork2Lookup(IEnumerable<KeyValuePair<IPNetwork2, TValue>> items, IPLookupOptions? options = null) : base(items, options)
     {

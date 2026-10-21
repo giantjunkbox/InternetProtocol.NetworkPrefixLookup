@@ -441,7 +441,7 @@ Version 3 implements this interface. Where it differs from the proposal above:
 | Key types | Only `Bits32` and `Bits128` ship, and key widths are limited to 128 bits. `Bits192` was for context such as a VRF, which one lookup per context serves better: in front of the address it would cost a trie level per 8 bits and waste the shortcut table and the frozen root. `Bits64` was for keys such as MAC address prefixes, which come in a few fixed lengths that a hash table handles |
 | Read-only core interface | Adds `TryGetValue(bits, length, out prefix, out value)`, an exact lookup that also returns the prefix object |
 | Frozen core | `FrozenBitTrie` keeps no nodes; parent links answer the other queries, as proposed. It exposes `Options` and `Bytes`. Without `RootBits`, the root follows the number of prefixes instead of always being 16 or 18 bits, so small and empty tables stay small |
-| IP layer options | `IPLookupOptions.MapIPv4MappedAddresses`, on by default, answers the open question below. A mapped address that no IPv4 prefix contains is then looked up as IPv6, and `GetMatches` returns its IPv4 matches and then its IPv6 ones |
+| IP layer options | `IPLookupOptions.MapIPv4MappedAddresses` looks up an IPv4-mapped address as the IPv4 address it holds. The owner chose to leave it off by default, since routing tables and packet classification are the main use cases, and to have MaxMind lookups turn it on by default |
 | Address conversions | `IPAddressBits.ToIPv4Bits` and `ToIPv6Bits` throw `ArgumentException` for an address of the other family |
 | IP layer batches | `IPPrefixLookup.BeginBatch` returns a `Batch` that publishes each family atomically, IPv4 first |
 | Frozen IP lookups | A frozen class's protected constructor takes the read-write lookup to copy, so adapter packages can define their own pairs |
@@ -452,11 +452,5 @@ Version 3 implements this interface. Where it differs from the proposal above:
 
 ## Open questions
 
-- **Package names.** Version 3 ships the core, the IP layer and the `IPNetwork` adapter as one package, as the study
-  recommends, and names each adapter package after the core with a suffix, such as
-  `Bitvantage.InternetProtocol.NetworkPrefixLookup.MaxMind`. Open to review.
-- **IPv4-mapped IPv6 addresses**, such as `::ffff:10.1.2.3`. Version 3 looks them up as IPv4 by default, through
-  `IPLookupOptions.MapIPv4MappedAddresses`, and the MaxMind loader skips the aliased copies of the IPv4 networks. The
-  default is open to review.
 - **Whether `Add` should exist** next to `TryAdd`, `AddOrUpdate` and `GetOrAdd`. It is there for familiarity with
   `Dictionary`.

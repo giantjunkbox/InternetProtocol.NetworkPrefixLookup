@@ -171,6 +171,9 @@ public class AdapterTests
         // by default the aliases are skipped, and IPv4-mapped addresses are looked up as IPv4
         var lean = MaxMindDatabase.Load<Dictionary<string, object>>(DataPath(file));
         Assert.That(lean.Count, Is.LessThanOrEqualTo(full.Count));
+        Assert.That(lean.Options.MapIPv4MappedAddresses, "MaxMind lookups map by default");
+        Assert.That(new MaxMindNetworkLookup<string>().Options.MapIPv4MappedAddresses);
+        Assert.That(new IPNetworkLookup<string>().Options.MapIPv4MappedAddresses, Is.False, "other lookups do not");
 
         var failures = new List<string>();
         var found = 0;

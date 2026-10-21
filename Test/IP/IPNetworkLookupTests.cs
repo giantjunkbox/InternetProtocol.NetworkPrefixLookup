@@ -199,36 +199,41 @@ public class IPNetworkLookupTests
     }
 
     [Test]
-    public void IPv4_mapped_addresses_are_looked_up_as_IPv4_by_default()
+    public void Addresses_are_looked_up_as_given_unless_mapping_is_on()
     {
-        var lookup = Lookup("10.0.0.0/8", "::ffff:0:0/96");
         var mapped = IPAddress.Parse("::ffff:10.1.2.3");
-        foreach (var form in Forms(lookup))
+
+        // by default a mapped address is an IPv6 address like any other
+        var plain = Lookup("10.0.0.0/8", "::ffff:0:0/96");
+        Assert.That(plain.Options.MapIPv4MappedAddresses, Is.False);
+        foreach (var form in Forms(plain))
+        {
+            Assert.That(Match(form, "::ffff:10.1.2.3"), Is.EqualTo("::ffff:0:0/96"));
+            Assert.That(form.TryGetMatchValueIPv6(IPAddressBits.ToIPv6Bits(mapped), out var value) && value == "::ffff:0:0/96");
+            Assert.That(Match(form, "10.1.2.3"), Is.EqualTo("10.0.0.0/8"));
+        }
+
+        // with mapping on, it gets exactly the answer of the IPv4 address it holds, in every form
+        var map = new IPNetworkLookup<string>(new IPLookupOptions { MapIPv4MappedAddresses = true });
+        map.Add(N("10.0.0.0/8"), "10.0.0.0/8");
+        map.Add(N("::ffff:0:0/96"), "::ffff:0:0/96");
+        map.Add(N("::/0"), "::/0");
+        foreach (var form in new IReadOnlyIPPrefixLookup<IPNetwork, string>[] { map, map.Freeze(), map.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }) })
         {
             Assert.That(Match(form, "::ffff:10.1.2.3"), Is.EqualTo("10.0.0.0/8"));
             Assert.That(form.TryGetMatch(mapped.GetAddressBytes(), out _, out var value) && value == "10.0.0.0/8");
             Assert.That(form.TryGetMatchIPv6(IPAddressBits.ToIPv6Bits(mapped), out _, out value) && value == "10.0.0.0/8");
+            Assert.That(form.GetMatches(mapped).Select(m => m.Value), Is.EqualTo(new[] { "10.0.0.0/8" }));
 
-            // with no IPv4 match, a mapped address is looked up as IPv6; an IPv4 address is not
+            // no IPv4 prefix holds 11.1.2.3, so neither form matches; the IPv6 prefixes never answer a mapped address
             var other = IPAddress.Parse("::ffff:11.1.2.3");
-            Assert.That(Match(form, "::ffff:11.1.2.3"), Is.EqualTo("::ffff:0:0/96"), "no IPv4 prefix contains it");
-            Assert.That(form.TryGetMatchValue(other.GetAddressBytes(), out value) && value == "::ffff:0:0/96");
-            Assert.That(form.TryGetMatchValueIPv6(IPAddressBits.ToIPv6Bits(other), out value) && value == "::ffff:0:0/96");
+            Assert.That(Match(form, "::ffff:11.1.2.3"), Is.Null);
+            Assert.That(form.TryGetMatchValue(other.GetAddressBytes(), out _), Is.False);
+            Assert.That(form.TryGetMatchValueIPv6(IPAddressBits.ToIPv6Bits(other), out _), Is.False);
             Assert.That(Match(form, "11.1.2.3"), Is.Null);
-
-            Assert.That(form.GetMatches(mapped).Select(m => m.Value), Is.EqualTo(new[] { "10.0.0.0/8", "::ffff:0:0/96" }), "IPv4 first");
-            var span = new PrefixEntry<IPNetwork, string>[2];
-            Assert.That(form.GetMatches(mapped, span), Is.EqualTo(2));
-            Assert.That(span.Select(m => m.Value), Is.EqualTo(new[] { "10.0.0.0/8", "::ffff:0:0/96" }));
-            Assert.Throws<ArgumentException>(() => form.GetMatches(mapped, new PrefixEntry<IPNetwork, string>[1]));
-            Assert.That(form.GetMatches(IPAddress.Parse("10.1.2.3")).Select(m => m.Value), Is.EqualTo(new[] { "10.0.0.0/8" }));
+            Assert.That(form.ContainsPrefix(N("::ffff:0:0/96")), "still stored");
+            Assert.That(Match(form, "2001:db8::1"), Is.EqualTo("::/0"), "other IPv6 addresses are unaffected");
         }
-
-        var unmapped = new IPNetworkLookup<string>(new IPLookupOptions { MapIPv4MappedAddresses = false });
-        unmapped.Add(N("10.0.0.0/8"), "10.0.0.0/8");
-        unmapped.Add(N("::ffff:0:0/96"), "::ffff:0:0/96");
-        Assert.That(Match(unmapped, "::ffff:10.1.2.3"), Is.EqualTo("::ffff:0:0/96"));
-        Assert.That(Match(unmapped.Freeze(), "::ffff:10.1.2.3"), Is.EqualTo("::ffff:0:0/96"));
     }
 
     [Test]
