@@ -59,7 +59,8 @@ foreach (var match in routes.GetMatches(IPAddress.Parse("10.1.2.3")))
 | `TryGetValue(network, out value)`, `ContainsPrefix(network)` | Exactly this network, as a dictionary would |
 | `ContainsMatch(address)` | Whether any stored network contains an address |
 
-`Count` and enumeration cover both address families: the IPv4 networks, then the IPv6 ones, each in address order.
+`Count` and enumeration cover both address families: the IPv4 networks, then the IPv6 ones, each in address order. The
+scope ID of an IPv6 address, as in `fe80::1%7`, is ignored, so link-local rules cannot be told apart by interface.
 
 ### Addresses from dual-mode sockets
 
@@ -99,6 +100,11 @@ using (var batch = routes.BeginBatch())
 Each address family commits all at once, IPv4 a moment before IPv6. Constructing a lookup from a sequence loads it as
 one batch.
 
+A batch holds the writer lock until it ends, so end it promptly: other threads' writes wait meanwhile. The lock belongs
+to the thread that started the batch, so a batch cannot span an `await`. Ending it on another thread throws and leaves
+it open. If a write inside the batch throws, `Commit` discards the batch and throws, since the write may have left it
+half done.
+
 `Version` changes with every published change, so cached results can be checked with one comparison. Read it before the
 lookups it is to vouch for.
 
@@ -117,7 +123,9 @@ To change a frozen table, change the read-write one, freeze it again and swap th
 next lookup. Freezing makes writers wait while it runs, but not readers.
 
 The default layout is the fastest for routing tables. The compressed layout uses less memory, and is the better choice
-when prefixes are scattered across the address space, such as random /25 to /32 blocks:
+when prefixes are scattered across the address space, such as random /25 to /32 blocks or IPv6 host routes. For those
+the default layout can grow very large: 100,000 random IPv6 /128 prefixes take 1.3 GB leaf-pushed against 53 MB
+compressed, and from about 650,000 the default layout refuses to freeze at all.
 
 ```csharp
 var small = routes.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });
@@ -143,7 +151,12 @@ ranges.TryGetMatchValue(IPAddress.Parse("192.168.0.50"), out name);     // "offi
 
 Nested ranges work as expected: an address in both gets the inner range, and removing the inner range uncovers the
 outer one. Partly overlapping ranges have no single right answer, so split them into ranges that nest or do not touch.
-Range lookups are as fast as prefix lookups, and have the same read-write and frozen forms.
+Each range is stored as the fewest CIDR blocks that cover it, at most 62 for IPv4 and 254 for IPv6, and a lookup is a
+prefix lookup on those blocks. Range lookups have the same read-write and frozen forms.
+
+Ranges that split into the same block, such as many ranges starting at one address, share it, and every write to that
+block costs time in proportion to the number of ranges sharing it: adding 16,000 such ranges took over a minute. Do not
+let untrusted users add ranges without a limit.
 
 For a range type of your own, implement `IIPRangeAdapter<TRange>`, which returns a range's first and last address, on a
 struct, and use `IPRangeLookup<TRange, TAdapter, TValue>`.
@@ -163,6 +176,10 @@ one about 180 times as fast. The loader stores each IPv4 network once. MaxMind's
 addresses from the IPv4 data, through IPv4-compatible, 6to4 and Teredo aliases. Set
 `MaxMindLoadOptions.IncludeAliasedNetworks` to load those too, and every address then gets the answer
 `Reader.Find` gives, at the cost of storing each IPv4 network four more times.
+
+Load only databases you trust. A database's search tree can point many branches at one subtree, as MaxMind's aliases do,
+and a hostile file of a few hundred bytes can expand into millions of networks. The records are shared between networks
+and must not be changed.
 
 ## Your own network type
 

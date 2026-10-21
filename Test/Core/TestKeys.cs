@@ -45,6 +45,28 @@ public readonly record struct Bits16(ushort Value) : IBitKey<Bits16>
     }
 }
 
+/// <summary>An 8-bit key, the narrowest the trie takes, and the only width without shortcut blocks.</summary>
+public readonly record struct Bits8(byte Value) : IBitKey<Bits8>
+{
+    public static int Width => 8;
+
+    private static byte Mask(int length) => (byte)(0xFF00 >> length);
+
+    public static Bits8 Truncate(in Bits8 key, int length) => new((byte)(key.Value & Mask(length)));
+
+    public static Bits8 MaskFor(int length) => new(Mask(length));
+
+    public static bool MatchesUnderMask(in Bits8 key, in Bits8 bits, in Bits8 mask) => (key.Value & mask.Value) == bits.Value;
+
+    public static int GetBits(in Bits8 key, int offset, int count) => (int)(((uint)key.Value << (24 + offset)) >> (32 - count));
+
+    public static Bits8 SetBits(in Bits8 key, int offset, int count, int value)
+    {
+        var mask = (0xFFu >> (8 - count)) << (8 - offset - count);
+        return new((byte)((key.Value & ~mask) | (((uint)value << (8 - offset - count)) & mask)));
+    }
+}
+
 /// <summary>A key wider than the trie supports, to check that it is refused. Only its width is ever read.</summary>
 public readonly struct Bits136 : IBitKey<Bits136>
 {

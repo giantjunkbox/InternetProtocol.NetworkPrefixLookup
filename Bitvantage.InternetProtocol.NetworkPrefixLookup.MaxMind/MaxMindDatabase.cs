@@ -32,7 +32,9 @@ public sealed record MaxMindLoadOptions
     ///     address finds what <see cref="Reader.Find{T}(IPAddress,InjectableValues?)" /> finds. The default is false:
     ///     only the IPv4 networks are stored, and an IPv4-mapped address still finds its IPv4 network, because MaxMind
     ///     lookups turn <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> on by default. IPv4-compatible addresses
-    ///     such as <c>::10.1.2.3</c>, and Teredo and 6to4 addresses, then find only the IPv6 networks that cover them.
+    ///     such as <c>::10.1.2.3</c>, and Teredo and 6to4 addresses, then find only the IPv6 networks that cover them. A
+    ///     database built without MaxMind's aliases that holds its own data under <c>2001::/32</c> or <c>2002::/16</c>
+    ///     loses that data unless this is set, because the loader takes those networks for aliases.
     /// </summary>
     public bool IncludeAliasedNetworks { get; init; }
 
@@ -70,8 +72,15 @@ public static class MaxMindDatabase
     /// <param name="options">Load options; by default the aliases of the IPv4 networks are skipped.</param>
     /// <typeparam name="T">The record type, as for <see cref="Reader.Find{T}(IPAddress,InjectableValues?)" />.</typeparam>
     /// <remarks>
-    ///     Records come from <see cref="Reader.FindAll{T}" />, which reuses decoded records from a cache, so networks with
-    ///     the same record often share one object. Do not change the records.
+    ///     <para>
+    ///         Records come from <see cref="Reader.FindAll{T}" />, which reuses decoded records from a cache, so networks
+    ///         with the same record often share one object. Do not change the records.
+    ///     </para>
+    ///     <para>
+    ///         Load only databases you trust. The loader walks every path of the search tree, and a tree that points many
+    ///         branches at one subtree, as MaxMind's aliases do, yields that subtree's networks once per path: a hostile
+    ///         file of a few hundred bytes can expand into millions of networks.
+    ///     </para>
     /// </remarks>
     public static MaxMindNetworkLookup<T> Load<T>(Reader reader, MaxMindLoadOptions? options = null) where T : class
     {

@@ -147,7 +147,7 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IPRangeLookupBase<TRange,
 
     /// <summary>Returns the value of a range, adding it with a value from <paramref name="valueFactory" /> if absent.</summary>
     /// <param name="range">The range.</param>
-    /// <param name="valueFactory">Creates the value, called only when the range is absent, while other writers wait.</param>
+    /// <param name="valueFactory">Creates the value, called only when the range is absent, while other writers wait. It must not write to this lookup.</param>
     public TValue GetOrAdd(TRange range, Func<TRange, TValue> valueFactory)
     {
         ArgumentNullException.ThrowIfNull(valueFactory);

@@ -112,7 +112,7 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IPPrefixLookupBase<TPre
 
     /// <summary>Returns the value of a prefix, adding it with a value from <paramref name="valueFactory" /> if absent.</summary>
     /// <param name="prefix">The prefix; host bits after its length are ignored.</param>
-    /// <param name="valueFactory">Creates the value, called only when the prefix is absent, while other writers wait.</param>
+    /// <param name="valueFactory">Creates the value, called only when the prefix is absent, while other writers wait. It must not write to this lookup.</param>
     public TValue GetOrAdd(TPrefix prefix, Func<TPrefix, TValue> valueFactory)
     {
         IPAddressBits.ThrowIfNull(prefix);

@@ -392,6 +392,21 @@ public class IPRangeLookupTests
         Assert.That(Match(lookup, "10.2.0.5"), Is.EqualTo("later"));
     }
 
+    [Test(Description = "Partly overlapping ranges have no single right answer; the documented rule is that the range whose covering piece is longer wins.")]
+    public void Partly_overlapping_ranges_go_to_the_longer_covering_piece()
+    {
+        var lookup = Lookup("10.0.0.0-10.0.0.200", "10.0.0.100-10.0.0.255");
+        foreach (var form in Forms(lookup))
+        {
+            // 10.0.0.150: the first range's piece is 10.0.0.128/26, the second's 10.0.0.128/25
+            Assert.That(Match(form, "10.0.0.150"), Is.EqualTo("10.0.0.0-10.0.0.200"));
+            // 10.0.0.120: the first range's piece is 10.0.0.0/25, the second's 10.0.0.112/28
+            Assert.That(Match(form, "10.0.0.120"), Is.EqualTo("10.0.0.100-10.0.0.255"));
+            // GetMatches lists the smaller range first, so its first entry can differ from TryGetMatch
+            Assert.That(form.GetMatches(IPAddress.Parse("10.0.0.150")).Select(m => m.Value), Is.EqualTo(new[] { "10.0.0.100-10.0.0.255", "10.0.0.0-10.0.0.200" }));
+        }
+    }
+
     [Test]
     public void Mapped_addresses_find_IPv4_ranges_when_mapping_is_on()
     {

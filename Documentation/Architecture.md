@@ -571,10 +571,10 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 
 | Test class | What it checks |
 | --- | --- |
-| `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 16-, 32- and 128-bit keys (16 is a test-only type), before and after removals; canonical shape; batches commit and discard; `Version`; lock-free readers during churn; lookups that overlap several writes; concurrent writers |
-| `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; IPv4-mapped addresses with mapping off and on; address conversions; writes and batches; a reader during churn |
-| `IP/IPRangeLookupTests` | Exact coverage, the fewest pieces, nested ranges and removal, random nested ranges against brute force, batches, writes that see the open batch, ranges read once, the frozen form |
-| `Adapters/AdapterTests` | Each adapter package in both forms; MaxMind databases against `Reader.Find`, at IPv4, IPv4-compatible and IPv4-mapped addresses |
+| `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 8-, 16-, 32- and 128-bit keys (8 and 16 are test-only types; 8 has no shortcut blocks), before and after removals; canonical shape; batches commit and discard; a commit that throws, a batch ended on another thread, a batch in which a write threw; `Version`; frozen root sizes; lock-free readers during churn; lookups that overlap several writes; concurrent writers |
+| `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; IPv4-mapped addresses with mapping off and on; address conversions; writes and batches, including failed and wrong-thread batches; freezing both families at one moment; one freeze layout for both families; a reader during churn |
+| `IP/IPRangeLookupTests` | Exact coverage, the fewest pieces, nested ranges and removal, partly overlapping ranges, random nested ranges against brute force, batches, writes that see the open batch, ranges read once, failed and wrong-thread batches, the frozen form |
+| `Adapters/AdapterTests` | Each adapter package in both forms; MaxMind databases against `Reader.Find`, at IPv4, IPv4-compatible and IPv4-mapped addresses, and a hand-built database with a record above the IPv4 networks |
 
 ## Limitations
 
@@ -585,11 +585,29 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
   because a lookup walks several levels and backtracks: on the version 2 benchmark data, 154 ms per million lookups
   against 29 ms in an earlier session. Freeze such tables, with the compressed layout if their prefixes are scattered.
 - **Leaf-pushed frozen tables grow with scattered prefixes**: 105 MB for the 96,944 random prefixes of the version 2
-  benchmark, where the compressed layout needs 8 MB.
-- **Freezing blocks writers** for its duration: 0.2 to 1 second on the real tables.
+  benchmark, where the compressed layout needs 8 MB. IPv6 host routes are worse: 100,000 random /128 prefixes take
+  1.3 GB leaf-pushed against 53 MB compressed, and from about 650,000 the leaf-pushed builder refuses, because its tables
+  would exceed 2^31 entries. The security review measured these.
+- **Freezing blocks writers** for its duration: 220 ms leaf-pushed and 240 ms compressed for the real IPv4 table, as
+  measured under Building the real tables.
+- **Ranges that share a piece** cost time in proportion to their number at every write to that piece, because the
+  piece's claims are an array rebuilt by each write: adding 16,000 ranges that share one piece took 92 seconds, a
+  `Remove` 25 ms, and `GetMatches` lists all of them. This breaks the bounded-write rule for ranges; until the claims
+  move to a sorted structure, do not let untrusted callers add ranges without a limit. The range list itself costs a
+  logarithmic number of steps per write.
+- **Close pairs of long prefixes use more memory**: two /128 prefixes that share 120 bits need a chain of 15 nodes, so
+  100,000 such pairs held 281 MB where 200,000 random /128 prefixes held 17 MB. Each write still does bounded work.
+- **Batches cannot span an await**: the writer lock belongs to the thread that took it. Ending a batch on another thread
+  throws and leaves it open, and a batch that is never ended blocks every writer.
+- **A range lookup's `Clear`** publishes the IPv4 pieces, the IPv6 pieces and the range list one after another, so a
+  reader can briefly see the pieces gone while the ranges are still listed.
+- **MaxMind databases must be trusted**: the loader walks every path of the search tree, and a hostile file whose tree
+  shares subtrees can expand into exponentially many networks. A database whose own data covers Teredo or 6to4
+  addresses loses it by default, because the loader takes those networks for MaxMind's aliases.
 - **Small frozen leaf-pushed tables** of 32 prefixes or more keep the full 16-bit root, 256 KB, for speed. Set
   `RootBits = 8` or use the compressed layout when many small frozen tables must be kept, such as one per VRF.
-- **Batches are atomic per address family**, not across both.
+- **Batches are atomic per address family**, not across both. A frozen copy does hold both families at one moment.
+- **IPv6 scope IDs are ignored**, so `fe80::1%7` and `fe80::1%9` are one key.
 - **Enumeration is not a snapshot** while writes run.
 
 The known issues of version 2, listed in [Architecture-v2.md](Architecture-v2.md#known-issues), do not apply: the code

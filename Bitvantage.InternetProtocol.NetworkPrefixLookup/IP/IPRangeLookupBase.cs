@@ -172,7 +172,10 @@ public abstract class IPRangeLookupBase<TRange, TAdapter, TValue, TForm> : IRead
     public IReadOnlyList<PrefixEntry<TRange, TValue>> GetMatches(IPAddress address) =>
         RangePieces<TRange, TAdapter, TValue>.Matches(IPAddressBits.IsIPv4(address, _map, out var v4, out var v6) ? _ipv4.GetMatches(new Bits32(v4)) : _ipv6.GetMatches(new Bits128(v6)));
 
-    /// <summary>Writes every stored range that contains an address into a span, smallest first.</summary>
+    /// <summary>
+    ///     Writes every stored range that contains an address into a span, smallest first. The matches are gathered in a
+    ///     list first, so unlike the prefix lookups' form this allocates.
+    /// </summary>
     /// <param name="address">An IPv4 or IPv6 address.</param>
     /// <param name="destination">Where to write the matches. Overlapping ranges can need any number of entries.</param>
     /// <returns>The number of matches written.</returns>

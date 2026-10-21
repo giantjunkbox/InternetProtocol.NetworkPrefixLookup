@@ -23,7 +23,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\Bitvantage.InternetProtocol.NetworkPrefixLookup\Bitvantage.InternetProtocol.NetworkPrefixLookup.csproj" />
-		<PackageReference Include="IPAddressRange" Version="6.3.*" />
+		<PackageReference Include="IPAddressRange" Version="6.3.0" />
 	</ItemGroup>
 
 	<ItemGroup>

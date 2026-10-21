@@ -133,6 +133,9 @@ public class BitTrieTests
         AssertQueries(trie.Freeze(), reference, prefixes, keys, "frozen after removal");
     }
 
+    [Test(Description = "8-bit keys have no shortcut blocks, so lookups start at the root; an 8-bit key holds at most 511 prefixes.")]
+    public void Bits8_queries_match_the_reference() => AssertAllForms<Bits8>(300, 8);
+
     [Test]
     public void Bits16_queries_match_the_reference() => AssertAllForms<Bits16>(3000, 16);
 
@@ -392,6 +395,38 @@ public class BitTrieTests
 
         var large = Build(TestKeys.RandomPrefixes<Bits32>(20_000, 10), Enumerable.Range(0, 20_000));
         Assert.That(large.Freeze().Bytes, Is.GreaterThan(1L << 18), "a full 16-bit root from 32 prefixes");
+    }
+
+    [Test(Description = "The default frozen root follows the number of prefixes; root entries take 4 bytes.")]
+    public void Frozen_roots_follow_the_number_of_prefixes()
+    {
+        static BitTrie<Bits32, int, int> Octets(int count)
+        {
+            var trie = new BitTrie<Bits32, int, int>();
+            for (var i = 0; i < count; i++)
+                trie.Add(new Bits32((uint)i << 24), 8, i, i);
+            return trie;
+        }
+
+        static BitTrie<Bits32, int, int> Random24s(int count)
+        {
+            var trie = new BitTrie<Bits32, int, int>();
+            var random = new Random(41);
+            while (trie.Count < count)
+                trie.TryAdd(new Bits32((uint)random.Next() << 8), 24, 0, 0);
+            return trie;
+        }
+
+        // leaf-pushed: an 8-bit root below 32 prefixes, the full 16 bits from 32
+        Assert.That(Octets(31).Freeze().Bytes, Is.LessThan(16 << 10));
+        Assert.That(Octets(32).Freeze().Bytes, Is.GreaterThanOrEqualTo(4 << 16));
+
+        // compressed: about 16 root entries per prefix, from 8 bits up to 18
+        var compressed = new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed };
+        Assert.That(Random24s(10).Freeze(compressed).Bytes, Is.LessThan(16 << 10), "8 bits");
+        var thousand = Random24s(1000).Freeze(compressed).Bytes;
+        Assert.That(thousand, Is.GreaterThanOrEqualTo(4 << 14), "14 bits");
+        Assert.That(thousand, Is.LessThan(4 << 18), "less than the full 18 bits");
     }
 
     [Test(Description = "Readers always find a /32 that is never removed, while a writer adds and removes every prefix on its path.")]

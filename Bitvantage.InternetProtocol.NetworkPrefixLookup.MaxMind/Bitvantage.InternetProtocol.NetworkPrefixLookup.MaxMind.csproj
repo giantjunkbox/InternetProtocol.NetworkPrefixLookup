@@ -23,7 +23,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\Bitvantage.InternetProtocol.NetworkPrefixLookup\Bitvantage.InternetProtocol.NetworkPrefixLookup.csproj" />
-		<PackageReference Include="MaxMind.Db" Version="5.2.*" />
+		<PackageReference Include="MaxMind.Db" Version="5.2.0" />
 	</ItemGroup>
 
 	<ItemGroup>

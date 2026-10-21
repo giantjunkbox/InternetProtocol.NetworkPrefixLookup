@@ -654,7 +654,8 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     /// <param name="length">The prefix length.</param>
     /// <param name="prefix">The prefix object to store if the prefix is added.</param>
     /// <param name="valueFactory">
-    ///     Creates the value from the prefix object, called only when the prefix is absent, while other writers wait.
+    ///     Creates the value from the prefix object, called only when the prefix is absent, while other writers wait. It
+    ///     must not write to this trie.
     /// </param>
     public TValue GetOrAdd(in TKey bits, int length, TPrefix prefix, Func<TPrefix, TValue> valueFactory)
     {

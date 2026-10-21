@@ -30,6 +30,11 @@ namespace Bitvantage.InternetProtocol;
 ///     <para>
 ///         Bit operations past the end of the key must treat the missing bits as zeros.
 ///     </para>
+///     <para>
+///         <see cref="GetBits" /> and <see cref="GetTopBits" /> must return a value from 0 to 2^<c>count</c> - 1. The
+///         tries index their bit sets and tables with these values without bounds checks, so a key type that returns a
+///         negative or wider value, through a sign extension for example, corrupts memory.
+///     </para>
 /// </remarks>
 /// <typeparam name="TSelf">The implementing key type.</typeparam>
 public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
