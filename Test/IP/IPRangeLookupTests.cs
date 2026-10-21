@@ -327,6 +327,40 @@ public class IPRangeLookupTests
     }
 
     [Test]
+    public void A_commit_that_throws_leaves_the_listed_ranges_matching_the_found_ones()
+    {
+        var lookup = Lookup("10.0.0.0-10.0.0.9");
+
+        // the IPv4 half fails: nothing is published, the IPv6 half included
+        var restore = Test.Core.CommitFaults.BreakNextCommit(Test.Core.CommitFaults.Field(lookup, "_v4"));
+        var batch = lookup.BeginBatch();
+        lookup.Add(R("10.1.0.0-10.2.255.255"), "v4");
+        lookup.Add(R("2001:db8::-2001:db8::ff"), "v6");
+        Assert.Throws<NullReferenceException>(() => batch.Commit());
+        restore();
+        Assert.That(lookup.Select(e => e.Value), Is.EqualTo(new[] { "10.0.0.0-10.0.0.9" }));
+        Assert.That(Match(lookup, "10.1.2.3"), Is.Null);
+        Assert.That(Match(lookup, "2001:db8::1"), Is.Null);
+
+        // the IPv6 half fails: the IPv4 changes stay published, and the listed ranges match
+        restore = Test.Core.CommitFaults.BreakNextCommit(Test.Core.CommitFaults.Field(lookup, "_v6"));
+        batch = lookup.BeginBatch();
+        lookup.Add(R("10.1.0.0-10.2.255.255"), "v4");
+        lookup.Add(R("2001:db8::-2001:db8:ffff:ffff:ffff:ffff:ffff:ffff"), "v6");
+        lookup.Add(R("2001:db9::-2001:db9:ffff:ffff:ffff:ffff:ffff:ffff"), "v6 too");
+        Assert.Throws<NullReferenceException>(() => batch.Commit());
+        restore();
+        Assert.That(lookup.Select(e => e.Value), Is.EqualTo(new[] { "10.0.0.0-10.0.0.9", "v4" }));
+        Assert.That(Match(lookup, "10.1.2.3"), Is.EqualTo("v4"));
+        Assert.That(Match(lookup, "2001:db8::1"), Is.Null);
+
+        // and the lookup still takes writes
+        lookup.Add(R("2001:db8::-2001:db8:ffff:ffff:ffff:ffff:ffff:ffff"), "later");
+        Assert.That(Match(lookup, "2001:db8::1"), Is.EqualTo("later"));
+        Assert.That(lookup.Count, Is.EqualTo(3));
+    }
+
+    [Test]
     public void Mapped_addresses_find_IPv4_ranges()
     {
         var lookup = Lookup("10.0.0.1-10.0.0.3", "::ffff:10.0.0.0-::ffff:10.0.0.9");

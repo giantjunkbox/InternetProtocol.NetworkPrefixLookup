@@ -274,6 +274,10 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
         }
 
         /// <summary>Publishes every change in the batch, one reference write per address family.</summary>
+        /// <remarks>
+        ///     Only running out of memory can make a commit throw. If the IPv4 changes fail, nothing is published; if the
+        ///     IPv6 changes fail, the IPv4 changes stay published. Either way the batch ends.
+        /// </remarks>
         /// <exception cref="ObjectDisposedException">The batch was already committed or disposed.</exception>
         public void Commit()
         {
@@ -281,10 +285,14 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
             {
                 _v4.Commit();
             }
-            finally
+            catch
             {
-                _v6.Commit();
+                // nothing is published yet, so the IPv6 changes go too
+                _v6.Dispose();
+                throw;
             }
+
+            _v6.Commit();
         }
 
         /// <summary>Discards the batch's changes unless it was committed.</summary>

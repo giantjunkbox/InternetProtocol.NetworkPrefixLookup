@@ -513,6 +513,39 @@ public class BitTrieTests
     }
 
     [Test]
+    public void A_commit_that_throws_publishes_nothing_and_ends_the_batch()
+    {
+        // two /16s below octet 10 make a node at depth 1, whose block the failing commit tries to rebuild
+        var trie = new BitTrie<Bits32, int, int>();
+        trie.Add(new Bits32(0x0A010000), 16, 1, 1);
+        trie.Add(new Bits32(0x0A020000), 16, 2, 2);
+        var version = trie.Version;
+
+        var restore = CommitFaults.BreakNextCommit(trie);
+        var batch = trie.BeginBatch();
+        trie.Add(new Bits32(0x0A030000), 16, 3, 3);
+        Assert.Throws<NullReferenceException>(() => batch.Commit());
+        restore();
+
+        Assert.That(trie.Count, Is.EqualTo(2), "nothing published");
+        Assert.That(trie.ContainsPrefix(new Bits32(0x0A030000), 16), Is.False);
+        Assert.That(trie.Version, Is.EqualTo(version));
+        Assert.Throws<ObjectDisposedException>(() => batch.Commit());
+
+        // out of batch mode: a single write publishes, and a new batch works
+        trie.Add(new Bits32(0x0B000000), 8, 4, 4);
+        Assert.That(trie.TryGetMatchValue(new Bits32(0x0B010101), out var value) && value == 4);
+        using (var again = trie.BeginBatch())
+        {
+            trie.Add(new Bits32(0x0A030000), 16, 3, 3);
+            again.Commit();
+        }
+
+        Assert.That(trie.TryGetMatchValue(new Bits32(0x0A030201), out value) && value == 3);
+        Assert.That(trie.Count, Is.EqualTo(4));
+    }
+
+    [Test]
     public void Writes_from_several_threads_are_serialized()
     {
         var prefixes = TestKeys.RandomPrefixes<Bits128>(8000, 13);

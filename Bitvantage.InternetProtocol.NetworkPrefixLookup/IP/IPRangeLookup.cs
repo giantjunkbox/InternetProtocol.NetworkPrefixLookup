@@ -430,6 +430,11 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
         }
 
         /// <summary>Publishes every change in the batch.</summary>
+        /// <remarks>
+        ///     Only running out of memory can make a commit throw. If the IPv4 changes fail, nothing is published; if the
+        ///     IPv6 changes fail, the IPv4 changes stay published. Either way the batch ends, and the ranges listed match
+        ///     the ranges found.
+        /// </remarks>
         /// <exception cref="ObjectDisposedException">The batch was already committed or disposed.</exception>
         public void Commit()
         {
@@ -441,9 +446,25 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<T
                 {
                     _v4.Commit();
                 }
-                finally
+                catch
+                {
+                    // nothing is published yet, so the IPv6 changes go too
+                    _v6.Dispose();
+                    lookup._pending = lookup._published;
+                    throw;
+                }
+
+                try
                 {
                     _v6.Commit();
+                }
+                catch
+                {
+                    // the IPv4 changes are published and the IPv6 ones discarded, so list the ranges to match
+                    var published = lookup._published;
+                    lookup._pending = published.RemoveRange(published.Keys.Where(k => !k.IsIPv6)).AddRange(lookup._pending.Where(r => !r.Key.IsIPv6));
+                    Volatile.Write(ref lookup._published, lookup._pending);
+                    throw;
                 }
 
                 Volatile.Write(ref lookup._published, lookup._pending);

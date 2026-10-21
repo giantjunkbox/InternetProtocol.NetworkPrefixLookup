@@ -232,6 +232,25 @@ public class IPNetworkLookupTests
     }
 
     [Test]
+    public void A_commit_whose_IPv4_half_throws_publishes_nothing()
+    {
+        var lookup = Lookup("10.0.0.0/8");
+        var restore = Test.Core.CommitFaults.BreakNextCommit(Test.Core.CommitFaults.Field(lookup, "_v4"));
+        var batch = lookup.BeginBatch();
+        lookup.Add(N("10.1.0.0/16"), "10.1.0.0/16");
+        lookup.Add(N("10.2.0.0/16"), "10.2.0.0/16");
+        lookup.Add(N("2001:db8::/32"), "2001:db8::/32");
+        Assert.Throws<NullReferenceException>(() => batch.Commit());
+        restore();
+
+        Assert.That(lookup.Count, Is.EqualTo(1));
+        Assert.That(Match(lookup, "10.1.2.3"), Is.EqualTo("10.0.0.0/8"));
+        Assert.That(Match(lookup, "2001:db8::1"), Is.Null, "the IPv6 half is discarded too");
+        lookup.Add(N("2001:db8::/32"), "2001:db8::/32");
+        Assert.That(Match(lookup, "2001:db8::1"), Is.EqualTo("2001:db8::/32"));
+    }
+
+    [Test]
     public void Address_conversions_check_the_family()
     {
         Assert.That(IPAddressBits.ToIPv4Bits(IPAddress.Parse("10.1.2.3")), Is.EqualTo(0x0A010203u));

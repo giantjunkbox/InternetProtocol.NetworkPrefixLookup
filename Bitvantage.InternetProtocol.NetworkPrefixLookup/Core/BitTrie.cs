@@ -725,6 +725,10 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         internal Batch(BitTrie<TKey, TPrefix, TValue> trie) => _trie = trie;
 
         /// <summary>Publishes every change in the batch with one reference write.</summary>
+        /// <remarks>
+        ///     Only running out of memory can make a commit throw. Then nothing is published, and the batch ends as if
+        ///     disposed.
+        /// </remarks>
         /// <exception cref="ObjectDisposedException">The batch was already committed or disposed.</exception>
         public void Commit()
         {
@@ -743,15 +747,18 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         }
     }
 
+    // A commit that throws, which only running out of memory can make it do, discards the batch like Dispose: either
+    // way the trie leaves batch mode and releases the lock.
     private void EndBatch(bool commit)
     {
+        var published = false;
         try
         {
             if (commit)
             {
                 Trim(_w, _stamp);
-                var published = new Published(_w, _hasTable);
-                if (published.Blocks != null)
+                var snapshot = new Published(_w, _hasTable);
+                if (snapshot.Blocks != null)
                 {
                     // A batch copies every node above a change, so a first octet whose depth-1 node is still the same
                     // object has nothing changed below it, and its published block is still right.
@@ -760,23 +767,20 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
                     {
                         var depth1 = Kid(_w, first);
                         if (depth1 != null)
-                            published.Blocks[first] = old[first] is { } block && block.Depth1 == depth1 ? block : NewBlock(depth1);
+                            snapshot.Blocks[first] = old[first] is { } block && block.Depth1 == depth1 ? block : NewBlock(depth1);
                     }
                 }
                 Interlocked.Increment(ref _changes);
-                Volatile.Write(ref _published, published);
+                Volatile.Write(ref _published, snapshot);
                 Interlocked.Increment(ref _changes);
+                published = true;
             }
-            else
-            {
-                _w = _published.Root;
-            }
-
-            _batch = false;
-            _stamp++;
         }
         finally
         {
+            if (!published) _w = _published.Root;
+            _batch = false;
+            _stamp++;
             _lock.Exit();
         }
     }
