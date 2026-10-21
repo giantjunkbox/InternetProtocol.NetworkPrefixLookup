@@ -56,6 +56,34 @@ public readonly struct Bits136 : IBitKey<Bits136>
     public static Bits136 SetBits(in Bits136 key, int offset, int count, int value) => throw new NotSupportedException();
 }
 
+/// <summary>A 32-bit key that throws while <see cref="Fail" /> is set, to make a write fail part way.</summary>
+public readonly record struct FaultyBits32(uint Value) : IBitKey<FaultyBits32>
+{
+    [ThreadStatic] public static bool Fail;
+
+    public static int Width => 32;
+
+    private static uint Mask(int length) => (uint)((ulong)uint.MaxValue << (32 - length));
+
+    public static FaultyBits32 Truncate(in FaultyBits32 key, int length) =>
+        Fail ? throw new InjectedFault() : new(key.Value & Mask(length));
+
+    public static FaultyBits32 MaskFor(int length) => new(Mask(length));
+
+    public static bool MatchesUnderMask(in FaultyBits32 key, in FaultyBits32 bits, in FaultyBits32 mask) => (key.Value & mask.Value) == bits.Value;
+
+    public static int GetBits(in FaultyBits32 key, int offset, int count) => (int)((key.Value << offset) >> (32 - count));
+
+    public static FaultyBits32 SetBits(in FaultyBits32 key, int offset, int count, int value)
+    {
+        var mask = (uint.MaxValue >> (32 - count)) << (32 - offset - count);
+        return new((key.Value & ~mask) | (((uint)value << (32 - offset - count)) & mask));
+    }
+}
+
+/// <summary>The exception <see cref="FaultyBits32" /> throws.</summary>
+public sealed class InjectedFault : Exception;
+
 /// <summary>Random keys and prefixes of any width, and an independent reference to check lookups against.</summary>
 public static class TestKeys
 {

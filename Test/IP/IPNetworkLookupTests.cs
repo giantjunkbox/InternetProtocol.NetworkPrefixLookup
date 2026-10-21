@@ -256,6 +256,40 @@ public class IPNetworkLookupTests
     }
 
     [Test]
+    public void A_batch_is_refused_on_another_thread_and_discarded_after_a_failed_write()
+    {
+        var lookup = Lookup("10.0.0.0/8");
+        using (var owner = new Test.Core.DedicatedThread())
+        {
+            var batch = owner.Run(() =>
+            {
+                var started = lookup.BeginBatch();
+                lookup.Add(N("2001:db8::/32"), "2001:db8::/32");
+                return started;
+            });
+            Assert.Throws<InvalidOperationException>(() => batch.Commit());
+            Assert.Throws<InvalidOperationException>(() => batch.Dispose());
+            Assert.That(lookup.Count, Is.EqualTo(1));
+            owner.Run(() => batch.Commit());
+            Assert.That(lookup.Count, Is.EqualTo(2));
+        }
+
+        // a write that threw in either family discards the whole batch
+        using (var batch = lookup.BeginBatch())
+        {
+            lookup.Add(N("11.0.0.0/8"), "11.0.0.0/8");
+            lookup.Add(N("2001:db9::/32"), "2001:db9::/32");
+            Test.Core.CommitFaults.FailBatch(Test.Core.CommitFaults.Field(lookup, "_v6"));
+            Assert.Throws<InvalidOperationException>(() => batch.Commit());
+        }
+
+        Assert.That(lookup.Count, Is.EqualTo(2));
+        Assert.That(Match(lookup, "11.1.2.3"), Is.Null, "the IPv4 half is discarded too");
+        lookup.Add(N("11.0.0.0/8"), "11.0.0.0/8");
+        Assert.That(Match(lookup, "11.1.2.3"), Is.EqualTo("11.0.0.0/8"));
+    }
+
+    [Test]
     public void Address_conversions_check_the_family()
     {
         Assert.That(IPAddressBits.ToIPv4Bits(IPAddress.Parse("10.1.2.3")), Is.EqualTo(0x0A010203u));

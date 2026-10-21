@@ -86,10 +86,10 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
         // writer only
         public int Count;   // prefixes in this subtree, including fringes and leaves
-        public int Stamp;   // the write or batch that created this node, which may change it in place
+        public long Stamp;  // the write or batch that created this node, which may change it in place; 64 bits never wrap
         public byte Shared;
 
-        public Node Copy(int stamp)
+        public Node Copy(long stamp)
         {
             var copy = (Node)MemberwiseClone();
             copy.Stamp = stamp;
@@ -136,8 +136,9 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
     private Published _published;
     private Node _w;        // what the writer works on; ahead of the published root only during a batch
-    private int _stamp = 1; // nodes stamped 0 at construction count as published
+    private long _stamp = 1; // nodes stamped 0 at construction count as published
     private bool _batch;
+    private bool _batchFailed; // a write in the batch threw, so its private nodes may be half changed
 
     // Twice the number of published changes, plus one while a change is being published. A change that replaces a node
     // stores the copy into the parent's child array in place, and a copy shares that array with the node it was copied
@@ -619,7 +620,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     {
         CheckLength(length);
         using (_lock.EnterScope())
-            return Set(in bits, length, prefix, value, update: false) == SetResult.Added;
+            return SetOrFailBatch(in bits, length, prefix, value, update: false) == SetResult.Added;
     }
 
     /// <summary>Adds a prefix.</summary>
@@ -644,7 +645,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     {
         CheckLength(length);
         using (_lock.EnterScope())
-            return Set(in bits, length, prefix, value, update: true) == SetResult.Added;
+            return SetOrFailBatch(in bits, length, prefix, value, update: true) == SetResult.Added;
     }
 
     /// <summary>Returns the value of a prefix, adding it with a value from <paramref name="valueFactory" /> if absent.</summary>
@@ -665,7 +666,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
                 return entry.Value;
 
             var value = valueFactory(prefix);
-            Set(in bits, length, prefix, value, update: false);
+            SetOrFailBatch(in bits, length, prefix, value, update: false);
             return value;
         }
     }
@@ -677,7 +678,32 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     {
         CheckLength(length);
         using (_lock.EnterScope())
-            return Delete(in bits, length);
+        {
+            try
+            {
+                return Delete(in bits, length);
+            }
+            catch
+            {
+                if (_batch) _batchFailed = true;
+                throw;
+            }
+        }
+    }
+
+    // A write that throws inside a batch may leave the batch's private nodes half changed, so the batch can then only be
+    // discarded. Outside a batch a write that throws has changed nothing readers can reach.
+    private SetResult SetOrFailBatch(in TKey bits, int length, TPrefix prefix, TValue value, bool update)
+    {
+        try
+        {
+            return Set(in bits, length, prefix, value, update);
+        }
+        catch
+        {
+            if (_batch) _batchFailed = true;
+            throw;
+        }
     }
 
     /// <summary>Removes every prefix.</summary>
@@ -700,8 +726,9 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     ///     <see cref="Batch.Commit" />. Disposing the batch without committing it discards them.
     /// </summary>
     /// <remarks>
-    ///     The batch holds the trie's writer lock until it is committed or disposed, so other threads' writes wait, and the
-    ///     batch must be committed or disposed on the thread that started it.
+    ///     The batch holds the trie's writer lock until it is committed or disposed, so other threads' writes wait. The
+    ///     lock belongs to the thread that started the batch, so the batch must end on that thread and cannot span an
+    ///     <c>await</c>; ending it on another thread throws and leaves it open.
     /// </remarks>
     /// <exception cref="InvalidOperationException">A batch is already in progress.</exception>
     public Batch BeginBatch()
@@ -727,25 +754,50 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
         /// <summary>Publishes every change in the batch with one reference write.</summary>
         /// <remarks>
-        ///     Only running out of memory can make a commit throw. Then nothing is published, and the batch ends as if
-        ///     disposed.
+        ///     If a write in the batch threw, or publishing runs out of memory, nothing is published, the batch ends as if
+        ///     disposed, and Commit throws.
         /// </remarks>
         /// <exception cref="ObjectDisposedException">The batch was already committed or disposed.</exception>
+        /// <exception cref="InvalidOperationException">
+        ///     The batch was ended on a thread other than the one that started it, which leaves it open; or a write in the
+        ///     batch threw, and the batch was discarded.
+        /// </exception>
         public void Commit()
         {
             var trie = _trie ?? throw new ObjectDisposedException(nameof(Batch));
+            trie.CheckBatchThread();
             _trie = null;
             trie.EndBatch(commit: true);
         }
 
         /// <summary>Discards the batch's changes unless it was committed.</summary>
+        /// <exception cref="InvalidOperationException">
+        ///     The batch was ended on a thread other than the one that started it, which leaves it open.
+        /// </exception>
         public void Dispose()
         {
             var trie = _trie;
             if (trie == null) return;
+            trie.CheckBatchThread();
             _trie = null;
             trie.EndBatch(commit: false);
         }
+
+        // for the IP lookups, which end two batches and must check both before ending either
+        internal void CheckThread() => _trie?.CheckBatchThread();
+
+        // true when a write in this batch threw, so that committing it will discard it and throw
+        internal bool Failed => _trie is { _batchFailed: true };
+    }
+
+    // The writer lock belongs to the thread that took it, and only that thread can release it. Ending a batch elsewhere,
+    // as after an await, would publish without the lock and then fail to release it, so it is refused before anything
+    // changes. The batch stays open until its own thread ends it.
+    private void CheckBatchThread()
+    {
+        if (!_lock.IsHeldByCurrentThread)
+            throw new InvalidOperationException(
+                "A batch must end on the thread that started it, so it cannot span an await. The batch is still open, and other writers wait until that thread ends it.");
     }
 
     // A commit that throws, which only running out of memory can make it do, discards the batch like Dispose: either
@@ -755,6 +807,8 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         var published = false;
         try
         {
+            if (commit && _batchFailed)
+                throw new InvalidOperationException("A write in the batch threw, so the batch was discarded.");
             if (commit)
             {
                 Trim(_w, _stamp);
@@ -781,6 +835,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         {
             if (!published) _w = _published.Root;
             _batch = false;
+            _batchFailed = false;
             _stamp++;
             _lock.Exit();
         }
@@ -885,10 +940,18 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         else
         {
             Interlocked.Increment(ref _changes);
-            Link(changed, n, ref path, octets, depth);
-            UpdateTable(in item.Bits, depth);
-            if (added) AdjustPublishedCounts(ref path, depth, 1);
-            Interlocked.Increment(ref _changes);
+            try
+            {
+                Link(changed, n, ref path, octets, depth);
+                UpdateTable(in item.Bits, depth);
+            }
+            finally
+            {
+                // Link never throws outside a batch, and UpdateTable can only fail to build a new block, which leaves
+                // the block out and lookups right; so the counts are adjusted and the counter made even regardless
+                if (added) AdjustPublishedCounts(ref path, depth, 1);
+                Interlocked.Increment(ref _changes);
+            }
         }
 
         return added ? SetResult.Added : SetResult.Updated;
@@ -975,10 +1038,17 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         else
         {
             Interlocked.Increment(ref _changes);
-            Link(changed, original, ref path, octets, depth);
-            UpdateTable(in key, depth);
-            AdjustPublishedCounts(ref path, depth, -1);
-            Interlocked.Increment(ref _changes);
+            try
+            {
+                Link(changed, original, ref path, octets, depth);
+                UpdateTable(in key, depth);
+            }
+            finally
+            {
+                // as in Set
+                AdjustPublishedCounts(ref path, depth, -1);
+                Interlocked.Increment(ref _changes);
+            }
         }
 
         return true;
@@ -1175,9 +1245,8 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
     private static void InsertPrefix(Node n, int index, in Entry entry)
     {
-        var count = n.Prefixes.PopCount();
+        n.PrefixEntries = InsertAt(n.PrefixEntries, n.Prefixes.PopCount(), n.Prefixes.Rank(index), in entry, ref n.Shared, PrefixArray);
         n.Prefixes.Set(index);
-        n.PrefixEntries = InsertAt(n.PrefixEntries, count, n.Prefixes.Rank(index) - 1, in entry, ref n.Shared, PrefixArray);
     }
 
     private static void RemovePrefix(Node n, int index)
@@ -1188,9 +1257,8 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
     private static void InsertFringe(Node n, int octet, in Entry entry)
     {
-        var count = n.Fringes.PopCount();
+        n.FringeEntries = InsertAt(n.FringeEntries, n.Fringes.PopCount(), n.Fringes.Rank(octet), in entry, ref n.Shared, FringeArray);
         n.Fringes.Set(octet);
-        n.FringeEntries = InsertAt(n.FringeEntries, count, n.Fringes.Rank(octet) - 1, in entry, ref n.Shared, FringeArray);
     }
 
     private static void RemoveFringe(Node n, int octet)
@@ -1201,9 +1269,8 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
     private static void InsertKid(Node n, int octet, Node kid)
     {
-        var count = n.Kids.PopCount();
+        n.KidNodes = InsertAt(n.KidNodes, n.Kids.PopCount(), n.Kids.Rank(octet), in kid, ref n.Shared, KidArray);
         n.Kids.Set(octet);
-        n.KidNodes = InsertAt(n.KidNodes, count, n.Kids.Rank(octet) - 1, in kid, ref n.Shared, KidArray);
     }
 
     private static void RemoveKid(Node n, int octet)
@@ -1214,9 +1281,8 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
     private static void InsertLeaf(Node n, int octet, in Leaf leaf)
     {
-        var count = n.Leaves.PopCount();
+        n.LeafEntries = InsertAt(n.LeafEntries, n.Leaves.PopCount(), n.Leaves.Rank(octet), in leaf, ref n.Shared, LeafArray);
         n.Leaves.Set(octet);
-        n.LeafEntries = InsertAt(n.LeafEntries, count, n.Leaves.Rank(octet) - 1, in leaf, ref n.Shared, LeafArray);
     }
 
     private static void RemoveLeaf(Node n, int octet)
@@ -1225,6 +1291,8 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         n.Leaves.Clear(octet);
     }
 
+    // The Insert helpers above allocate before they set the bit, so a failed allocation leaves the node as it was.
+    //
     // An array still shared with another node, or one readers can see, is replaced by an exact-size copy. An array only
     // this writer can see grows by doubling and changes in place. Array.Empty is shared by every node, so it is never
     // changed in place: with no spare capacity, the first insert always allocates.
@@ -1278,7 +1346,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     }
 
     // after a batch: exact-size arrays for the nodes the batch created, marked shared so later writes copy them
-    private static void Trim(Node n, int stamp)
+    private static void Trim(Node n, long stamp)
     {
         if (n.Stamp != stamp) return;
         n.PrefixEntries = Exact(n.PrefixEntries, n.Prefixes.PopCount());

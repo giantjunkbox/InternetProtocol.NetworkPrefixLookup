@@ -240,7 +240,8 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IPRangeLookupBase<TRange,
     /// </summary>
     /// <remarks>
     ///     Each address family publishes its pieces with one reference write when the batch commits, IPv4 first. The batch
-    ///     holds the writer locks until it is committed or disposed, and must end on the thread that started it.
+    ///     holds the writer locks until it is committed or disposed. The locks belong to the thread that started the
+    ///     batch, so it must end on that thread and cannot span an <c>await</c>.
     /// </remarks>
     /// <exception cref="InvalidOperationException">A batch is already in progress.</exception>
     public Batch BeginBatch()
@@ -286,16 +287,36 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IPRangeLookupBase<TRange,
             _v6 = v6;
         }
 
+        // the locks belong to the thread that started the batch; ending it elsewhere is refused before anything changes
+        private static void CheckThread(IPRangeLookup<TRange, TAdapter, TValue> lookup)
+        {
+            if (!lookup._lock.IsHeldByCurrentThread)
+                throw new InvalidOperationException(
+                    "A batch must end on the thread that started it, so it cannot span an await. The batch is still open, and other writers wait until that thread ends it.");
+        }
+
         /// <summary>Publishes every change in the batch.</summary>
         /// <remarks>
-        ///     Only running out of memory can make a commit throw. If the IPv4 changes fail, nothing is published; if the
-        ///     IPv6 changes fail, the IPv4 changes stay published. Either way the batch ends, and the ranges listed match
-        ///     the ranges found.
+        ///     If a write in the batch threw, nothing is published, the batch is discarded and Commit throws. Otherwise only
+        ///     running out of memory can make it throw: if the IPv4 changes fail, nothing is published; if the IPv6 changes
+        ///     fail, the IPv4 changes stay published. Either way the batch ends, and the ranges listed match the ranges
+        ///     found.
         /// </remarks>
         /// <exception cref="ObjectDisposedException">The batch was already committed or disposed.</exception>
+        /// <exception cref="InvalidOperationException">
+        ///     The batch was ended on a thread other than the one that started it, which leaves it open; or a write in the
+        ///     batch threw, and the batch was discarded.
+        /// </exception>
         public void Commit()
         {
             var lookup = _lookup ?? throw new ObjectDisposedException(nameof(Batch));
+            CheckThread(lookup);
+            if (_v4.Failed || _v6.Failed)
+            {
+                Dispose();
+                throw new InvalidOperationException("A write in the batch threw, so the batch was discarded.");
+            }
+
             _lookup = null;
             try
             {
@@ -334,10 +355,14 @@ public class IPRangeLookup<TRange, TAdapter, TValue> : IPRangeLookupBase<TRange,
         }
 
         /// <summary>Discards the batch's changes unless it was committed.</summary>
+        /// <exception cref="InvalidOperationException">
+        ///     The batch was ended on a thread other than the one that started it, which leaves it open.
+        /// </exception>
         public void Dispose()
         {
             var lookup = _lookup;
             if (lookup == null) return;
+            CheckThread(lookup);
             _lookup = null;
             try
             {

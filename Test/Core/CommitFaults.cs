@@ -39,6 +39,11 @@ public static class CommitFaults
         return () => field.SetValue(trie, original);
     }
 
+    /// <summary>Marks a trie's open batch as one in which a write threw, as a write that runs out of memory would.</summary>
+    /// <param name="trie">A <c>BitTrie</c> of any type arguments, inside a batch.</param>
+    public static void FailBatch(object trie) =>
+        (trie.GetType().GetField("_batchFailed", BindingFlags.NonPublic | BindingFlags.Instance) ?? throw new MissingFieldException("_batchFailed")).SetValue(trie, true);
+
     /// <summary>The value of a private field, such as a lookup's tries, declared on the owner's type or a base type.</summary>
     public static object Field(object owner, string name)
     {

@@ -361,6 +361,38 @@ public class IPRangeLookupTests
     }
 
     [Test]
+    public void A_range_batch_is_refused_on_another_thread_and_discarded_after_a_failed_write()
+    {
+        var lookup = Lookup("10.0.0.0-10.0.0.9");
+        using (var owner = new Test.Core.DedicatedThread())
+        {
+            var batch = owner.Run(() =>
+            {
+                var started = lookup.BeginBatch();
+                lookup.Add(R("10.1.0.0-10.1.0.9"), "added");
+                return started;
+            });
+            Assert.Throws<InvalidOperationException>(() => batch.Commit());
+            Assert.Throws<InvalidOperationException>(() => batch.Dispose());
+            Assert.That(lookup.Count, Is.EqualTo(1));
+            owner.Run(() => batch.Commit());
+            Assert.That(lookup.Count, Is.EqualTo(2));
+        }
+
+        using (var batch = lookup.BeginBatch())
+        {
+            lookup.Add(R("10.2.0.0-10.2.0.9"), "discarded");
+            Test.Core.CommitFaults.FailBatch(Test.Core.CommitFaults.Field(lookup, "_v4"));
+            Assert.Throws<InvalidOperationException>(() => batch.Commit());
+        }
+
+        Assert.That(lookup.Select(e => e.Value), Is.EqualTo(new[] { "10.0.0.0-10.0.0.9", "added" }));
+        Assert.That(Match(lookup, "10.2.0.5"), Is.Null);
+        lookup.Add(R("10.2.0.0-10.2.0.9"), "later");
+        Assert.That(Match(lookup, "10.2.0.5"), Is.EqualTo("later"));
+    }
+
+    [Test]
     public void Mapped_addresses_find_IPv4_ranges_when_mapping_is_on()
     {
         var plain = Lookup("10.0.0.1-10.0.0.3", "::ffff:10.0.0.0-::ffff:10.0.0.9");

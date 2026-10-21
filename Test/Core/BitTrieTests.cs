@@ -546,6 +546,75 @@ public class BitTrieTests
     }
 
     [Test]
+    public void A_batch_ended_on_another_thread_is_refused_and_stays_open()
+    {
+        var trie = new BitTrie<Bits32, int, int>();
+        using var owner = new DedicatedThread();
+        var batch = owner.Run(() =>
+        {
+            var started = trie.BeginBatch();
+            trie.Add(new Bits32(0x0A000000), 8, 1, 1);
+            return started;
+        });
+
+        Assert.Throws<InvalidOperationException>(() => batch.Commit());
+        Assert.Throws<InvalidOperationException>(() => batch.Dispose());
+        Assert.That(trie.Count, Is.Zero, "nothing published");
+
+        owner.Run(() => batch.Commit());
+        Assert.That(trie.Count, Is.EqualTo(1));
+        trie.Add(new Bits32(0x0B000000), 8, 2, 2);
+        Assert.That(trie.Count, Is.EqualTo(2), "the lock was released");
+    }
+
+    [Test]
+    public void A_batch_in_which_a_write_threw_is_discarded_when_committed()
+    {
+        var trie = new BitTrie<FaultyBits32, int, int>();
+        trie.Add(new FaultyBits32(0x0A000000), 8, 1, 1);
+        var version = trie.Version;
+        using (var batch = trie.BeginBatch())
+        {
+            trie.Add(new FaultyBits32(0x0B000000), 8, 2, 2);
+            FaultyBits32.Fail = true;
+            try
+            {
+                Assert.Throws<InjectedFault>(() => trie.Add(new FaultyBits32(0x0C000000), 8, 3, 3));
+            }
+            finally
+            {
+                FaultyBits32.Fail = false;
+            }
+
+            Assert.Throws<InvalidOperationException>(() => batch.Commit());
+            Assert.Throws<ObjectDisposedException>(() => batch.Commit());
+        }
+
+        Assert.That(trie.Count, Is.EqualTo(1), "nothing published");
+        Assert.That(trie.Version, Is.EqualTo(version));
+        Assert.That(trie.ContainsPrefix(new FaultyBits32(0x0B000000), 8), Is.False);
+
+        // a write that throws outside a batch changes nothing, and the next batch commits
+        FaultyBits32.Fail = true;
+        try
+        {
+            Assert.Throws<InjectedFault>(() => trie.Remove(new FaultyBits32(0x0A000000), 8));
+        }
+        finally
+        {
+            FaultyBits32.Fail = false;
+        }
+
+        using (var batch = trie.BeginBatch())
+        {
+            trie.Add(new FaultyBits32(0x0B000000), 8, 2, 2);
+            batch.Commit();
+        }
+
+        Assert.That(trie.Count, Is.EqualTo(2));
+    }
+
+    [Test]
     public void Writes_from_several_threads_are_serialized()
     {
         var prefixes = TestKeys.RandomPrefixes<Bits128>(8000, 13);
