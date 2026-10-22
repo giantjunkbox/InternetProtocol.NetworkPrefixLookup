@@ -300,7 +300,10 @@ read-write and frozen, and IPv4 from `IPAddress` with a reference-type prefix, w
 across reference types. The reader replaced the base class so that no infrastructure type is public. The JIT's output
 for each public lookup is the base class's, with the reader and the trie's `TryGetMatch` inlined: the read-write form
 calls only `BitTrie.Find` and the frozen form only `FrozenBitTrie.FindLeafPushed` and `FindCompressed`. Each forwarder
-adds two instructions, a null check of the lookup and the offset of the reader field.
+adds two instructions, a null check of the lookup and the offset of the reader field, which do not show in the timings:
+in four alternating runs of `LayerBenchmarks`, the IP layer cost 0.5% to 6% over the bare trie with the base class and
+2.5% to 5% with the reader, and in one run each of `RealTableBenchmarks` the ten cases ranged from 15% faster to 5%
+slower, inside the container's drift.
 
 - **Addresses** convert without allocating: IPv4 through the obsolete `IPAddress.Address` property, which was about
   30% faster end to end than `TryWriteBytes`, and IPv6 through `TryWriteBytes` into a stack buffer. The span, `uint` and
