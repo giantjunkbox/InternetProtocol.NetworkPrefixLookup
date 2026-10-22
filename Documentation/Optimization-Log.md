@@ -145,6 +145,10 @@ bits, so no key ever matches it. A missing child simply points at it, and each s
 | `BartTrie`: pruned backtracking, using a per-node flag for prefixes held in the node | 6 to 26% slower | Recording which levels could match costs more than the backtracking it saves; see [Bart-Comparison.md](Bart-Comparison.md#remedies-tried) |
 | `BartTrie`: best match of the first two levels kept in each 16-bit shortcut slot | 4% faster on real IPv6, 15% slower on real IPv4 | Saves backtracking only into the first two levels, and writes must refresh up to 256 slots |
 | `BartTrie`: child positions cached per node, as Go's `Fast` variant | 4 to 18% slower | A popcount is one instruction; the 256-byte array per node costs cache misses |
+| `BitTrie`, 2026-10-22: lookups without bounds checks | 0.95 to 1.06, inside the error on four tables | The JIT output was no smaller |
+| `BitTrie`, 2026-10-22: `GetMatches(IPAddress)` into a stack or thread-static buffer instead of a list | 0.44 of the garbage, but 1.45 to 1.7 times the time | Copying out of the buffer cost more than the list's growth; the span overload into a caller's array is the fast form |
+| `BitTrie`, 2026-10-22: IPv6 addresses read through the private field instead of `TryWriteBytes` | Identical, 12 to 14 ms per million | Reaching the `IPAddress` object costs most of it either way |
+| `BitTrie`, 2026-10-22: typed trie fields in the IP layer's reader instead of `IReadOnlyBitTrie` and `Unsafe.As` | Identical JIT output | `Unsafe.As` emits nothing |
 
 ## Small tables
 

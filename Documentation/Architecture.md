@@ -131,11 +131,18 @@ compare `ToTextTree` output after shuffled, reversed and batched insertion, and 
 
 ### Lookup
 
-`Find` walks down while the key's next octet has a child node, pushing each node on a stack (an inline array of 17
-nodes). If the last node has a leaf at the key's octet and the leaf matches, that
-is the answer. Otherwise it backtracks from the deepest node up: in each node a fringe at the key's octet beats any
-prefix inside the stride, then the `Prefixes AND Ancestors` test finds the longest base index. The first hit is the
-longest match.
+`Find` walks down while the key's next octet has a child node. If the last node has a leaf at the key's octet and the
+leaf matches, that is the answer. Otherwise it backtracks from the deepest node up: in each node a fringe at the key's
+octet beats any prefix inside the stride, then the `Prefixes AND Ancestors` test finds the longest base index. The
+first hit is the longest match.
+
+Nodes have no parent links, because a copy-on-write node can belong to several versions, so a backtrack needs the
+path. The walk keeps only the node one level up, in a local. On the real tables the deepest node answers 98 to 100% of
+lookups and its parent nearly all the rest; on the random table 0.8% of lookups need to go further. Those walk again
+from the root, pushing each node on a stack (an inline array of 17 nodes), and backtrack through it. Keeping the stack
+on every lookup cost a write barrier call per node, because the JIT cannot prove that a store into the inline array at
+a variable index goes to the stack; without it lookups take 0.85 to 0.93 of the time, as measured under
+[Since the baseline](#since-the-baseline). The retry around `Find` covers both walks.
 
 For keys of 16 bits or more, **shortcut blocks** let a lookup skip the first two levels. There is one block for each
 first octet that leads to a node at depth 1; it holds that node and, for each second octet, the node at depth 2 below
@@ -275,7 +282,8 @@ the parent chain from that address's longest match:
 - `TryGetMatch(bits, length)` follows it to the first entry no longer than `length`.
 - `TryGetValue` and `ContainsPrefix` do the same and check that the length is equal.
 
-Freezing holds the source trie's writer lock while it reads, so writes wait; readers of the source are not affected.
+Freezing holds the source trie's writer lock while it copies the prefixes out, so writes wait for that part; the
+tables are built from the copy after the lock is released. Readers of the source are not affected.
 
 ## The IP layer
 
@@ -318,8 +326,9 @@ slower, inside the container's drift.
   `::ffff:0:0/96` is stored and listed but answers no address lookup. The check costs one test of a flag on IPv6
   lookups only.
 - **Batches** begin a batch on both tries. On commit each family publishes atomically, IPv4 first.
-- **Freezing** holds both tries' writer locks, taken in the order batches take them, so the frozen copy is the lookup at
-  one moment even though a reader of the read-write lookup can see one family's batch a moment before the other's.
+- **Freezing** copies both families' prefixes out under both tries' writer locks, taken in the order batches take
+  them, so the frozen copy is the lookup at one moment even though a reader of the read-write lookup can see one
+  family's batch a moment before the other's. Both families' tables are built after the locks are released.
 - **`Version`** is the sum of the two tries' versions, which changes whenever either does.
 - **Concrete classes** such as `IPNetworkLookup<TValue>` fix the prefix and adapter types, and redeclare `Freeze` with
   `new` to return their own frozen class. A frozen class's protected constructor takes the read-write lookup, so
@@ -508,13 +517,44 @@ fits in cache, so this shows the cost per lookup, not what a full GeoIP2 databas
 | Loaded, frozen | 3.4 ms | 0 |
 | Loading the database | 4.1 ms | 4.9 MB |
 
+### Since the baseline
+
+Measured on 2026-10-22 in a different 4-core container (Intel Xeon, 2.1 GHz, .NET 10.0.13), where the same
+benchmarks ran about three times as fast as on 2026-10-20. Compare within these tables only.
+
+**Lookups without the node stack.** One session, the walk with a stack, kept in the code for deep backtracks, against
+the lookup as shipped; bare `BitTrie`, one million lookups from precomputed keys:
+
+| Table | With the stack | As shipped | Ratio |
+| --- | --- | --- | --- |
+| Real IPv4 | 60.2 ms | 53.1 ms | 0.89 |
+| Real IPv6 | 113.1 ms | 105.0 ms | 0.93 |
+| Random, 96,944 prefixes | 38.5 ms | 35.5 ms | 0.93 |
+| Small, every 1,054th real IPv4 prefix | 12.7 ms | 10.7 ms | 0.85 |
+
+Two earlier sessions of the performance review measured 0.86 and 0.93 on real IPv4, 0.86 and 0.89 on real IPv6 and
+0.93 and 0.86 on the small table.
+
+**Enumeration and freezing** (`RealBuildBenchmarks`, the commit before against this one, back to back; the batch
+rows, whose code did not change, moved by less than 4%). Enumeration visits only the octets at which something starts,
+instead of testing 256 octets and 8 lengths in every node. Writers wait only while a freeze copies the prefixes out:
+69 ms for real IPv4 and 24 ms for real IPv6, measured on their own.
+
+| Benchmark | Real IPv4, before | After | Real IPv6, before | After |
+| --- | --- | --- | --- | --- |
+| Enumerating | 118.5 ms | 59.5 ms | 118.5 ms | 19.6 ms |
+| Freezing, leaf-pushed | 153.3 ms | 98.0 ms | 158.9 ms | 55.7 ms |
+| Freezing, compressed | 173.1 ms | 111.8 ms | 156.5 ms | 48.7 ms |
+| Writers wait during a freeze | the whole freeze | 69 ms | the whole freeze | 24 ms |
+| One batch, unchanged | 172.0 ms | 174.7 ms | 40.6 ms | 42.0 ms |
+
 **Against the prototype.** Back to back, `BitTrie` alone took 142 to 154 ms per million real IPv4 lookups and the
 prototype `BartTrie` 147 to 156 ms. On IPv6 the library took 341 ms and the prototype 331 ms.
 
 ### Where the time goes
 
 - A read-write lookup reads one shortcut block, then for each node below depth 2 tests a bit and ranks it with
-  four popcounts to find the child, and finally backtracks through the nodes it passed. Each node visited is a likely
+  four popcounts to find the child. The deepest node or its parent then answers nearly every lookup. Each node visited is a likely
   cache miss on the real tables.
 - A leaf-pushed lookup reads the root entry and one child table per 8 bits still undecided: about 2 reads on real IPv4
   and 4.6 on IPv6, measured in the prototype. Then it reads the entry with the prefix and value, at a random place in an
@@ -529,7 +569,12 @@ prototype `BartTrie` 147 to 156 ms. On IPv6 the library took 341 ms and the prot
 | --- | --- | --- |
 | Copy only the array that changes, not the node and the array | Less allocation per write, fewer collections under churn | Not tried |
 | Branch-free level steps in the read-write lookup | Fewer mispredicted branches, mainly on small tables | Not tried |
-| Build a batch bottom-up from sorted input | Faster bulk loads than adding one prefix at a time to private nodes | Not tried |
+| Build a batch bottom-up from sorted input | Faster bulk loads than adding one prefix at a time to private nodes: estimated 1.5 to 2 times on sorted input, a third of the allocation | Not tried |
+| A third shortcut level for keys wider than 32 bits | Real IPv6 lookups 0.87 in one session, for 126 KB; IPv4 would lose (1.07, 49 MB) | Measured in the performance review; not done, pending a memory check on MaxMind and worst-case tables |
+| Lookups without the node stack, the parent in a local | 0.85 to 0.93 of the time on every table | Done; see [Since the baseline](#since-the-baseline) |
+| Enumeration over set bits only; freeze copies under the lock and builds after | Enumeration 2 to 6 times faster, freezing 1.5 to 3 times, writers wait 69 ms instead of 153 ms on real IPv4 | Done; see [Since the baseline](#since-the-baseline) |
+| `GetMatches(IPAddress)` into a stack buffer instead of a list | Less garbage | Measured: 1.45 to 1.7 times slower; not done |
+| Lookups without bounds checks | | Measured: no difference; not done |
 | Choose the frozen layout from the data | Leaf-pushed for clustered tables, compressed for scattered ones | Not tried; the caller chooses today |
 | A 24-bit root for frozen IPv4 tables | Already possible with `RootBits = 24`: 0.37 of the read-write time in the prototype, at about twice the memory | Option exists |
 | Pruned backtracking, best match per shortcut slot, child positions cached per node | | Tried in the prototype, slower; see [Bart-Comparison.md](Bart-Comparison.md#remedies-tried) |
@@ -566,8 +611,9 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
   benchmark, where the compressed layout needs 8 MB. IPv6 host routes are worse: 100,000 random /128 prefixes take
   1.3 GB leaf-pushed against 53 MB compressed, and from about 650,000 the leaf-pushed builder refuses, because its tables
   would exceed 2^31 entries. The security review measured these.
-- **Freezing blocks writers** for its duration: 220 ms leaf-pushed and 240 ms compressed for the real IPv4 table, as
-  measured under Building the real tables.
+- **Freezing blocks writers** while it copies the prefixes out: 69 ms for the real IPv4 table and 24 ms for the real
+  IPv6 table, measured under [Since the baseline](#since-the-baseline). The tables are built after the writer lock is
+  released.
 - **Close pairs of long prefixes use more memory**: two /128 prefixes that share 120 bits need a chain of 15 nodes, so
   100,000 such pairs held 281 MB where 200,000 random /128 prefixes held 17 MB. Each write still does bounded work.
 - **Batches cannot span an await**: the writer lock belongs to the thread that took it. Ending a batch on another thread
