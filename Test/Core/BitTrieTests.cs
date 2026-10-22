@@ -16,6 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+using System.Reflection;
 using Bitvantage.InternetProtocol;
 
 namespace Test.Core;
@@ -153,6 +154,14 @@ public class BitTrieTests
 
     [Test]
     public void Bits128_queries_match_the_reference() => AssertAllForms<Bits128>(3000, 128);
+
+    [Test(Description = "The tries index with GetBits without bounds checks, so no other assembly may implement the key interface.")]
+    public void The_key_interface_cannot_be_implemented_outside_the_library()
+    {
+        var members = typeof(IBitKey<>).GetMembers(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+        Assert.That(members, Is.Empty, "public members of IBitKey");
+        Assert.That(typeof(IBitKey<>).GetMethods(BindingFlags.NonPublic | BindingFlags.Static), Is.Not.Empty);
+    }
 
     [Test]
     public void Keys_wider_than_128_bits_are_refused() =>
@@ -598,7 +607,7 @@ public class BitTrieTests
             if (trie.TryGetMatch(keys[at], out var prefix, out var value))
             {
                 var (bits, length) = prefixes[prefix];
-                if (value != prefix * 7 || length < expected[at] || !Bits32.MatchesUnderMask(keys[at], bits, Bits32.MaskFor(length)))
+                if (value != prefix * 7 || length < expected[at] || (keys[at].Value & (uint)((ulong)uint.MaxValue << (32 - length))) != bits.Value)
                     Interlocked.Increment(ref failures);
             }
             else if (expected[at] >= 0)

@@ -192,8 +192,8 @@ if (blocked.ContainsMatch(clientAddress)) Reject();
 
 The IP lookups are built on `BitTrie<TKey, TPrefix, TValue>` and `FrozenBitTrie<TKey, TPrefix, TValue>`, which work
 on bits and lengths only. They are public, with `Bits32` keys for IPv4 and `Bits128` keys for IPv6, for callers who want
-one address family without the IP layer. Other fixed-width keys, up to 128 bits, can implement `IBitKey<TSelf>`, which
-needs six members.
+one address family without the IP layer, or any other key that fits in 32 or 128 bits. Those are the only key types:
+the trie trusts its keys' bit arithmetic for memory safety, so no other assembly can implement `IBitKey<TSelf>`.
 
 For context such as a VRF, use one lookup per VRF rather than a wider key. An empty lookup holds only a few KB.
 

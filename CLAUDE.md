@@ -22,6 +22,8 @@ Decisions made by the user:
 - The `NetworkPrefix` adapter ships as a separate package.
 - The core is constrained on a purpose-built key interface, `IBitKey<TSelf>`. Key widths are fixed at compile time;
   widths chosen at run time are not supported.
+- No custom key types: `IBitKey<TSelf>`'s members are internal, so only `Bits32`, `Bits128` and the test project's keys,
+  through `InternalsVisibleTo`, implement it. The tries index with `GetBits` without bounds checks.
 - Context such as a VRF is handled with one lookup instance per context, not with wider keys. Only `Bits32` and
   `Bits128` ship, and key widths are limited to 128 bits.
 - Lookup results use whichever shape is fastest. All measured shapes tied, so lookups return the prefix and value
@@ -117,7 +119,7 @@ ROUTEVIEWS_DIR=/tmp/routeviews dotnet run -c Release --project PerformanceTest
 ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 3 minutes
 ```
 
-**Test baseline:** all 52 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
+**Test baseline:** all 53 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
 text with `Environment.NewLine`, so it passes with either line ending. Keep `.gitattributes` at `text=auto`.
 
 The whole solution builds with no warnings. Do not add any.

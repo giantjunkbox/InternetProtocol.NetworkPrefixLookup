@@ -32,27 +32,27 @@ public readonly struct Bits128 : IBitKey<Bits128>, IEquatable<Bits128>
     public Bits128(UInt128 value) => Value = value;
 
     /// <inheritdoc />
-    public static int Width => 128;
+    static int IBitKey<Bits128>.Width => 128;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static UInt128 Mask(int length) => length == 0 ? UInt128.Zero : UInt128.MaxValue << (128 - length);
 
     /// <inheritdoc />
-    public static Bits128 Truncate(in Bits128 key, int length) => new(key.Value & Mask(length));
+    static Bits128 IBitKey<Bits128>.Truncate(in Bits128 key, int length) => new(key.Value & Mask(length));
 
     /// <inheritdoc />
-    public static Bits128 MaskFor(int length) => new(Mask(length));
-
-    /// <inheritdoc />
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool MatchesUnderMask(in Bits128 key, in Bits128 bits, in Bits128 mask) => (key.Value & mask.Value) == bits.Value;
+    static Bits128 IBitKey<Bits128>.MaskFor(int length) => new(Mask(length));
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static int GetBits(in Bits128 key, int offset, int count) => (int)(ulong)((key.Value << offset) >> (128 - count));
+    static bool IBitKey<Bits128>.MatchesUnderMask(in Bits128 key, in Bits128 bits, in Bits128 mask) => (key.Value & mask.Value) == bits.Value;
 
     /// <inheritdoc />
-    public static Bits128 SetBits(in Bits128 key, int offset, int count, int value)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    static int IBitKey<Bits128>.GetBits(in Bits128 key, int offset, int count) => (int)(ulong)((key.Value << offset) >> (128 - count));
+
+    /// <inheritdoc />
+    static Bits128 IBitKey<Bits128>.SetBits(in Bits128 key, int offset, int count, int value)
     {
         var mask = (UInt128.MaxValue >> (128 - count)) << (128 - offset - count);
         return new((key.Value & ~mask) | (((UInt128)(uint)value << (128 - offset - count)) & mask));
@@ -60,7 +60,7 @@ public readonly struct Bits128 : IBitKey<Bits128>, IEquatable<Bits128>
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static int GetTopBits(in Bits128 key, int count) => (int)(ulong)(key.Value >> (128 - count));
+    static int IBitKey<Bits128>.GetTopBits(in Bits128 key, int count) => (int)(ulong)(key.Value >> (128 - count));
 
     /// <inheritdoc />
     public bool Equals(Bits128 other) => Value == other.Value;

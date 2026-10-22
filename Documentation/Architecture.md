@@ -74,8 +74,10 @@ through `out` parameters, as decided in [Abstraction-Study.md](Abstraction-Study
 A key is a fixed-width bit string, left-aligned: bit 0 is the most significant bit. `IBitKey<TSelf>` has only static
 members, so each key type is a struct the JIT compiles into plain instructions. Widths must be multiples of 8, because the trie
 consumes 8 bits per level, from 8 to 128, so that a path fits in a fixed stack of 17 nodes. The library ships `Bits32`
-for IPv4 and `Bits128` for IPv6. A user type needs six members; `GetTopBits` has a default implementation. The test
-project's `Bits16` is written that way.
+for IPv4 and `Bits128` for IPv6, and those are the only key types. The interface's members are internal, so no other
+assembly can implement it: `BitSet256` and the frozen tables index with `GetBits` without bounds checks, and a key type
+whose bits strayed out of range would corrupt memory. The test project defines `Bits8`, `Bits16` and two special keys
+through `InternalsVisibleTo`; `Bits16` relies on the default `GetTopBits`.
 
 Keys are not the place for context such as a VRF. The context would have to come before the address, costing a trie
 level per 8 bits and spending the shortcut table and the frozen root on bits that barely vary. Use one lookup per

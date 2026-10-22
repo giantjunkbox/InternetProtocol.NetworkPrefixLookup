@@ -21,24 +21,24 @@ using Bitvantage.InternetProtocol;
 namespace Test.Core;
 
 /// <summary>
-///     A 16-bit key written the way a library user would: only the required members, relying on the default
-///     <see cref="IBitKey{TSelf}.GetTopBits" />.
+///     A 16-bit key with only the required members, relying on the default <see cref="IBitKey{TSelf}.GetTopBits" />. Only
+///     this test project can define key types, through InternalsVisibleTo; no other assembly can implement the interface.
 /// </summary>
 public readonly record struct Bits16(ushort Value) : IBitKey<Bits16>
 {
-    public static int Width => 16;
+    static int IBitKey<Bits16>.Width => 16;
 
     private static ushort Mask(int length) => (ushort)(0xFFFF0000u >> length);
 
-    public static Bits16 Truncate(in Bits16 key, int length) => new((ushort)(key.Value & Mask(length)));
+    static Bits16 IBitKey<Bits16>.Truncate(in Bits16 key, int length) => new((ushort)(key.Value & Mask(length)));
 
-    public static Bits16 MaskFor(int length) => new(Mask(length));
+    static Bits16 IBitKey<Bits16>.MaskFor(int length) => new(Mask(length));
 
-    public static bool MatchesUnderMask(in Bits16 key, in Bits16 bits, in Bits16 mask) => (key.Value & mask.Value) == bits.Value;
+    static bool IBitKey<Bits16>.MatchesUnderMask(in Bits16 key, in Bits16 bits, in Bits16 mask) => (key.Value & mask.Value) == bits.Value;
 
-    public static int GetBits(in Bits16 key, int offset, int count) => (int)(((uint)key.Value << (16 + offset)) >> (32 - count));
+    static int IBitKey<Bits16>.GetBits(in Bits16 key, int offset, int count) => (int)(((uint)key.Value << (16 + offset)) >> (32 - count));
 
-    public static Bits16 SetBits(in Bits16 key, int offset, int count, int value)
+    static Bits16 IBitKey<Bits16>.SetBits(in Bits16 key, int offset, int count, int value)
     {
         var mask = (0xFFFFu >> (16 - count)) << (16 - offset - count);
         return new((ushort)((key.Value & ~mask) | (((uint)value << (16 - offset - count)) & mask)));
@@ -48,19 +48,19 @@ public readonly record struct Bits16(ushort Value) : IBitKey<Bits16>
 /// <summary>An 8-bit key, the narrowest the trie takes, and the only width without shortcut blocks.</summary>
 public readonly record struct Bits8(byte Value) : IBitKey<Bits8>
 {
-    public static int Width => 8;
+    static int IBitKey<Bits8>.Width => 8;
 
     private static byte Mask(int length) => (byte)(0xFF00 >> length);
 
-    public static Bits8 Truncate(in Bits8 key, int length) => new((byte)(key.Value & Mask(length)));
+    static Bits8 IBitKey<Bits8>.Truncate(in Bits8 key, int length) => new((byte)(key.Value & Mask(length)));
 
-    public static Bits8 MaskFor(int length) => new(Mask(length));
+    static Bits8 IBitKey<Bits8>.MaskFor(int length) => new(Mask(length));
 
-    public static bool MatchesUnderMask(in Bits8 key, in Bits8 bits, in Bits8 mask) => (key.Value & mask.Value) == bits.Value;
+    static bool IBitKey<Bits8>.MatchesUnderMask(in Bits8 key, in Bits8 bits, in Bits8 mask) => (key.Value & mask.Value) == bits.Value;
 
-    public static int GetBits(in Bits8 key, int offset, int count) => (int)(((uint)key.Value << (24 + offset)) >> (32 - count));
+    static int IBitKey<Bits8>.GetBits(in Bits8 key, int offset, int count) => (int)(((uint)key.Value << (24 + offset)) >> (32 - count));
 
-    public static Bits8 SetBits(in Bits8 key, int offset, int count, int value)
+    static Bits8 IBitKey<Bits8>.SetBits(in Bits8 key, int offset, int count, int value)
     {
         var mask = (0xFFu >> (8 - count)) << (8 - offset - count);
         return new((byte)((key.Value & ~mask) | (((uint)value << (8 - offset - count)) & mask)));
@@ -70,12 +70,12 @@ public readonly record struct Bits8(byte Value) : IBitKey<Bits8>
 /// <summary>A key wider than the trie supports, to check that it is refused. Only its width is ever read.</summary>
 public readonly struct Bits136 : IBitKey<Bits136>
 {
-    public static int Width => 136;
-    public static Bits136 Truncate(in Bits136 key, int length) => throw new NotSupportedException();
-    public static Bits136 MaskFor(int length) => throw new NotSupportedException();
-    public static bool MatchesUnderMask(in Bits136 key, in Bits136 bits, in Bits136 mask) => throw new NotSupportedException();
-    public static int GetBits(in Bits136 key, int offset, int count) => throw new NotSupportedException();
-    public static Bits136 SetBits(in Bits136 key, int offset, int count, int value) => throw new NotSupportedException();
+    static int IBitKey<Bits136>.Width => 136;
+    static Bits136 IBitKey<Bits136>.Truncate(in Bits136 key, int length) => throw new NotSupportedException();
+    static Bits136 IBitKey<Bits136>.MaskFor(int length) => throw new NotSupportedException();
+    static bool IBitKey<Bits136>.MatchesUnderMask(in Bits136 key, in Bits136 bits, in Bits136 mask) => throw new NotSupportedException();
+    static int IBitKey<Bits136>.GetBits(in Bits136 key, int offset, int count) => throw new NotSupportedException();
+    static Bits136 IBitKey<Bits136>.SetBits(in Bits136 key, int offset, int count, int value) => throw new NotSupportedException();
 }
 
 /// <summary>A 32-bit key that throws while <see cref="Fail" /> is set, to make a write fail part way.</summary>
@@ -83,20 +83,20 @@ public readonly record struct FaultyBits32(uint Value) : IBitKey<FaultyBits32>
 {
     [ThreadStatic] public static bool Fail;
 
-    public static int Width => 32;
+    static int IBitKey<FaultyBits32>.Width => 32;
 
     private static uint Mask(int length) => (uint)((ulong)uint.MaxValue << (32 - length));
 
-    public static FaultyBits32 Truncate(in FaultyBits32 key, int length) =>
+    static FaultyBits32 IBitKey<FaultyBits32>.Truncate(in FaultyBits32 key, int length) =>
         Fail ? throw new InjectedFault() : new(key.Value & Mask(length));
 
-    public static FaultyBits32 MaskFor(int length) => new(Mask(length));
+    static FaultyBits32 IBitKey<FaultyBits32>.MaskFor(int length) => new(Mask(length));
 
-    public static bool MatchesUnderMask(in FaultyBits32 key, in FaultyBits32 bits, in FaultyBits32 mask) => (key.Value & mask.Value) == bits.Value;
+    static bool IBitKey<FaultyBits32>.MatchesUnderMask(in FaultyBits32 key, in FaultyBits32 bits, in FaultyBits32 mask) => (key.Value & mask.Value) == bits.Value;
 
-    public static int GetBits(in FaultyBits32 key, int offset, int count) => (int)((key.Value << offset) >> (32 - count));
+    static int IBitKey<FaultyBits32>.GetBits(in FaultyBits32 key, int offset, int count) => (int)((key.Value << offset) >> (32 - count));
 
-    public static FaultyBits32 SetBits(in FaultyBits32 key, int offset, int count, int value)
+    static FaultyBits32 IBitKey<FaultyBits32>.SetBits(in FaultyBits32 key, int offset, int count, int value)
     {
         var mask = (uint.MaxValue >> (32 - count)) << (32 - offset - count);
         return new((key.Value & ~mask) | (((uint)value << (32 - offset - count)) & mask));

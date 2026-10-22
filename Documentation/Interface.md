@@ -39,32 +39,34 @@ All packages target .NET 10 and are at version 3.0.0. Everything is in the `Bitv
 ## Keys
 
 A key is a fixed-width bit string, left-aligned: bit 0 is the most significant bit. The core needs only these
-operations. All are `static abstract`, so the JIT compiles each key type into plain machine instructions:
+operations. All are `static abstract`, so the JIT compiles each key type into plain machine instructions, and all are
+internal:
 
 ```csharp
 public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
 {
-    static abstract int Width { get; }                                         // a multiple of 8, at most 128
+    internal static abstract int Width { get; }                                // a multiple of 8, at most 128
 
-    static abstract TSelf Truncate(in TSelf key, int length);                  // clear every bit from length on
-    static abstract TSelf MaskFor(int length);                                 // the first length bits set
-    static abstract bool MatchesUnderMask(in TSelf key, in TSelf bits, in TSelf mask);
+    internal static abstract TSelf Truncate(in TSelf key, int length);         // clear every bit from length on
+    internal static abstract TSelf MaskFor(int length);                        // the first length bits set
+    internal static abstract bool MatchesUnderMask(in TSelf key, in TSelf bits, in TSelf mask);
 
-    static abstract int GetBits(in TSelf key, int offset, int count);          // 1 to 24 bits, as 0 to 2^count - 1
-    static abstract TSelf SetBits(in TSelf key, int offset, int count, int value);
-    static virtual int GetTopBits(in TSelf key, int count) => TSelf.GetBits(key, 0, count);
+    internal static abstract int GetBits(in TSelf key, int offset, int count); // 1 to 24 bits, as 0 to 2^count - 1
+    internal static abstract TSelf SetBits(in TSelf key, int offset, int count, int value);
+    internal static virtual int GetTopBits(in TSelf key, int count) => TSelf.GetBits(key, 0, count);
 }
 
 public readonly struct Bits32 : IBitKey<Bits32>, IEquatable<Bits32>   { public readonly uint Value;    public Bits32(uint value); }
 public readonly struct Bits128 : IBitKey<Bits128>, IEquatable<Bits128> { public readonly UInt128 Value; public Bits128(UInt128 value); }
 ```
 
-- **Two key types ship**, `Bits32` for IPv4 and `Bits128` for IPv6. A new key type writes six members; the default
-  `GetTopBits` is there to override for speed.
+- **Two key types**, `Bits32` for IPv4 and `Bits128` for IPv6, and no others. The interface is public because the
+  tries' type parameters are constrained on it, but its members are internal, so no other assembly can implement it:
+  the tries index their bit sets and tables with `GetBits` without bounds checks, and a key type whose `GetBits` strayed
+  outside 0 to 2^count - 1 would corrupt memory. The test project defines 8- and 16-bit keys through
+  `InternalsVisibleTo`.
 - **Widths are fixed at compile time** and limited to 128 bits. The read-write trie throws `NotSupportedException` for
   a width that is not a multiple of 8.
-- **`GetBits` must return a value from 0 to 2^count - 1.** The trie indexes its tables with it, so a custom key that
-  returns anything else breaks the trie's memory safety.
 - **Context such as a VRF** is served by one lookup per context, not by wider keys.
 
 ## Core
@@ -405,7 +407,7 @@ differs from that proposal:
 | Part | Proposed | Shipped, and why |
 | --- | --- | --- |
 | Read-write core | Chunked storage with continuous cleanup, `BitTrieOptions` for capacity and index tuning, `Compact()` | Built on the BART-style design measured as `BartTrie` ([Bart-Comparison.md](Bart-Comparison.md)): copy-on-write multibit nodes, bounded writes with nothing to tune or compact. No options, no `Compact`, no garbage counts in `BitTrieStatistics` |
-| Key interface | Also `CommonPrefixLength`, `SplitFor`, `IsSet` and `FromTopBits` | Removed: a binary-trie core needed them, the multibit core does not |
+| Key interface | Also `CommonPrefixLength`, `SplitFor`, `IsSet` and `FromTopBits`, open to user key types | Those four removed: a binary-trie core needed them, the multibit core does not. The members are internal, so only the library's key types implement it, because the tries rely on them for memory safety |
 | Key types | `Bits32`, `Bits64`, `Bits128`, `Bits192` | `Bits32` and `Bits128`. `Bits192` was for a VRF in front of the address, which one lookup per context serves better; `Bits64` was for keys such as MAC prefixes, which come in a few fixed lengths that a hash table handles |
 | Exact lookups | `TryGetValue(bits, length, out value)` | Also an overload that returns the prefix object |
 | Frozen root | 16 or 18 bits always | Sized to the number of prefixes unless `RootBits` is given, so small and empty tables stay small |

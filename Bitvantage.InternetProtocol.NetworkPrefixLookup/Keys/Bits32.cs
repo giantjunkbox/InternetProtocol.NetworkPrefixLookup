@@ -32,28 +32,28 @@ public readonly struct Bits32 : IBitKey<Bits32>, IEquatable<Bits32>
     public Bits32(uint value) => Value = value;
 
     /// <inheritdoc />
-    public static int Width => 32;
+    static int IBitKey<Bits32>.Width => 32;
 
     // shifting a 64-bit value gives 0 for length 0 and all ones for length 32, without a branch
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static uint Mask(int length) => (uint)((ulong)uint.MaxValue << (32 - length));
 
     /// <inheritdoc />
-    public static Bits32 Truncate(in Bits32 key, int length) => new(key.Value & Mask(length));
+    static Bits32 IBitKey<Bits32>.Truncate(in Bits32 key, int length) => new(key.Value & Mask(length));
 
     /// <inheritdoc />
-    public static Bits32 MaskFor(int length) => new(Mask(length));
-
-    /// <inheritdoc />
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool MatchesUnderMask(in Bits32 key, in Bits32 bits, in Bits32 mask) => (key.Value & mask.Value) == bits.Value;
+    static Bits32 IBitKey<Bits32>.MaskFor(int length) => new(Mask(length));
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static int GetBits(in Bits32 key, int offset, int count) => (int)((key.Value << offset) >> (32 - count));
+    static bool IBitKey<Bits32>.MatchesUnderMask(in Bits32 key, in Bits32 bits, in Bits32 mask) => (key.Value & mask.Value) == bits.Value;
 
     /// <inheritdoc />
-    public static Bits32 SetBits(in Bits32 key, int offset, int count, int value)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    static int IBitKey<Bits32>.GetBits(in Bits32 key, int offset, int count) => (int)((key.Value << offset) >> (32 - count));
+
+    /// <inheritdoc />
+    static Bits32 IBitKey<Bits32>.SetBits(in Bits32 key, int offset, int count, int value)
     {
         var mask = (uint.MaxValue >> (32 - count)) << (32 - offset - count);
         return new((key.Value & ~mask) | (((uint)value << (32 - offset - count)) & mask));
@@ -61,7 +61,7 @@ public readonly struct Bits32 : IBitKey<Bits32>, IEquatable<Bits32>
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static int GetTopBits(in Bits32 key, int count) => (int)(key.Value >> (32 - count));
+    static int IBitKey<Bits32>.GetTopBits(in Bits32 key, int count) => (int)(key.Value >> (32 - count));
 
     /// <inheritdoc />
     public bool Equals(Bits32 other) => Value == other.Value;
