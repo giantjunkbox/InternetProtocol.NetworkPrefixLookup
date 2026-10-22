@@ -171,7 +171,8 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     public BitTrie(IEnumerable<(TKey Bits, int Length, TPrefix Prefix, TValue Value)> items) : this()
     {
         ArgumentNullException.ThrowIfNull(items);
-        var buffer = new List<(TKey Bits, int Length, TPrefix Prefix, TValue Value)>(items);
+        var buffer = new List<(TKey Bits, int Length, TPrefix Prefix, TValue Value)>(items.TryGetNonEnumeratedCount(out var count) ? count : 0);
+        buffer.AddRange(items);
         Load(CollectionsMarshal.AsSpan(buffer));
     }
 

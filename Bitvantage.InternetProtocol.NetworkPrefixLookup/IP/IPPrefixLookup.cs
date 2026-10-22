@@ -75,8 +75,20 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     public IPPrefixLookup(IEnumerable<KeyValuePair<TPrefix, TValue>> items, IPLookupOptions? options = null) : this(options)
     {
         ArgumentNullException.ThrowIfNull(items);
-        var v4 = new List<(Bits32 Bits, int Length, TPrefix Prefix, TValue Value)>();
-        var v6 = new List<(Bits128 Bits, int Length, TPrefix Prefix, TValue Value)>();
+
+        // a collection can be read twice, so each family's buffer gets its exact size instead of growing by doubling
+        var ipv4 = 0;
+        var ipv6 = 0;
+        if (items is ICollection<KeyValuePair<TPrefix, TValue>> or IReadOnlyCollection<KeyValuePair<TPrefix, TValue>>)
+            foreach (var (prefix, _) in items)
+            {
+                IPAddressBits.ThrowIfNull(prefix);
+                if (TAdapter.IsIPv4(prefix)) ipv4++;
+                else ipv6++;
+            }
+
+        var v4 = new List<(Bits32 Bits, int Length, TPrefix Prefix, TValue Value)>(ipv4);
+        var v6 = new List<(Bits128 Bits, int Length, TPrefix Prefix, TValue Value)>(ipv6);
         foreach (var (prefix, value) in items)
         {
             IPAddressBits.ThrowIfNull(prefix);

@@ -175,12 +175,22 @@ public class RealBuildBenchmarks
         _ = V6Shuffled.Value;
     }
 
-    // the table in file order, which is address order, or shuffled
+    // the table in file order, which is address order, or shuffled; the first of each network, as the batch keeps it
     private static KeyValuePair<IPNetwork, int>[] Items(RouteViews.Table table, bool shuffle)
     {
-        var items = table.Networks.Select((n, i) => KeyValuePair.Create(n, table.Asns[i])).ToArray();
+        var items = table.Networks.Select((n, i) => KeyValuePair.Create(n, table.Asns[i])).DistinctBy(p => p.Key).ToArray();
         if (shuffle) new Random(5).Shuffle(items);
         return items;
+    }
+
+    private static IPNetworkLookup<int> Batch(KeyValuePair<IPNetwork, int>[] items)
+    {
+        var lookup = new IPNetworkLookup<int>();
+        using var batch = lookup.BeginBatch();
+        foreach (var (network, asn) in items)
+            lookup.TryAdd(network, asn);
+        batch.Commit();
+        return lookup;
     }
 
     [Benchmark, IterationCount(10)]
@@ -195,6 +205,9 @@ public class RealBuildBenchmarks
 
     [Benchmark(Baseline = true), IterationCount(10)]
     public object IPv4_Batch() => RouteViews.Build(RouteViews.IPv4);
+
+    [Benchmark, IterationCount(10)]
+    public object IPv4_BatchShuffled() => Batch(V4Shuffled.Value);
 
     [Benchmark, IterationCount(10)]
     public object IPv4_FromSequence() => new IPNetworkLookup<int>(V4Items.Value);
@@ -213,6 +226,9 @@ public class RealBuildBenchmarks
 
     [Benchmark, IterationCount(10)]
     public object IPv6_Batch() => RouteViews.Build(RouteViews.IPv6);
+
+    [Benchmark, IterationCount(10)]
+    public object IPv6_BatchShuffled() => Batch(V6Shuffled.Value);
 
     [Benchmark, IterationCount(10)]
     public object IPv6_FromSequence() => new IPNetworkLookup<int>(V6Items.Value);
