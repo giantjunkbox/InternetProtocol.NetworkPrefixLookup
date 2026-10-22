@@ -290,7 +290,7 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
 
     /// <summary>
     ///     Builds a read-only copy with faster lookups. Later changes to this lookup do not affect it. Writes wait while
-    ///     the copy is built; reads do not.
+    ///     the prefixes are copied out, but not while the copy's tables are built; reads never wait.
     /// </summary>
     /// <param name="options">
     ///     The layout of both address families' tables; the default is leaf-pushed, with a root sized to each table.
@@ -302,13 +302,20 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     /// <param name="ipv6">The layout of the IPv6 tables.</param>
     public FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> Freeze(FrozenBitTrieOptions ipv4, FrozenBitTrieOptions ipv6) => new(this, ipv4, ipv6);
 
-    // Both families under both writer locks, taken in BeginBatch's order, so that no batch commits between the two and
-    // the copy is the lookup at one moment.
+    // Both families' prefixes are copied under both writer locks, taken in BeginBatch's order, so that no batch commits
+    // between the two and the copy is the lookup at one moment. The tables are built after the locks are released.
     internal (FrozenBitTrie<Bits32, TPrefix, TValue> IPv4, FrozenBitTrie<Bits128, TPrefix, TValue> IPv6) FreezeParts(FrozenBitTrieOptions? ipv4, FrozenBitTrieOptions? ipv6)
     {
+        FrozenBitTrie<Bits32, TPrefix, TValue>.Contents v4;
+        FrozenBitTrie<Bits128, TPrefix, TValue>.Contents v6;
         using (_v4.WriterLock.EnterScope())
         using (_v6.WriterLock.EnterScope())
-            return (_v4.Freeze(ipv4), _v6.Freeze(ipv6));
+        {
+            v4 = _v4.CopyContents();
+            v6 = _v6.CopyContents();
+        }
+
+        return (new(v4, ipv4 ?? new FrozenBitTrieOptions()), new(v6, ipv6 ?? new FrozenBitTrieOptions()));
     }
 
     /// <summary>Counts the nodes and estimates the memory each address family holds.</summary>

@@ -149,14 +149,22 @@ public class RealTableBenchmarks
     }
 }
 
-/// <summary>Building the real tables: one write at a time, as one batch, and freezing.</summary>
+/// <summary>
+///     Building the real tables: one write at a time, as one batch, and freezing; and enumerating them, which is the part
+///     of freezing during which writers wait.
+/// </summary>
 [MemoryDiagnoser]
 public class RealBuildBenchmarks
 {
     private static readonly Lazy<IPNetworkLookup<int>> V4 = new(() => RouteViews.Build(RouteViews.IPv4));
+    private static readonly Lazy<IPNetworkLookup<int>> V6 = new(() => RouteViews.Build(RouteViews.IPv6));
 
     [GlobalSetup]
-    public void Setup() => _ = V4.Value;
+    public void Setup()
+    {
+        _ = V4.Value;
+        _ = V6.Value;
+    }
 
     [Benchmark, IterationCount(10)]
     public object IPv4_OneAtATime()
@@ -178,5 +186,25 @@ public class RealBuildBenchmarks
     public object IPv4_FreezeCompressed() => V4.Value.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });
 
     [Benchmark, IterationCount(10)]
+    public object IPv4_Enumerate() => Enumerate(V4.Value);
+
+    [Benchmark, IterationCount(10)]
     public object IPv6_Batch() => RouteViews.Build(RouteViews.IPv6);
+
+    [Benchmark, IterationCount(10)]
+    public object IPv6_FreezeLeafPushed() => V6.Value.Freeze();
+
+    [Benchmark, IterationCount(10)]
+    public object IPv6_FreezeCompressed() => V6.Value.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });
+
+    [Benchmark, IterationCount(10)]
+    public object IPv6_Enumerate() => Enumerate(V6.Value);
+
+    private static long Enumerate(IPNetworkLookup<int> lookup)
+    {
+        long sum = 0;
+        foreach (var entry in lookup)
+            sum += entry.Value;
+        return sum;
+    }
 }

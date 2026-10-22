@@ -88,10 +88,49 @@ public sealed record FrozenBitTrieOptions
 public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPrefix, TValue>
     where TKey : struct, IBitKey<TKey>
 {
-    private struct Entry
+    internal struct Entry
     {
         public TPrefix Prefix;
         public TValue Value;
+    }
+
+    /// <summary>The prefixes copied out of a read-write trie: all that building the tables reads.</summary>
+    internal sealed class Contents
+    {
+        public readonly TKey[] Bits;
+        public readonly byte[] Lengths;
+        public readonly Entry[] Entries;
+        public readonly int[] Parents; // the nearest shorter stored prefix containing each entry, or -1
+
+        /// <summary>Copies prefixes in address order, a shorter prefix before a longer one at the same address.</summary>
+        public Contents(IEnumerable<(TKey Bits, int Length, TPrefix Prefix, TValue Value)> items, int count)
+        {
+            Bits = new TKey[count];
+            Lengths = new byte[count];
+            Entries = new Entry[count];
+            Parents = new int[count];
+
+            // the open chain of prefixes that contain the current one, shortest first
+            var chain = new List<int>();
+            var i = 0;
+            foreach (var (key, length, prefix, value) in items)
+            {
+                if (i == count)
+                    throw new InvalidOperationException("The trie changed while it was being frozen.");
+                Bits[i] = key;
+                Lengths[i] = (byte)length;
+                Entries[i] = new Entry { Prefix = prefix, Value = value };
+
+                while (chain.Count > 0 && !TKey.MatchesUnderMask(key, Bits[chain[^1]], TKey.MaskFor(Lengths[chain[^1]])))
+                    chain.RemoveAt(chain.Count - 1);
+                Parents[i] = chain.Count > 0 ? chain[^1] : -1;
+                chain.Add(i);
+                i++;
+            }
+
+            if (i != count)
+                throw new InvalidOperationException("The trie changed while it was being frozen.");
+        }
     }
 
     private struct CompressedNode
@@ -120,10 +159,11 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
     private readonly CompressedNode[] _nodes = Array.Empty<CompressedNode>();
     private readonly int[] _answers = Array.Empty<int>(); // entry index, or -1 for no match
 
-    /// <summary>Builds the tables from prefixes in address order, a shorter prefix before a longer one at the same address.</summary>
-    internal FrozenBitTrie(IEnumerable<(TKey Bits, int Length, TPrefix Prefix, TValue Value)> items, int count, FrozenBitTrieOptions options)
+    /// <summary>Builds the tables from the prefixes copied out of a read-write trie.</summary>
+    internal FrozenBitTrie(Contents contents, FrozenBitTrieOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+        var count = contents.Entries.Length;
         if (!Enum.IsDefined(options.Layout))
             throw new ArgumentException($"Unknown layout {options.Layout}.", nameof(options));
         _compressed = options.Layout == FrozenLayout.Compressed;
@@ -136,33 +176,16 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
         _tableBits = options.TableBits;
         Options = options;
 
-        var bits = new TKey[count];
-        _entries = new Entry[count];
-        _lengths = new byte[count];
-        _parents = new int[count];
-        _values = options.ValueOnlyLookups ? new TValue[count] : null;
-
-        // the open chain of prefixes that contain the current one, shortest first
-        var chain = new List<int>();
-        var i = 0;
-        foreach (var (key, length, prefix, value) in items)
+        var bits = contents.Bits;
+        _entries = contents.Entries;
+        _lengths = contents.Lengths;
+        _parents = contents.Parents;
+        if (options.ValueOnlyLookups)
         {
-            if (i == count)
-                throw new InvalidOperationException("The trie changed while it was being frozen.");
-            bits[i] = key;
-            _lengths[i] = (byte)length;
-            _entries[i] = new Entry { Prefix = prefix, Value = value };
-            if (_values != null) _values[i] = value;
-
-            while (chain.Count > 0 && !TKey.MatchesUnderMask(key, bits[chain[^1]], TKey.MaskFor(_lengths[chain[^1]])))
-                chain.RemoveAt(chain.Count - 1);
-            _parents[i] = chain.Count > 0 ? chain[^1] : -1;
-            chain.Add(i);
-            i++;
+            _values = new TValue[count];
+            for (var i = 0; i < count; i++)
+                _values[i] = _entries[i].Value;
         }
-
-        if (i != count)
-            throw new InvalidOperationException("The trie changed while it was being frozen.");
 
         var builder = new Builder(bits, _lengths, _tableBits);
         _root = new uint[1 << _rootBits];

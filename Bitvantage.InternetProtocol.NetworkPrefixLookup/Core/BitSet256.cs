@@ -67,6 +67,24 @@ internal struct BitSet256
         W0 != 0 ? BitOperations.TrailingZeroCount(W0) : W1 != 0 ? 64 + BitOperations.TrailingZeroCount(W1)
         : W2 != 0 ? 128 + BitOperations.TrailingZeroCount(W2) : W3 != 0 ? 192 + BitOperations.TrailingZeroCount(W3) : 256;
 
+    /// <summary>The lowest set bit at or above <paramref name="from" />, or 256 when there is none.</summary>
+    public readonly int NextSet(int from)
+    {
+        if (from >= 256) return 256;
+        var w = from >> 6;
+        var word = Unsafe.Add(ref Unsafe.AsRef(in W0), w) & (ulong.MaxValue << (from & 63));
+        while (word == 0)
+        {
+            if (++w == 4) return 256;
+            word = Unsafe.Add(ref Unsafe.AsRef(in W0), w);
+        }
+
+        return (w << 6) + BitOperations.TrailingZeroCount(word);
+    }
+
+    /// <summary>The bits set in either set.</summary>
+    public static BitSet256 Or(in BitSet256 a, in BitSet256 b) => new() { W0 = a.W0 | b.W0, W1 = a.W1 | b.W1, W2 = a.W2 | b.W2, W3 = a.W3 | b.W3 };
+
     // RankMasks[bit * 4 + w]: the bits of word w at or below bit
     private static readonly ulong[] RankMasks = BuildRankMasks();
 
@@ -97,6 +115,31 @@ internal static class ArtTables
 
     /// <summary>Ancestors[i] holds index i and every index above it: i, i/2, i/4, ..., 1.</summary>
     public static readonly BitSet256[] Ancestors = BuildAncestors();
+
+    /// <summary>StartOctet[i] is the first octet that base index i covers.</summary>
+    public static readonly byte[] StartOctet = BuildStartOctets();
+
+    /// <summary>The octets at which the prefixes with the given base indexes start.</summary>
+    public static BitSet256 StartOctets(in BitSet256 indexes)
+    {
+        var octets = default(BitSet256);
+        for (var w = 0; w < 4; w++)
+            for (var word = Unsafe.Add(ref Unsafe.AsRef(in indexes.W0), w); word != 0; word &= word - 1)
+                octets.Set(StartOctet[(w << 6) + BitOperations.TrailingZeroCount(word)]);
+        return octets;
+    }
+
+    private static byte[] BuildStartOctets()
+    {
+        var table = new byte[256];
+        for (var i = 1; i < 256; i++)
+        {
+            var length = IndexToLength(i);
+            table[i] = (byte)((i - (1 << length)) << (8 - length));
+        }
+
+        return table;
+    }
 
     private static BitSet256[] BuildAncestors()
     {

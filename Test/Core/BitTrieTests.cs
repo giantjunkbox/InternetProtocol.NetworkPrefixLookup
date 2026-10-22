@@ -245,6 +245,25 @@ public class BitTrieTests
     }
 
     [Test]
+    public void Lookups_backtrack_any_number_of_levels()
+    {
+        // 10.1.2.64/26 and 10.1.2.128/25 make nodes at depths 1, 2 and 3 on the path of 10.1.2.3, which neither contains,
+        // so each prefix added after them answers it from one level nearer the deepest node
+        var trie = new BitTrie<Bits32, string, int>();
+        trie.Add(new Bits32(0x0A010240), 26, "/26", 0);
+        trie.Add(new Bits32(0x0A010280), 25, "/25", 0);
+        var key = new Bits32(0x0A010203);
+        Assert.That(trie.TryGetMatch(key, out _, out _), Is.False, "no match");
+
+        foreach (var (bits, length, where) in new[] { (0x0A000000u, 8, "three levels up"), (0x0A010000u, 16, "two levels up"), (0x0A010200u, 24, "one level up"), (0x0A010200u, 30, "the deepest node") })
+        {
+            trie.Add(new Bits32(bits), length, $"/{length}", 0);
+            Assert.That(trie.TryGetMatch(key, out var prefix, out _) ? prefix : null, Is.EqualTo($"/{length}"), where);
+            Assert.That(trie.Freeze().TryGetMatch(key, out prefix, out _) ? prefix : null, Is.EqualTo($"/{length}"), where + ", frozen");
+        }
+    }
+
+    [Test]
     public void Edge_prefixes_are_found()
     {
         var trie = new BitTrie<Bits128, int, int>();

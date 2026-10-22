@@ -237,7 +237,81 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         }
     }
 
+    // Without a stack: storing a node in the stack's inline array costs a write barrier call, and the deepest node or its
+    // parent answers nearly every lookup, so only a backtrack of two or more levels takes the walk that keeps a stack.
     private ref Entry FindOnce(in TKey key)
+    {
+        var published = Volatile.Read(ref _published);
+        var n = Volatile.Read(ref published.Root);
+        Node? parent = null;
+        var depth = 0;
+
+        var blocks = published.Blocks;
+        if (blocks != null)
+        {
+            var block = blocks[TKey.GetTopBits(key, 8)];
+            if (block != null)
+            {
+                parent = n;
+                n = block.Depth1;
+                depth = 1;
+                var depth2 = block.Depth2[TKey.GetBits(key, 8, 8)];
+                if (depth2 != null)
+                {
+                    parent = n;
+                    n = depth2;
+                    depth = 2;
+                }
+            }
+        }
+
+        // descend as far as the key leads; a leaf below the last node ends the search, and otherwise the last node's own
+        // fringe or prefix is the longest match
+        while (true)
+        {
+            var octet = TKey.GetBits(key, depth << 3, 8);
+            if (n.Kids.Test(octet))
+            {
+                parent = n;
+                n = n.KidNodes[n.Kids.Rank(octet) - 1];
+                depth++;
+                continue;
+            }
+
+            if (n.Leaves.Test(octet))
+            {
+                ref var leaf = ref n.LeafEntries[n.Leaves.Rank(octet) - 1];
+                if (TKey.MatchesUnderMask(key, leaf.Bits, leaf.Mask))
+                    return ref leaf.Entry;
+            }
+
+            if (n.Fringes.Test(octet))
+                return ref n.FringeEntries[n.Fringes.Rank(octet) - 1];
+            if (n.Prefixes.AndTop(in ArtTables.Ancestors[ArtTables.OctetToIndex(octet)], out var top))
+                return ref n.PrefixEntries[n.Prefixes.Rank(top) - 1];
+            break;
+        }
+
+        if (depth == 0)
+            return ref Unsafe.NullRef<Entry>();
+
+        // one level up
+        {
+            n = parent!;
+            depth--;
+            var octet = TKey.GetBits(key, depth << 3, 8);
+            if (n.Fringes.Test(octet))
+                return ref n.FringeEntries[n.Fringes.Rank(octet) - 1];
+            if (n.Prefixes.AndTop(in ArtTables.Ancestors[ArtTables.OctetToIndex(octet)], out var top))
+                return ref n.PrefixEntries[n.Prefixes.Rank(top) - 1];
+        }
+
+        // further up: the rare case, which walks again from the root. The retry in Find covers both walks, and the answer
+        // comes from the second alone.
+        return ref depth == 0 ? ref Unsafe.NullRef<Entry>() : ref FindWithStack(in key);
+    }
+
+    private ref Entry FindWithStack(in TKey key)
     {
         var stack = new NodeStack();
         var published = Volatile.Read(ref _published);
@@ -550,16 +624,17 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
     private static IEnumerable<(TKey Bits, int Length, Entry Entry)> Items(Node root)
     {
-        // depth-first, with the prefixes of each octet before what lies below it
+        // depth-first, with the prefixes of each octet before what lies below it; only the octets at which something
+        // starts are visited
         var stack = new Stack<(Node Node, int Depth, TKey Start, int Octet)>();
         stack.Push((root, 0, default, 0));
         while (stack.TryPop(out var frame))
         {
             var (n, depth, start, octet) = frame;
-            for (; octet < 256; octet++)
+            var offset = depth << 3;
+            var occupied = BitSet256.Or(ArtTables.StartOctets(in n.Prefixes), BitSet256.Or(n.Fringes, BitSet256.Or(n.Leaves, n.Kids)));
+            for (octet = occupied.NextSet(octet); octet < 256; octet = occupied.NextSet(octet + 1))
             {
-                var offset = depth << 3;
-
                 // prefixes inside the stride that start at this octet, shortest first
                 for (var relative = 0; relative < 8; relative++)
                 {
@@ -1351,14 +1426,21 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
     /// <summary>
     ///     Builds a read-only copy with faster lookups, from the prefixes readers can see. Later changes to this trie do
-    ///     not affect it. Writes wait while the copy is built; reads do not.
+    ///     not affect it. Writes wait while the prefixes are copied out, but not while the copy's tables are built; reads
+    ///     never wait.
     /// </summary>
     /// <param name="options">The layout of the copy's lookup tables; the defaults suit IP routing tables.</param>
     public FrozenBitTrie<TKey, TPrefix, TValue> Freeze(FrozenBitTrieOptions? options = null)
     {
+        FrozenBitTrie<TKey, TPrefix, TValue>.Contents contents;
         using (_lock.EnterScope())
-            return new FrozenBitTrie<TKey, TPrefix, TValue>(ItemsWithKeys(), Count, options ?? new FrozenBitTrieOptions());
+            contents = CopyContents();
+        return new FrozenBitTrie<TKey, TPrefix, TValue>(contents, options ?? new FrozenBitTrieOptions());
     }
+
+    // The prefixes readers can see, for a frozen copy. The caller holds the writer lock: a single write stores child
+    // references into published nodes, so a walk without the lock could see parts of two versions.
+    internal FrozenBitTrie<TKey, TPrefix, TValue>.Contents CopyContents() => new(ItemsWithKeys(), Count);
 
     // the writer lock, for the IP lookup's Freeze, which holds both families' locks so that no batch commits in between
     internal Lock WriterLock => _lock;

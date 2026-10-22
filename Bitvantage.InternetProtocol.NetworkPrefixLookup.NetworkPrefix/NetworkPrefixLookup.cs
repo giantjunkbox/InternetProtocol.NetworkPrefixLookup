@@ -60,7 +60,7 @@ public class NetworkPrefixLookup<TValue> : IPPrefixLookup<NetworkPrefix, Network
 
     /// <summary>
     ///     Builds a read-only copy with faster lookups. Later changes to this lookup do not affect it. Writes wait while
-    ///     the copy is built; reads do not.
+    ///     the prefixes are copied out, but not while the copy's tables are built; reads never wait.
     /// </summary>
     /// <param name="options">
     ///     The layout of both address families' tables; the default is leaf-pushed, with a root sized to each table.
@@ -109,7 +109,7 @@ public class NetworkPrefixLookup : NetworkPrefixLookup<NoValue>
 
     /// <summary>
     ///     Builds a read-only copy with faster lookups. Later changes to this set do not affect it. Writes wait while the
-    ///     copy is built; reads do not.
+    ///     prefixes are copied out, but not while the copy's tables are built; reads never wait.
     /// </summary>
     /// <param name="options">
     ///     The layout of both address families' tables; the default is leaf-pushed, with a root sized to each table.
