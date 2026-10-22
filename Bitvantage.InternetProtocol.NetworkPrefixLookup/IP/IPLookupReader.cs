@@ -16,41 +16,26 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-using System.Collections;
-using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Runtime.CompilerServices;
-using System.Diagnostics.CodeAnalysis;
 
 namespace Bitvantage.InternetProtocol;
 
-/// <summary>Names the read-write form of an IP lookup among its base class's type arguments. Infrastructure, not for direct use.</summary>
-[EditorBrowsable(EditorBrowsableState.Never)]
-public readonly struct ReadWriteForm
+// The two forms of an IP lookup, as type arguments of IPLookupReader.
+internal readonly struct ReadWriteForm
 {
 }
 
-/// <summary>Names the frozen form of an IP lookup among its base class's type arguments. Infrastructure, not for direct use.</summary>
-[EditorBrowsable(EditorBrowsableState.Never)]
-public readonly struct FrozenForm
+internal readonly struct FrozenForm
 {
 }
 
-/// <summary>
-///     The read-only members of <see cref="IPPrefixLookup{TPrefix,TAdapter,TValue}" /> and
-///     <see cref="FrozenIPPrefixLookup{TPrefix,TAdapter,TValue}" />, written once. Infrastructure: use one of those.
-/// </summary>
-/// <remarks>
-///     <typeparamref name="TForm" /> is <see cref="ReadWriteForm" /> or <see cref="FrozenForm" />. It tells the JIT which
-///     trie type holds each address family, so that each form's lookups call their tries directly and inline them, as
-///     if each class had its own copy of these members.
-/// </remarks>
-/// <typeparam name="TPrefix">The prefix type.</typeparam>
-/// <typeparam name="TAdapter">Reads the prefix type.</typeparam>
-/// <typeparam name="TValue">The value type.</typeparam>
-/// <typeparam name="TForm">The form of the lookup.</typeparam>
-[EditorBrowsable(EditorBrowsableState.Never)]
-public abstract class IPPrefixLookupBase<TPrefix, TAdapter, TValue, TForm> : IReadOnlyIPPrefixLookup<TPrefix, TValue>
+// The read-only members of IPPrefixLookup and FrozenIPPrefixLookup, written once; each class holds one of these and
+// forwards to it. TForm, ReadWriteForm or FrozenForm, tells the JIT which sealed trie type holds each address family, so
+// that each form's lookups call their tries directly and inline them. The members are AggressiveInlining, so that each
+// one-line forwarder compiles to what a copy of the member would.
+internal readonly struct IPLookupReader<TPrefix, TAdapter, TValue, TForm>
     where TAdapter : struct, IIPPrefixAdapter<TPrefix>
     where TForm : struct
 {
@@ -59,62 +44,56 @@ public abstract class IPPrefixLookupBase<TPrefix, TAdapter, TValue, TForm> : IRe
     private readonly IReadOnlyBitTrie<Bits128, TPrefix, TValue> _ipv6;
     private readonly bool _map;
 
-    private protected IPPrefixLookupBase(IReadOnlyBitTrie<Bits32, TPrefix, TValue> ipv4, IReadOnlyBitTrie<Bits128, TPrefix, TValue> ipv6, IPLookupOptions options)
+    public IPLookupReader(IReadOnlyBitTrie<Bits32, TPrefix, TValue> ipv4, IReadOnlyBitTrie<Bits128, TPrefix, TValue> ipv6, bool map)
     {
         _ipv4 = ipv4;
         _ipv6 = ipv6;
-        Options = options;
-        _map = options.MapIPv4MappedAddresses;
+        _map = map;
     }
 
-    /// <summary>The lookup's options; a frozen lookup has those of the lookup it was frozen from.</summary>
-    public IPLookupOptions Options { get; }
-
-    // ---- lookups ---------------------------------------------------------------------------------------------------
-
-    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatch(IPAddress address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
             ? Match4(new Bits32(v4), out prefix, out value)
             : Match6(new Bits128(v6), out prefix, out value);
 
-    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatch(ReadOnlySpan<byte> address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
             ? Match4(new Bits32(v4), out prefix, out value)
             : Match6(new Bits128(v6), out prefix, out value);
 
-    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatchIPv4(uint address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => Match4(new Bits32(address), out prefix, out value);
 
-    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatchIPv6(UInt128 address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4)
             ? Match4(new Bits32(v4), out prefix, out value)
             : Match6(new Bits128(address), out prefix, out value);
 
-    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatchValue(IPAddress address, [MaybeNullWhen(false)] out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
             ? MatchValue4(new Bits32(v4), out value)
             : MatchValue6(new Bits128(v6), out value);
 
-    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatchValue(ReadOnlySpan<byte> address, [MaybeNullWhen(false)] out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
             ? MatchValue4(new Bits32(v4), out value)
             : MatchValue6(new Bits128(v6), out value);
 
-    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatchValueIPv4(uint address, [MaybeNullWhen(false)] out TValue value) => MatchValue4(new Bits32(address), out value);
 
-    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatchValueIPv6(UInt128 address, [MaybeNullWhen(false)] out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4)
             ? MatchValue4(new Bits32(v4), out value)
             : MatchValue6(new Bits128(address), out value);
 
-    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatch(TPrefix network, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value)
     {
         IPAddressBits.ThrowIfNull(network);
@@ -123,7 +102,7 @@ public abstract class IPPrefixLookupBase<TPrefix, TAdapter, TValue, TForm> : IRe
             : MatchPrefix6(new Bits128(TAdapter.GetIPv6Bits(network)), TAdapter.GetLength(network), out prefix, out value);
     }
 
-    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetValue(TPrefix prefix, [MaybeNullWhen(false)] out TValue value)
     {
         IPAddressBits.ThrowIfNull(prefix);
@@ -132,7 +111,7 @@ public abstract class IPPrefixLookupBase<TPrefix, TAdapter, TValue, TForm> : IRe
             : Value6(new Bits128(TAdapter.GetIPv6Bits(prefix)), TAdapter.GetLength(prefix), out value);
     }
 
-    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool ContainsPrefix(TPrefix prefix)
     {
         IPAddressBits.ThrowIfNull(prefix);
@@ -141,21 +120,17 @@ public abstract class IPPrefixLookupBase<TPrefix, TAdapter, TValue, TForm> : IRe
             : Contains6(new Bits128(TAdapter.GetIPv6Bits(prefix)), TAdapter.GetLength(prefix));
     }
 
-    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(IPAddress address) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6) ? _ipv4.GetMatches(new Bits32(v4)) : _ipv6.GetMatches(new Bits128(v6));
 
-    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6) ? Matches4(new Bits32(v4), destination) : Matches6(new Bits128(v6), destination);
 
-    /// <summary>The number of stored prefixes, IPv4 and IPv6.</summary>
     public int Count => _ipv4.Count + _ipv6.Count;
 
-    /// <summary>Returns the IPv4 prefixes and then the IPv6 prefixes, each in address order.</summary>
     public IEnumerator<PrefixEntry<TPrefix, TValue>> GetEnumerator() => _ipv4.Concat(_ipv6).GetEnumerator();
-
-    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
     // ---- calls into the tries --------------------------------------------------------------------------------------
 

@@ -446,7 +446,7 @@ Version 3 implements this interface. Where it differs from the proposal above:
 | Freezing | `Freeze(options)` applies one layout to both address families, and `Freeze(ipv4, ipv6)`, with no defaults, takes one for each. A single `Freeze(ipv4 = null, ipv6 = null)` let `Freeze(compressed)` compress only IPv4 |
 | Null state | Every `Try…` method's `out` parameters carry `[MaybeNullWhen(false)]`, as `Dictionary.TryGetValue`'s do |
 | Address conversions | `IPAddressBits.ToIPv4Bits` and `ToIPv6Bits` throw `ArgumentException` for an address of the other family |
-| Shared base class | `IPPrefixLookupBase` holds the read-only members of the read-write and frozen lookups once, specialized by the marker structs `ReadWriteForm` and `FrozenForm`. It is public only because the public lookups derive from it; it is hidden from IntelliSense, and only the library can derive from it |
+| Shared code | The read-only members of the read-write and frozen lookups are written once, in an internal struct that each class forwards to, so the two classes implement `IReadOnlyIPPrefixLookup` directly and no infrastructure type is public. An earlier public base class, `IPPrefixLookupBase`, was replaced for that reason |
 | IP layer batches | `IPPrefixLookup.BeginBatch` returns a `Batch` that publishes each family atomically, IPv4 first |
 | Frozen IP lookups | A frozen class's protected constructor takes the read-write lookup to copy, so adapter packages can define their own pairs |
 | Value-less lookups | `NoValueLookupExtensions` adds `TryAdd(prefix)`, `Add(prefix)`, `TryGetMatch(address, out prefix)` and `ContainsMatch(address)` |

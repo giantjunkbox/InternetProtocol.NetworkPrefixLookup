@@ -16,6 +16,10 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+using System.Collections;
+using System.Diagnostics.CodeAnalysis;
+using System.Net;
+
 namespace Bitvantage.InternetProtocol;
 
 /// <summary>
@@ -26,11 +30,12 @@ namespace Bitvantage.InternetProtocol;
 /// <typeparam name="TPrefix">The prefix type.</typeparam>
 /// <typeparam name="TAdapter">Reads the prefix type.</typeparam>
 /// <typeparam name="TValue">The value type.</typeparam>
-public class FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> : IPPrefixLookupBase<TPrefix, TAdapter, TValue, FrozenForm>
+public class FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup<TPrefix, TValue>
     where TAdapter : struct, IIPPrefixAdapter<TPrefix>
 {
     private readonly FrozenBitTrie<Bits32, TPrefix, TValue> _v4;
     private readonly FrozenBitTrie<Bits128, TPrefix, TValue> _v6;
+    private readonly IPLookupReader<TPrefix, TAdapter, TValue, FrozenForm> _reader;
 
     /// <summary>Freezes a read-write lookup. Derived classes call this from their own constructors.</summary>
     /// <param name="source">The lookup to copy.</param>
@@ -43,12 +48,65 @@ public class FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> : IPPrefixLookupBas
 
     // both families, frozen together under the read-write lookup's locks
     private FrozenIPPrefixLookup((FrozenBitTrie<Bits32, TPrefix, TValue> V4, FrozenBitTrie<Bits128, TPrefix, TValue> V6) parts, IPLookupOptions options)
-        : base(parts.V4, parts.V6, options)
     {
         _v4 = parts.V4;
         _v6 = parts.V6;
+        Options = options;
+        _reader = new(parts.V4, parts.V6, options.MapIPv4MappedAddresses);
     }
 
     /// <summary>The memory held by both address families' tables and entries, in bytes.</summary>
     public long Bytes => _v4.Bytes + _v6.Bytes;
+
+    // ---- lookups, written once in IPLookupReader -------------------------------------------------------------------
+
+    /// <summary>The lookup's options; a frozen lookup has those of the lookup it was frozen from.</summary>
+    public IPLookupOptions Options { get; }
+
+    /// <inheritdoc />
+    public int Count => _reader.Count;
+
+    /// <inheritdoc />
+    public bool TryGetMatch(IPAddress address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => _reader.TryGetMatch(address, out prefix, out value);
+
+    /// <inheritdoc />
+    public bool TryGetMatch(ReadOnlySpan<byte> address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => _reader.TryGetMatch(address, out prefix, out value);
+
+    /// <inheritdoc />
+    public bool TryGetMatchIPv4(uint address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => _reader.TryGetMatchIPv4(address, out prefix, out value);
+
+    /// <inheritdoc />
+    public bool TryGetMatchIPv6(UInt128 address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => _reader.TryGetMatchIPv6(address, out prefix, out value);
+
+    /// <inheritdoc />
+    public bool TryGetMatchValue(IPAddress address, [MaybeNullWhen(false)] out TValue value) => _reader.TryGetMatchValue(address, out value);
+
+    /// <inheritdoc />
+    public bool TryGetMatchValue(ReadOnlySpan<byte> address, [MaybeNullWhen(false)] out TValue value) => _reader.TryGetMatchValue(address, out value);
+
+    /// <inheritdoc />
+    public bool TryGetMatchValueIPv4(uint address, [MaybeNullWhen(false)] out TValue value) => _reader.TryGetMatchValueIPv4(address, out value);
+
+    /// <inheritdoc />
+    public bool TryGetMatchValueIPv6(UInt128 address, [MaybeNullWhen(false)] out TValue value) => _reader.TryGetMatchValueIPv6(address, out value);
+
+    /// <inheritdoc />
+    public bool TryGetMatch(TPrefix network, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => _reader.TryGetMatch(network, out prefix, out value);
+
+    /// <inheritdoc />
+    public bool TryGetValue(TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => _reader.TryGetValue(prefix, out value);
+
+    /// <inheritdoc />
+    public bool ContainsPrefix(TPrefix prefix) => _reader.ContainsPrefix(prefix);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(IPAddress address) => _reader.GetMatches(address);
+
+    /// <inheritdoc />
+    public int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination) => _reader.GetMatches(address, destination);
+
+    /// <summary>Returns the IPv4 prefixes and then the IPv6 prefixes, each in address order.</summary>
+    public IEnumerator<PrefixEntry<TPrefix, TValue>> GetEnumerator() => _reader.GetEnumerator();
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }

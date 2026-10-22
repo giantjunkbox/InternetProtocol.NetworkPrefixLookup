@@ -54,14 +54,15 @@ interface differs from the proposal. `Documentation/Adapter-Survey.md` explains 
   - `Keys/`: `IBitKey<TSelf>`, `Bits32` and `Bits128`.
   - `Core/`: `BitTrie` (the read-write trie), `FrozenBitTrie`, `IReadOnlyBitTrie`, `BitSet256` with the ART tables,
     `PrefixEntry`, `NoValue`.
-  - `IP/`: the adapter interface, `IPAddressBits`, `IPPrefixLookup`, its frozen form and shared base class, and
-    `IPNetworkLookup` for `System.Net.IPNetwork`.
+  - `IP/`: the adapter interface, `IPAddressBits`, `IPPrefixLookup` and its frozen form, the internal `IPLookupReader`
+    they share, and `IPNetworkLookup` for `System.Net.IPNetwork`.
 - `Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix/`, `.IPNetwork2/`, `.MaxMind/`: the adapter packages,
   each an adapter struct and a read-write and frozen class pair. The MaxMind package also has `MaxMindDatabase.Load`.
-- The read-only members of the read-write and frozen IP lookups are written once, in `IPPrefixLookupBase`. A marker
-  type argument, `ReadWriteForm` or `FrozenForm`, lets the JIT call each form's sealed trie type directly; see "One copy
-  of the read-only members" in `Documentation/Architecture.md`. Make every lookup's call into a trie through those
-  typed calls, not through `IReadOnlyBitTrie`, which would not inline.
+- The read-only members of the read-write and frozen IP lookups are written once, in the internal struct
+  `IPLookupReader`, and each public class forwards to it in one line. A marker type argument, `ReadWriteForm` or
+  `FrozenForm`, lets the JIT call each form's sealed trie type directly; see "One copy of the read-only members" in
+  `Documentation/Architecture.md`. Make every lookup's call into a trie through those typed calls, not through
+  `IReadOnlyBitTrie`, which would not inline. Keep the reader, the markers and any new shared code internal.
 - `Test/` contains NUnit tests in `Core/`, `IP/` and `Adapters/`, and two MaxMind test databases in `Data/MaxMind/`
   (Apache-2.0 or MIT, notice included). `PerformanceTest/` contains BenchmarkDotNet benchmarks and a memory report.
 - `Prototypes/GenericTrie/` holds the prototypes the design was measured with. It is not in the solution and references

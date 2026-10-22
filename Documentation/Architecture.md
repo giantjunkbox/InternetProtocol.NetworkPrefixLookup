@@ -44,14 +44,14 @@ contains a given prefix, and look prefixes up exactly.
 | --- | --- |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup/Keys/` | `IBitKey<TSelf>`, `Bits32` and `Bits128` |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup/Core/` | `BitTrie`, `FrozenBitTrie`, `IReadOnlyBitTrie`, `BitSet256` and the ART tables, `PrefixEntry`, `NoValue` |
-| `Bitvantage.InternetProtocol.NetworkPrefixLookup/IP/` | Adapter interfaces, `IPAddressBits`, `IPPrefixLookup`, its frozen form and shared base class, `IPNetworkLookup` |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup/IP/` | The adapter interface, `IPAddressBits`, `IPPrefixLookup` and its frozen form, the internal `IPLookupReader` they share, `IPNetworkLookup` |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup.*/` | One adapter package each |
 | `Test/` | NUnit tests: `Core/`, `IP/`, `Adapters/`, and MaxMind test databases in `Data/` |
 | `PerformanceTest/` | BenchmarkDotNet benchmarks and a memory report |
 | `Prototypes/GenericTrie/` | The prototypes the design was measured with; not part of the solution |
 
-The read-only members of `IPPrefixLookup` and `FrozenIPPrefixLookup` are written once, in `IPPrefixLookupBase`; see
-[The IP layer](#the-ip-layer).
+The read-only members of `IPPrefixLookup` and `FrozenIPPrefixLookup` are written once, in the internal
+`IPLookupReader`; see [The IP layer](#the-ip-layer).
 
 ## Layers
 
@@ -285,19 +285,22 @@ read a prefix's family, network bits and length. Generic code over a struct is s
 caller's type costs no indirection.
 
 **One copy of the read-only members.** The read-write and frozen lookups answer the same queries from different trie
-types. Their read-only members live once, in `IPPrefixLookupBase<TPrefix, TAdapter, TValue, TForm>`. The base holds each
-family's trie through `IReadOnlyBitTrie`, but never calls through it, which would be an interface call that does not
-inline. `TForm` is an empty struct, `ReadWriteForm` or `FrozenForm`. Each call into a trie tests `typeof(TForm)` and
-casts the trie to that form's sealed class with `Unsafe.As`. The JIT compiles generic code separately for each struct
-type argument and resolves the test as it compiles, so each form keeps only its direct, inlinable call. The base class
-and the two marker structs are public, because public classes derive from them, and are hidden from IntelliSense. Its
-constructor is `private protected`, so only the library can derive from them.
+types. Their read-only members are written once, in the internal struct `IPLookupReader<TPrefix, TAdapter, TValue,
+TForm>`. Each public class holds one in a field and forwards each member to it in one line, so no infrastructure type
+is public. The reader holds each family's trie through `IReadOnlyBitTrie`, but never calls through it, which would be
+an interface call that does not inline. `TForm` is an empty internal struct, `ReadWriteForm` or `FrozenForm`. Each
+call into a trie tests `typeof(TForm)` and casts the trie to that form's sealed class with `Unsafe.As`. The JIT
+compiles generic code separately for each struct type argument and resolves the test as it compiles, so each form
+keeps only its direct, inlinable call. The reader's members are `AggressiveInlining`, so each forwarder compiles to
+what its own copy of the member would.
 
-Measured against the duplicated classes it replaced, in one session with old and new back to back, the shared base
-was as fast or faster in all five cases: IPv4 and IPv6 from integers, read-write and frozen, and IPv4 from `IPAddress`
-with a reference-type prefix, whose generic code the runtime shares across reference types. The JIT's output confirms
-it: in the shared code, the read-write form calls only `BitTrie.Find` and the frozen form only
-`FrozenBitTrie.FindLeafPushed` and `FindCompressed`, with each trie's `TryGetMatch` inlined, as before.
+The shared code first lived in a public base class, which, measured against the duplicated classes it replaced in one
+session with old and new back to back, was as fast or faster in all five cases: IPv4 and IPv6 from integers,
+read-write and frozen, and IPv4 from `IPAddress` with a reference-type prefix, whose generic code the runtime shares
+across reference types. The reader replaced the base class so that no infrastructure type is public. The JIT's output
+for each public lookup is the base class's, with the reader and the trie's `TryGetMatch` inlined: the read-write form
+calls only `BitTrie.Find` and the frozen form only `FrozenBitTrie.FindLeafPushed` and `FindCompressed`. Each forwarder
+adds two instructions, a null check of the lookup and the offset of the reader field.
 
 - **Addresses** convert without allocating: IPv4 through the obsolete `IPAddress.Address` property, which was about
   30% faster end to end than `TryWriteBytes`, and IPv6 through `TryWriteBytes` into a stack buffer. The span, `uint` and
