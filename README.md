@@ -213,7 +213,8 @@ is needed.
 
 Loading the real IPv4 table as one batch takes 0.2 seconds and holds 22 MB, against 0.5 seconds and 416 MB in version 2.
 The frozen copy holds 53 MB, or 32 MB with the compressed layout. For scattered prefixes the difference is larger: on
-the random table the default frozen layout grew to 105 MB, where the compressed one needed 8 MB and was faster.
+the random table the leaf-pushed layout grew to 109 MB, where the compressed one, which the default chooses there,
+needed 7 MB and was faster.
 
 [Documentation/Architecture.md](Documentation/Architecture.md#performance) has the details, with builds, writes and
 memory for every table, and how each number was measured.

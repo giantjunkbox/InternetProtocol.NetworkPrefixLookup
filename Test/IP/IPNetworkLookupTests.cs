@@ -236,6 +236,35 @@ public class IPNetworkLookupTests
     }
 
     [Test]
+    public void A_lookup_built_from_a_sequence_matches_one_built_a_prefix_at_a_time()
+    {
+        var random = new Random(41);
+        var networks = new List<IPNetwork>();
+        for (var i = 0; i < 4000; i++)
+        {
+            var length = random.Next(0, 33);
+            networks.Add(new IPNetwork(IPAddressBits.FromIPv4Bits(length == 0 ? 0 : (uint)random.NextInt64(1L << 32) & (uint.MaxValue << (32 - length))), length));
+            length = random.Next(0, 129);
+            var bits = ((UInt128)(ulong)random.NextInt64() << 64 | (ulong)random.NextInt64()) & (length == 0 ? 0 : UInt128.MaxValue << (128 - length));
+            networks.Add(new IPNetwork(IPAddressBits.FromIPv6Bits(bits), length));
+        }
+
+        networks = networks.Distinct().ToList();
+        var oneByOne = new IPNetworkLookup<int>();
+        for (var i = 0; i < networks.Count; i++)
+            oneByOne.Add(networks[i], i);
+        var built = new IPNetworkLookup<int>(networks.Select((n, i) => KeyValuePair.Create(n, i)));
+
+        Assert.That(built.Count, Is.EqualTo(networks.Count));
+        foreach (var family in new[] { AddressFamily.InterNetwork, AddressFamily.InterNetworkV6 })
+            Assert.That(built.ToTextTree(family), Is.EqualTo(oneByOne.ToTextTree(family)), family.ToString());
+        Assert.That(built.Select(e => e.Value), Is.EqualTo(oneByOne.Select(e => e.Value)), "enumeration");
+
+        Assert.Throws<ArgumentException>(() => _ = new IPNetworkLookup<int>(new[] { KeyValuePair.Create(N("10.0.0.0/8"), 1), KeyValuePair.Create(N("10.0.0.0/8"), 2) }));
+        Assert.Throws<ArgumentException>(() => _ = new IPNetworkLookup<int>(new[] { KeyValuePair.Create(N("::ffff:10.0.0.0/104"), 1) }, new IPLookupOptions { MapIPv4MappedAddresses = true }));
+    }
+
+    [Test]
     public void With_mapping_on_prefixes_inside_the_mapped_range_are_refused()
     {
         var map = new IPNetworkLookup<string>(new IPLookupOptions { MapIPv4MappedAddresses = true });

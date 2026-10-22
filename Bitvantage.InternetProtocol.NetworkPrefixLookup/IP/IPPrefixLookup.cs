@@ -20,6 +20,7 @@ using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 
 namespace Bitvantage.InternetProtocol;
 
@@ -60,17 +61,33 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
         _reader = new(v4, v6, Options.MapIPv4MappedAddresses);
     }
 
-    /// <summary>Creates a lookup holding the given prefixes, loaded as one batch.</summary>
-    /// <param name="items">The prefixes and their values.</param>
+    /// <summary>Creates a lookup holding the given prefixes, built in one pass.</summary>
+    /// <param name="items">The prefixes, in any order, and their values.</param>
     /// <param name="options">Lookup options; by default every address is looked up as given.</param>
-    /// <exception cref="ArgumentException">A prefix appears more than once.</exception>
+    /// <remarks>
+    ///     Faster than adding the prefixes one at a time, and it allocates less: each node is built once, with arrays of
+    ///     the exact size. The prefixes are copied into a buffer per address family first, which is garbage afterwards.
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    ///     A prefix appears more than once, or <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> is on and a prefix lies
+    ///     inside <c>::ffff:0:0/96</c>.
+    /// </exception>
     public IPPrefixLookup(IEnumerable<KeyValuePair<TPrefix, TValue>> items, IPLookupOptions? options = null) : this(options)
     {
         ArgumentNullException.ThrowIfNull(items);
-        using var batch = BeginBatch();
+        var v4 = new List<(Bits32 Bits, int Length, TPrefix Prefix, TValue Value)>();
+        var v6 = new List<(Bits128 Bits, int Length, TPrefix Prefix, TValue Value)>();
         foreach (var (prefix, value) in items)
-            Add(prefix, value);
-        batch.Commit();
+        {
+            IPAddressBits.ThrowIfNull(prefix);
+            if (TAdapter.IsIPv4(prefix))
+                v4.Add((new Bits32(TAdapter.GetIPv4Bits(prefix)), TAdapter.GetLength(prefix), prefix, value));
+            else
+                v6.Add((StoredIPv6Bits(prefix), TAdapter.GetLength(prefix), prefix, value));
+        }
+
+        _v4.Load(CollectionsMarshal.AsSpan(v4));
+        _v6.Load(CollectionsMarshal.AsSpan(v6));
     }
 
     /// <summary>

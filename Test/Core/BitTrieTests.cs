@@ -119,6 +119,9 @@ public class BitTrieTests
         var trie = Build(prefixes, all);
         AssertQueries(trie, reference, prefixes, keys, "one at a time");
         AssertQueries(Build(prefixes, all, batch: true), reference, prefixes, keys, "batch");
+        var built = new BitTrie<TKey, int, int>(all.Select(i => (prefixes[i].Bits, prefixes[i].Length, i, i * 7)));
+        AssertQueries(built, reference, prefixes, keys, "built from a sequence");
+        Assert.That(built.ToTextTree(Format), Is.EqualTo(trie.ToTextTree(Format)), "built from a sequence: shape");
         foreach (var layout in Layouts)
             AssertQueries(trie.Freeze(layout), reference, prefixes, keys, $"frozen {layout}");
 
@@ -131,6 +134,12 @@ public class BitTrieTests
 
         AssertQueries(trie, reference, prefixes, keys, "after removal");
         AssertQueries(trie.Freeze(), reference, prefixes, keys, "frozen after removal");
+
+        // a trie built from a sequence takes later writes as one built by them
+        foreach (var i in all.Where(i => i % 3 == 0))
+            Assert.That(built.Remove(prefixes[i].Bits, prefixes[i].Length), Is.True);
+        AssertQueries(built, reference, prefixes, keys, "built from a sequence, after removal");
+        Assert.That(built.ToTextTree(Format), Is.EqualTo(trie.ToTextTree(Format)), "built from a sequence, after removal: shape");
     }
 
     [Test(Description = "8-bit keys have no shortcut blocks, so lookups start at the root; an 8-bit key holds at most 511 prefixes.")]
@@ -159,6 +168,35 @@ public class BitTrieTests
         Assert.That(Build(prefixes, all.OrderBy(_ => random.Next())).ToTextTree(Format), Is.EqualTo(expected), "shuffled");
         Assert.That(Build(prefixes, Enumerable.Reverse(all)).ToTextTree(Format), Is.EqualTo(expected), "reversed");
         Assert.That(Build(prefixes, all, batch: true).ToTextTree(Format), Is.EqualTo(expected), "batch");
+
+        // built from a sequence in any order: the same shape, and the same nodes and arrays as after a batch
+        BitTrie<Bits32, int, int> FromSequence(IEnumerable<int> order) => new(order.Select(i => (prefixes[i].Bits, prefixes[i].Length, i, i * 7)));
+        var sorted = all.OrderBy(i => prefixes[i].Bits.Value).ThenBy(i => prefixes[i].Length).ToList();
+        foreach (var (order, name) in new[] { (sorted, "sorted"), (all.OrderBy(_ => random.Next()).ToList(), "shuffled"), (Enumerable.Reverse(sorted).ToList(), "reversed") })
+        {
+            var built = FromSequence(order);
+            Assert.That(built.ToTextTree(Format), Is.EqualTo(expected), $"built from a sequence, {name}");
+            Assert.That(built.GetStatistics(), Is.EqualTo(Build(prefixes, all, batch: true).GetStatistics()), $"built from a sequence, {name}: statistics");
+        }
+    }
+
+    [Test]
+    public void Building_from_a_sequence_checks_its_prefixes()
+    {
+        Assert.Throws<ArgumentException>(() => _ = new BitTrie<Bits32, int, int>(new[] { (new Bits32(0x0A000000), 8, 1, 1), (new Bits32(0x0A000000), 8, 2, 2) }), "a duplicate");
+        Assert.Throws<ArgumentException>(() => _ = new BitTrie<Bits32, int, int>(new[] { (new Bits32(0x0A010203), 24, 1, 1), (new Bits32(0x0A0102FF), 24, 2, 2) }), "a duplicate with other host bits");
+        Assert.Throws<ArgumentException>(() => _ = new BitTrie<Bits128, int, int>(new[] { (new Bits128(5), 128, 1, 1), (new Bits128(7), 64, 2, 2), (new Bits128(5), 128, 3, 3) }), "a duplicate full-width prefix");
+        Assert.Throws<ArgumentOutOfRangeException>(() => _ = new BitTrie<Bits32, int, int>(new[] { (new Bits32(0), 33, 1, 1) }));
+
+        var empty = new BitTrie<Bits32, int, int>(Array.Empty<(Bits32, int, int, int)>());
+        Assert.That(empty.Count, Is.Zero);
+        Assert.That(empty.TryAdd(new Bits32(0x0A000000), 8, 1, 1));
+        Assert.That(empty.TryGetMatchValue(new Bits32(0x0A010203), out var value) && value == 1);
+
+        var single = new BitTrie<Bits32, int, int>(new[] { (new Bits32(0xC0A80101), 32, 1, 1) });
+        Assert.That(single.Count, Is.EqualTo(1));
+        Assert.That(single.TryGetMatchValue(new Bits32(0xC0A80101), out value) && value == 1);
+        Assert.That(single.TryGetMatchValue(new Bits32(0xC0A80102), out _), Is.False);
     }
 
     [Test]

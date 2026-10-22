@@ -56,7 +56,7 @@ public class MaxMindNetworkLookup<TValue> : IPPrefixLookup<Network, MaxMindNetwo
     {
     }
 
-    /// <summary>Creates a lookup holding the given prefixes, loaded as one batch.</summary>
+    /// <summary>Creates a lookup holding the given prefixes, built in one pass.</summary>
     /// <param name="items">The prefixes and their values.</param>
     /// <param name="options">Lookup options; by default IPv4-mapped IPv6 addresses are looked up as IPv4, as MaxMind's reader does.</param>
     /// <exception cref="ArgumentException">A prefix appears more than once.</exception>

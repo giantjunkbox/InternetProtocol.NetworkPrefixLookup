@@ -52,7 +52,7 @@ public class IPNetwork2Lookup<TValue> : IPPrefixLookup<IPNetwork2, IPNetwork2Ada
     {
     }
 
-    /// <summary>Creates a lookup holding the given prefixes, loaded as one batch.</summary>
+    /// <summary>Creates a lookup holding the given prefixes, built in one pass.</summary>
     /// <param name="items">The prefixes and their values.</param>
     /// <param name="options">Lookup options; by default every address is looked up as given.</param>
     /// <exception cref="ArgumentException">A prefix appears more than once.</exception>

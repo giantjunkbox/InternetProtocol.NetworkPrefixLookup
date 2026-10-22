@@ -160,16 +160,19 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         _published = new Published(_w, _hasTable);
     }
 
-    /// <summary>Creates a trie holding the given prefixes, loaded as one batch.</summary>
-    /// <param name="items">The prefixes, each with its bits, length, prefix object and value.</param>
+    /// <summary>Creates a trie holding the given prefixes, built in one pass.</summary>
+    /// <param name="items">The prefixes, in any order, each with its bits, length, prefix object and value.</param>
+    /// <remarks>
+    ///     Faster than adding the prefixes one at a time, and it allocates less: each node is built once, with arrays of
+    ///     the exact size. The prefixes are copied into a buffer first, which is garbage afterwards.
+    /// </remarks>
     /// <exception cref="ArgumentException">A prefix appears more than once.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">A length is outside 0 to the key width.</exception>
     public BitTrie(IEnumerable<(TKey Bits, int Length, TPrefix Prefix, TValue Value)> items) : this()
     {
         ArgumentNullException.ThrowIfNull(items);
-        using var batch = BeginBatch();
-        foreach (var (bits, length, prefix, value) in items)
-            Add(in bits, length, prefix, value);
-        batch.Commit();
+        var buffer = new List<(TKey Bits, int Length, TPrefix Prefix, TValue Value)>(items);
+        Load(CollectionsMarshal.AsSpan(buffer));
     }
 
     /// <summary>The number of stored prefixes that readers can see; changes in an uncommitted batch do not count.</summary>
@@ -1456,6 +1459,134 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         if ((uint)length > (uint)TKey.Width)
             throw new ArgumentOutOfRangeException(nameof(length), length, $"Prefix lengths range from 0 to {TKey.Width}.");
     }
+
+    // ---- building from a sequence -----------------------------------------------------------------------------------
+
+    // Fills this trie, which must be empty and outside a batch, with items in any order, and publishes the result as a
+    // batch commit would. Adding them one at a time descends from the root for each, grows every array by doubling and
+    // copies every array again when the batch commits; this builds each node once, with arrays of the exact size. It
+    // reorders the items and truncates their bits in place.
+    internal void Load(Span<(TKey Bits, int Length, TPrefix Prefix, TValue Value)> items)
+    {
+        using (_lock.EnterScope())
+        {
+            if (_batch || _w.Count != 0)
+                throw new InvalidOperationException("Only an empty trie outside a batch can be loaded.");
+            foreach (ref var item in items)
+            {
+                CheckLength(item.Length);
+                item.Bits = TKey.Truncate(item.Bits, item.Length);
+            }
+
+            var root = Build(items, 0);
+            var published = new Published(root, _hasTable);
+            if (published.Blocks != null)
+                for (var first = 0; first < 256; first++)
+                    if (Kid(root, first) is { } depth1)
+                        published.Blocks[first] = NewBlock(depth1);
+
+            _w = root;
+            Interlocked.Increment(ref _changes);
+            Volatile.Write(ref _published, published);
+            Interlocked.Increment(ref _changes);
+        }
+    }
+
+    // The node at depth for items whose bits agree above it and whose lengths reach it: a most-significant-digit radix
+    // sort by octet that builds the trie as it goes, in place, with no comparisons. The node's own prefixes and fringes
+    // go first; the rest are moved into one run per octet, and a run of one becomes a leaf, a longer run a child node, as
+    // the canonical shape requires. Two items with the same prefix end up in one node at the same base index or octet.
+    // The node is stamped 0 and shares its arrays, as after a batch commit, so later writes copy it.
+    private static Node Build(Span<(TKey Bits, int Length, TPrefix Prefix, TValue Value)> items, int depth)
+    {
+        var offset = depth << 3;
+        var n = new Node { Count = items.Length, Shared = AllArrays };
+
+        var own = 0;
+        for (var i = 0; i < items.Length; i++)
+            if (items[i].Length - offset <= 8)
+            {
+                (items[i], items[own]) = (items[own], items[i]);
+                own++;
+            }
+
+        // the prefixes inside the stride and the fringes: first the bit sets, then each entry at its rank
+        foreach (ref var item in items[..own])
+        {
+            var octet = TKey.GetBits(item.Bits, offset, 8);
+            var relative = item.Length - offset;
+            ref var set = ref relative < 8 ? ref n.Prefixes : ref n.Fringes;
+            var bit = relative < 8 ? ArtTables.PrefixToIndex(octet, relative) : octet;
+            if (set.Test(bit))
+                throw new ArgumentException($"The prefix {item.Prefix} appears more than once.", nameof(items));
+            set.Set(bit);
+        }
+
+        n.PrefixEntries = NewArray<Entry>(n.Prefixes.PopCount());
+        n.FringeEntries = NewArray<Entry>(n.Fringes.PopCount());
+        foreach (ref var item in items[..own])
+        {
+            var octet = TKey.GetBits(item.Bits, offset, 8);
+            var relative = item.Length - offset;
+            var entry = new Entry { Prefix = item.Prefix, Value = item.Value };
+            if (relative < 8)
+                n.PrefixEntries[n.Prefixes.Rank(ArtTables.PrefixToIndex(octet, relative)) - 1] = entry;
+            else
+                n.FringeEntries[n.Fringes.Rank(octet) - 1] = entry;
+        }
+
+        // the longer items, into one run per octet: count them, then move each into its run (American flag sort)
+        var below = items[own..];
+        Span<int> starts = stackalloc int[257];
+        foreach (ref var item in below)
+            starts[TKey.GetBits(item.Bits, offset, 8) + 1]++;
+        int kids = 0, leaves = 0;
+        for (var octet = 0; octet < 256; octet++)
+        {
+            if (starts[octet + 1] == 1) leaves++;
+            else if (starts[octet + 1] > 1) kids++;
+            starts[octet + 1] += starts[octet];
+        }
+
+        Span<int> fill = stackalloc int[256];
+        starts[..256].CopyTo(fill);
+        for (var octet = 0; octet < 256; octet++)
+            while (fill[octet] < starts[octet + 1])
+            {
+                var target = TKey.GetBits(below[fill[octet]].Bits, offset, 8);
+                if (target == octet)
+                {
+                    fill[octet]++;
+                    continue;
+                }
+
+                var to = fill[target]++;
+                (below[fill[octet]], below[to]) = (below[to], below[fill[octet]]);
+            }
+
+        n.KidNodes = NewArray<Node>(kids);
+        n.LeafEntries = NewArray<Leaf>(leaves);
+        int k = 0, l = 0;
+        for (var octet = 0; octet < 256; octet++)
+        {
+            var run = below[starts[octet]..starts[octet + 1]];
+            if (run.Length == 1)
+            {
+                ref var item = ref run[0];
+                n.Leaves.Set(octet);
+                n.LeafEntries[l++] = new Leaf { Bits = item.Bits, Mask = TKey.MaskFor(item.Length), Length = item.Length, Entry = new Entry { Prefix = item.Prefix, Value = item.Value } };
+            }
+            else if (run.Length > 1)
+            {
+                n.Kids.Set(octet);
+                n.KidNodes[k++] = Build(run, depth + 1);
+            }
+        }
+
+        return n;
+    }
+
+    private static T[] NewArray<T>(int count) => count == 0 ? Array.Empty<T>() : new T[count];
 
     // ---- freezing, statistics and diagnostics ----------------------------------------------------------------------
 

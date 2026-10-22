@@ -16,6 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+using System.Net;
 using BenchmarkDotNet.Attributes;
 using Bitvantage.InternetProtocol;
 
@@ -158,12 +159,28 @@ public class RealBuildBenchmarks
 {
     private static readonly Lazy<IPNetworkLookup<int>> V4 = new(() => RouteViews.Build(RouteViews.IPv4));
     private static readonly Lazy<IPNetworkLookup<int>> V6 = new(() => RouteViews.Build(RouteViews.IPv6));
+    private static readonly Lazy<KeyValuePair<IPNetwork, int>[]> V4Items = new(() => Items(RouteViews.IPv4, shuffle: false));
+    private static readonly Lazy<KeyValuePair<IPNetwork, int>[]> V4Shuffled = new(() => Items(RouteViews.IPv4, shuffle: true));
+    private static readonly Lazy<KeyValuePair<IPNetwork, int>[]> V6Items = new(() => Items(RouteViews.IPv6, shuffle: false));
+    private static readonly Lazy<KeyValuePair<IPNetwork, int>[]> V6Shuffled = new(() => Items(RouteViews.IPv6, shuffle: true));
 
     [GlobalSetup]
     public void Setup()
     {
         _ = V4.Value;
         _ = V6.Value;
+        _ = V4Items.Value;
+        _ = V4Shuffled.Value;
+        _ = V6Items.Value;
+        _ = V6Shuffled.Value;
+    }
+
+    // the table in file order, which is address order, or shuffled
+    private static KeyValuePair<IPNetwork, int>[] Items(RouteViews.Table table, bool shuffle)
+    {
+        var items = table.Networks.Select((n, i) => KeyValuePair.Create(n, table.Asns[i])).ToArray();
+        if (shuffle) new Random(5).Shuffle(items);
+        return items;
     }
 
     [Benchmark, IterationCount(10)]
@@ -180,6 +197,12 @@ public class RealBuildBenchmarks
     public object IPv4_Batch() => RouteViews.Build(RouteViews.IPv4);
 
     [Benchmark, IterationCount(10)]
+    public object IPv4_FromSequence() => new IPNetworkLookup<int>(V4Items.Value);
+
+    [Benchmark, IterationCount(10)]
+    public object IPv4_FromShuffledSequence() => new IPNetworkLookup<int>(V4Shuffled.Value);
+
+    [Benchmark, IterationCount(10)]
     public object IPv4_FreezeLeafPushed() => V4.Value.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
 
     [Benchmark, IterationCount(10)]
@@ -190,6 +213,12 @@ public class RealBuildBenchmarks
 
     [Benchmark, IterationCount(10)]
     public object IPv6_Batch() => RouteViews.Build(RouteViews.IPv6);
+
+    [Benchmark, IterationCount(10)]
+    public object IPv6_FromSequence() => new IPNetworkLookup<int>(V6Items.Value);
+
+    [Benchmark, IterationCount(10)]
+    public object IPv6_FromShuffledSequence() => new IPNetworkLookup<int>(V6Shuffled.Value);
 
     [Benchmark, IterationCount(10)]
     public object IPv6_FreezeLeafPushed() => V6.Value.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
