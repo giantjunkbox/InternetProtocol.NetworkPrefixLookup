@@ -99,7 +99,8 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         }
     }
 
-    // the nodes on a path, one per level: 16 levels of 8 bits for a 128-bit key, plus the root
+    // The nodes on a path, one per level: 16 levels of 8 bits for a 128-bit key, plus the root. Writes keep the path in
+    // one, and so does the lookup's rare deep backtrack, but not the lookup's fast path: see FindOnce.
     [InlineArray(17)]
     private struct NodeStack
     {
@@ -237,13 +238,26 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         }
     }
 
-    // Without a stack: storing a node in the stack's inline array costs a write barrier call, and the deepest node or its
-    // parent answers nearly every lookup, so only a backtrack of two or more levels takes the walk that keeps a stack.
+    // The longest match, from one walk of the published trie.
+    //
+    // The walk descends as far as the key leads and then looks for a match from the deepest node up, so it may need to
+    // climb back up the path. Nodes have no parent links, because a copy-on-write node can be shared by several versions
+    // of the trie and so has no one parent, which means the walk must remember the path itself. Remembering all of it
+    // in a NodeStack is what the walk used to do, and it cost a write barrier call for every node visited: a node is a
+    // managed reference, and the JIT cannot prove that a store into the inline array at a variable index goes to the
+    // stack, so it calls the checked barrier. Creating the array was cheap; the stores were not. A stackalloc buffer
+    // cannot hold managed references at all.
+    //
+    // So this walk keeps only the node one level up, in a local the JIT keeps in a register. On the real routing tables
+    // the deepest node answers 98 to 100% of lookups and its parent nearly all the rest; on the random benchmark table
+    // the parent answers 35% and 0.8% need to climb further. Those take FindWithStack, a second walk from the root that
+    // keeps the whole path. Measured in one session, this made lookups take 0.85 to 0.93 of the time of the walk with a
+    // stack on every table: see "Since the baseline" in Architecture.md.
     private ref Entry FindOnce(in TKey key)
     {
         var published = Volatile.Read(ref _published);
         var n = Volatile.Read(ref published.Root);
-        Node? parent = null;
+        Node? parent = null; // the node one level above n, for a backtrack of one level
         var depth = 0;
 
         var blocks = published.Blocks;
@@ -295,7 +309,8 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         if (depth == 0)
             return ref Unsafe.NullRef<Entry>();
 
-        // one level up
+        // one level up, from the local: the deepest node held nothing for the key, so its parent's fringe or prefix at
+        // the key's octet is the next longest candidate
         {
             n = parent!;
             depth--;
@@ -306,11 +321,14 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
                 return ref n.PrefixEntries[n.Prefixes.Rank(top) - 1];
         }
 
-        // further up: the rare case, which walks again from the root. The retry in Find covers both walks, and the answer
-        // comes from the second alone.
+        // PERF: further up, a second walk from the root, which keeps the whole path. Rare: 0.8% of lookups on the random
+        // table, almost none on the real ones. The retry in Find covers both walks, and the answer comes from the second
+        // walk alone, so it is still the trie at one moment even if a write landed between the two.
         return ref depth == 0 ? ref Unsafe.NullRef<Entry>() : ref FindWithStack(in key);
     }
 
+    // The longest match with the whole path in a NodeStack, so that the backtrack can climb any number of levels. Only
+    // FindOnce calls it, for the lookups whose answer lies two or more levels above the deepest node.
     private ref Entry FindWithStack(in TKey key)
     {
         var stack = new NodeStack();
@@ -624,8 +642,10 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
     private static IEnumerable<(TKey Bits, int Length, Entry Entry)> Items(Node root)
     {
-        // depth-first, with the prefixes of each octet before what lies below it; only the octets at which something
-        // starts are visited
+        // Depth-first, with the prefixes of each octet before what lies below it. Only the octets at which something
+        // starts are visited: the start octets of the node's prefixes, and its fringes, leaves and kids. Testing all 256
+        // octets and 8 lengths in every node made enumeration 2 to 6 times slower on the real tables, and Freeze reads
+        // the trie through this walk.
         var stack = new Stack<(Node Node, int Depth, TKey Start, int Octet)>();
         stack.Push((root, 0, default, 0));
         while (stack.TryPop(out var frame))
