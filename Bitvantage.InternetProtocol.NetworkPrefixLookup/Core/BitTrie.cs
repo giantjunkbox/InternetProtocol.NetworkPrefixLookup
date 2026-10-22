@@ -18,6 +18,7 @@
 
 using System.Collections;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Diagnostics.CodeAnalysis;
 
@@ -548,40 +549,54 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     /// <inheritdoc />
     public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(in TKey key)
     {
-        var results = new List<PrefixEntry<TPrefix, TValue>>();
-        CollectMatches(in key, results, default);
-        return results;
+        // The matches go straight into the list's own array. Most keys have a few, so it starts with room for four, the
+        // array a list allocates on its first Add; a key with more is walked again with room for all of them.
+        var results = new List<PrefixEntry<TPrefix, TValue>>(4);
+        while (true)
+        {
+            CollectionsMarshal.SetCount(results, results.Capacity);
+            var count = CollectMatches(in key, CollectionsMarshal.AsSpan(results));
+            if (count <= results.Count)
+            {
+                CollectionsMarshal.SetCount(results, count);
+                return results;
+            }
+
+            results.Capacity = count;
+        }
     }
 
     /// <inheritdoc />
-    public int GetMatches(in TKey key, Span<PrefixEntry<TPrefix, TValue>> destination) => CollectMatches(in key, null, destination);
+    public int GetMatches(in TKey key, Span<PrefixEntry<TPrefix, TValue>> destination)
+    {
+        var count = CollectMatches(in key, destination);
+        if (count > destination.Length)
+            throw new ArgumentException("The destination is too small for the matches.", nameof(destination));
+        return count;
+    }
 
-    // every prefix that contains key, longest first, into the list or else the span
-    private int CollectMatches(in TKey key, List<PrefixEntry<TPrefix, TValue>>? list, Span<PrefixEntry<TPrefix, TValue>> span)
+    // Every prefix that contains key, longest first, from a walk that no two writes overlapped: writes those that fit
+    // into destination and returns how many there are.
+    private int CollectMatches(in TKey key, Span<PrefixEntry<TPrefix, TValue>> destination)
     {
         while (true)
         {
-            list?.Clear();
             var before = Volatile.Read(ref _changes);
-            var count = CollectMatchesOnce(in key, list, span);
-            if (!Settled(before)) continue;
-            if (list == null && count > span.Length)
-                throw new ArgumentException("The destination is too small for the matches.", "destination");
-            return count;
+            var count = CollectMatchesOnce(in key, destination);
+            if (Settled(before)) return count;
         }
     }
 
     // counts every match, and stores those that fit
-    private int CollectMatchesOnce(in TKey key, List<PrefixEntry<TPrefix, TValue>>? list, Span<PrefixEntry<TPrefix, TValue>> span)
+    private int CollectMatchesOnce(in TKey key, Span<PrefixEntry<TPrefix, TValue>> destination)
     {
         var count = 0;
 
-        void Emit(in Entry entry, List<PrefixEntry<TPrefix, TValue>>? l, Span<PrefixEntry<TPrefix, TValue>> s, ref int c)
+        static void Emit(in Entry entry, Span<PrefixEntry<TPrefix, TValue>> destination, ref int count)
         {
-            var item = new PrefixEntry<TPrefix, TValue>(entry.Prefix, entry.Value);
-            if (l != null) l.Add(item);
-            else if (c < s.Length) s[c] = item;
-            c++;
+            if (count < destination.Length)
+                destination[count] = new PrefixEntry<TPrefix, TValue>(entry.Prefix, entry.Value);
+            count++;
         }
 
         var path = new NodeStack();
@@ -602,7 +617,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             {
                 ref var leaf = ref n.LeafEntries[n.Leaves.Rank(octet) - 1];
                 if (TKey.MatchesUnderMask(key, leaf.Bits, leaf.Mask))
-                    Emit(in leaf.Entry, list, span, ref count);
+                    Emit(in leaf.Entry, destination, ref count);
             }
 
             break;
@@ -613,12 +628,12 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             n = path[depth];
             var octet = TKey.GetBits(key, depth << 3, 8);
             if (n.Fringes.Test(octet))
-                Emit(in n.FringeEntries[n.Fringes.Rank(octet) - 1], list, span, ref count);
+                Emit(in n.FringeEntries[n.Fringes.Rank(octet) - 1], destination, ref count);
 
             // the prefixes inside the stride on the octet's path, from the longest: index, index / 2, ..., 1
             for (var index = ArtTables.OctetToIndex(octet); index > 0; index >>= 1)
                 if (n.Prefixes.Test(index))
-                    Emit(in n.PrefixEntries[n.Prefixes.Rank(index) - 1], list, span, ref count);
+                    Emit(in n.PrefixEntries[n.Prefixes.Rank(index) - 1], destination, ref count);
         }
 
         return count;

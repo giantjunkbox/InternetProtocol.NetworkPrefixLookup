@@ -122,7 +122,7 @@ internal readonly struct IPLookupReader<TPrefix, TAdapter, TValue, TForm>
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(IPAddress address) =>
-        IPAddressBits.IsIPv4(address, _map, out var v4, out var v6) ? _ipv4.GetMatches(new Bits32(v4)) : _ipv6.GetMatches(new Bits128(v6));
+        IPAddressBits.IsIPv4(address, _map, out var v4, out var v6) ? MatchList4(new Bits32(v4)) : MatchList6(new Bits128(v6));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination) =>
@@ -191,6 +191,16 @@ internal readonly struct IPLookupReader<TPrefix, TAdapter, TValue, TForm>
     private bool Contains6(in Bits128 bits, int length) => ReadWrite
         ? Unsafe.As<BitTrie<Bits128, TPrefix, TValue>>(_ipv6).ContainsPrefix(in bits, length)
         : Unsafe.As<FrozenBitTrie<Bits128, TPrefix, TValue>>(_ipv6).ContainsPrefix(in bits, length);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private IReadOnlyList<PrefixEntry<TPrefix, TValue>> MatchList4(in Bits32 key) => ReadWrite
+        ? Unsafe.As<BitTrie<Bits32, TPrefix, TValue>>(_ipv4).GetMatches(in key)
+        : Unsafe.As<FrozenBitTrie<Bits32, TPrefix, TValue>>(_ipv4).GetMatches(in key);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private IReadOnlyList<PrefixEntry<TPrefix, TValue>> MatchList6(in Bits128 key) => ReadWrite
+        ? Unsafe.As<BitTrie<Bits128, TPrefix, TValue>>(_ipv6).GetMatches(in key)
+        : Unsafe.As<FrozenBitTrie<Bits128, TPrefix, TValue>>(_ipv6).GetMatches(in key);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private int Matches4(in Bits32 key, Span<PrefixEntry<TPrefix, TValue>> destination) => ReadWrite

@@ -297,6 +297,24 @@ public class BitTrieTests
     }
 
     [Test]
+    public void A_key_inside_every_length_has_width_plus_one_matches()
+    {
+        // more matches than the four the list form makes room for at first
+        var trie = new BitTrie<Bits32, int, int>();
+        for (var length = 0; length <= 32; length++)
+            trie.Add(default, length, length, 0);
+        var longestFirst = Enumerable.Range(0, 33).Reverse().ToArray();
+        foreach (var form in new IReadOnlyBitTrie<Bits32, int, int>[] { trie, trie.Freeze() })
+        {
+            Assert.That(form.GetMatches(default).Select(e => e.Prefix), Is.EqualTo(longestFirst));
+            var span = new PrefixEntry<int, int>[33];
+            Assert.That(form.GetMatches(default, span), Is.EqualTo(33));
+            Assert.That(span.Select(e => e.Prefix), Is.EqualTo(longestFirst));
+            Assert.Throws<ArgumentException>(() => form.GetMatches(default, new PrefixEntry<int, int>[32]));
+        }
+    }
+
+    [Test]
     public void Frozen_options_are_checked()
     {
         var trie = new BitTrie<Bits32, int, int>();
