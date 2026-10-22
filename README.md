@@ -98,8 +98,11 @@ using (var batch = routes.BeginBatch())
 }
 ```
 
-Each address family commits all at once, IPv4 a moment before IPv6. Constructing a lookup from a sequence loads it as
-one batch.
+Each address family commits all at once, IPv4 a moment before IPv6.
+
+To load a whole table, pass the prefixes to the constructor. It builds the trie in one pass, in any order: on the real
+tables 1.3 to 1.5 times as fast as a batch for prefixes in address order and up to 4 times for shuffled ones, with a
+third less allocation.
 
 A batch holds the writer lock until it ends, so end it promptly: other threads' writes wait meanwhile. The lock belongs
 to the thread that started the batch, so a batch cannot span an `await`. Ending it on another thread throws and leaves

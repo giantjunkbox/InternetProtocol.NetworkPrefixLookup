@@ -114,7 +114,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     where TKey : struct, IBitKey<TKey>
 {
     public BitTrie();
-    public BitTrie(IEnumerable<(TKey Bits, int Length, TPrefix Prefix, TValue Value)> items);   // loaded as one batch
+    public BitTrie(IEnumerable<(TKey Bits, int Length, TPrefix Prefix, TValue Value)> items);   // built in one pass, any order
 
     public bool TryAdd(in TKey bits, int length, TPrefix prefix, TValue value);
     public void Add(in TKey bits, int length, TPrefix prefix, TValue value);                     // throws if present
@@ -138,6 +138,9 @@ public readonly record struct BitTrieStatistics(int Prefixes, int Nodes, long By
 
 - **Writes** are serialized by an internal lock, so there is no separate concurrent class. Each does a bounded amount of
   work: no step grows with the size of the table.
+- **Loading a whole table.** The constructor from a sequence builds the trie in one pass, with the prefixes in any
+  order: on the real tables 1.3 to 3.9 times as fast as adding them in a batch, with a third less allocation. A prefix
+  that appears twice throws `ArgumentException`.
 - **Batches** are atomic. Changes made after `BeginBatch` build privately, and readers keep seeing the table as it was;
   `Commit` publishes them all with one reference write, and disposing the batch without committing discards them. A
   batch holds the writer lock until it ends, and the lock belongs to the thread that took it, so a batch must end on
@@ -263,7 +266,7 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     where TAdapter : struct, IIPPrefixAdapter<TPrefix>
 {
     public IPPrefixLookup(IPLookupOptions? options = null);
-    public IPPrefixLookup(IEnumerable<KeyValuePair<TPrefix, TValue>> items, IPLookupOptions? options = null);
+    public IPPrefixLookup(IEnumerable<KeyValuePair<TPrefix, TValue>> items, IPLookupOptions? options = null);   // one pass
 
     public IPLookupOptions Options { get; }
     public long Version { get; }

@@ -47,8 +47,8 @@ Decisions made by the user:
 Choice made while building version 3 that the user has not yet reviewed: the read-write core follows the BART-style
 prototype (`Documentation/Bart-Comparison.md`).
 
-The public interface is described in `Documentation/Interface.md`, whose Status section lists where the shipped
-interface differs from the proposal. `Documentation/Adapter-Survey.md` explains which libraries get adapter packages.
+The public interface is described in `Documentation/Interface.md`, whose last sections record where the shipped
+interface differs from the original proposal. `Documentation/Adapter-Survey.md` explains which libraries get adapter packages.
 `Documentation/Abstraction-Study.md`, `Documentation/Optimization-Log.md`, `Documentation/Bart-Comparison.md` and
 `Documentation/Linux-Survey.md` record how the design was chosen and measured.
 
@@ -117,7 +117,7 @@ ROUTEVIEWS_DIR=/tmp/routeviews dotnet run -c Release --project PerformanceTest
 ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 3 minutes
 ```
 
-**Test baseline:** all 50 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
+**Test baseline:** all 52 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
 text with `Environment.NewLine`, so it passes with either line ending. Keep `.gitattributes` at `text=auto`.
 
 The whole solution builds with no warnings. Do not add any.
@@ -149,6 +149,9 @@ The whole solution builds with no warnings. Do not add any.
   counts only on private nodes. A batch commit and `Clear` publish the root and the shortcut blocks together.
 - Shortcut blocks are created and dropped with the depth-1 nodes they serve; no write may build more than one.
 - Every write must do bounded work: no step may grow with the table's size.
+- The constructors from a sequence build the trie in one pass (`BitTrie.Load` and `Build`). Any change to the node
+  layout or the canonical shape must change that build too; the tests compare its result with a trie built a prefix at
+  a time.
 - Backward compatibility with the v2 API is not required, but keep public API changes deliberate and documented in
   `Documentation/Interface.md`.
 - Target .NET 10 only. Do not add other target frameworks or change package versions unless asked.

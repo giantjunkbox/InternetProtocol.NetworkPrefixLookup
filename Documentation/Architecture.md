@@ -230,7 +230,26 @@ copies exist, so an abandoned batch leaves the published nodes untouched. `Commi
 exact size, marks them shared, builds a new block array and publishes. A batch copies every node above a change, so a
 first octet whose depth-1 node is still the same object has nothing changed below it: its block is reused, and only the
 blocks under changed first octets are rebuilt. `Dispose` without `Commit` points `_w`
-back at the published root. Constructing a trie from a sequence is a batch.
+back at the published root.
+
+### Building from a sequence
+
+The constructors that take a sequence build the trie in one pass instead of adding each prefix in a batch. They copy
+the items into a buffer, one per address family in the IP layer, sized exactly when the input is a collection, and
+build each node once, with arrays of the exact size: no descent from the root per item, no doubling, no copying at a
+commit. The pass is a most-significant-digit radix sort by octet that builds the trie as it partitions, in place and
+without comparisons, so input order does not matter. For each node, the items that end in it, its prefixes and fringes,
+go first; the longer ones are moved into one run per octet (an American flag sort, skipped when they are already in
+octet order, as items in address order are), and a run of one becomes a leaf and a longer run a child node, which is
+exactly the canonical shape. Two items with the same prefix end up at the same base index or octet of one node, which
+reports the duplicate. A node visits only the octets it occupies, with its counts kept per depth in one scratch array:
+visiting all 256 octets in every node made the first version slower than a batch on the IPv6 table, whose nodes mostly
+hold a handful of prefixes. Built nodes are stamped 0 and share their arrays, as after a batch commit, so later writes
+copy them. The tests check that the result has the same shape and statistics as a trie built a prefix at a time or in
+a batch, for every key width and for sorted, shuffled and reversed input.
+
+`MaxMindDatabase.Load` still adds each network in a batch, keeping the first of any duplicates, and decoding the records
+costs more than the trie.
 
 `Version` counts published changes: one per write outside a batch, one per commit, one per `Clear`.
 
@@ -576,6 +595,17 @@ instead of testing 256 octets and 8 lengths in every node. Writers wait only whi
 | Writers wait during a freeze | the whole freeze | 69 ms | the whole freeze | 24 ms |
 | One batch, unchanged | 172.0 ms | 174.7 ms | 40.6 ms | 42.0 ms |
 
+**Loading a whole table** (`RealBuildBenchmarks`, one session, the RouteViews tables with each network once): a batch of
+`TryAdd` calls against the constructor from a sequence, with the networks in address order and shuffled. The Gen0 and
+Gen1 columns are collections per thousand loads.
+
+| Load | Batch | From a sequence | Ratio | Allocated, batch / sequence | Gen0 and Gen1, batch / sequence |
+| --- | --- | --- | --- | --- | --- |
+| Real IPv4, address order | 222.6 ms | 150.0 ms | 0.67 | 96.5 / 62.6 MB | 5,500, 5,000 / 1,667, 1,333 |
+| Real IPv4, shuffled | 1,128.5 ms | 292.1 ms | 0.26 | 97.1 / 62.6 MB | 5,000, 4,000 / 1,500, 1,000 |
+| Real IPv6, address order | 84.1 ms | 64.5 ms | 0.77 | 30.9 / 24.7 MB | 1,833, 1,667 / 778, 667 |
+| Real IPv6, shuffled | 194.4 ms | 151.2 ms | 0.78 | 32.0 / 24.7 MB | 1,667, 1,000 / 833, 667 |
+
 **Against the prototype.** Back to back, `BitTrie` alone took 142 to 154 ms per million real IPv4 lookups and the
 prototype `BartTrie` 147 to 156 ms. On IPv6 the library took 341 ms and the prototype 331 ms.
 
@@ -597,7 +627,7 @@ prototype `BartTrie` 147 to 156 ms. On IPv6 the library took 341 ms and the prot
 | --- | --- | --- |
 | Copy only the array that changes, not the node and the array | Less allocation per write, fewer collections under churn | Not tried |
 | Branch-free level steps in the read-write lookup | Fewer mispredicted branches, mainly on small tables | Not tried |
-| Build a batch bottom-up from sorted input | Faster bulk loads than adding one prefix at a time to private nodes: estimated 1.5 to 2 times on sorted input, a third of the allocation | Not tried |
+| Build a batch bottom-up from sorted input | Faster bulk loads than adding one prefix at a time to private nodes | Done, for input in any order, in the constructors: 1.3 to 3.9 times as fast, a third less allocation; see [Building from a sequence](#building-from-a-sequence) |
 | A third shortcut level for keys wider than 32 bits | Real IPv6 lookups 0.87 in one session, for 126 KB; IPv4 would lose (1.07, 49 MB) | Measured in the performance review; not done, pending a memory check on MaxMind and worst-case tables |
 | Lookups without the node stack, the parent in a local | 0.85 to 0.93 of the time on every table | Done; see [Since the baseline](#since-the-baseline) |
 | Enumeration over set bits only; freeze copies under the lock and builds after | Enumeration 2 to 6 times faster, freezing 1.5 to 3 times, writers wait 69 ms instead of 153 ms on real IPv4 | Done; see [Since the baseline](#since-the-baseline) |
