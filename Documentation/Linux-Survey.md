@@ -75,7 +75,7 @@ that [Abstraction-Study.md](Abstraction-Study.md#arbitrary-key-widths) measured 
 `nft_set_pipapo.c` matches concatenated fields, such as an address range plus a port range, against a set of entries.
 
 - **Ranges as netmasks.** A range of b-bit values expands to at most 2b netmasks, citing Rottenstreich 2010. The range
-  lookup in [Interface.md](Interface.md#ranges) relies on the same bound.
+  lookup once proposed in [Interface.md](Interface.md#ranges) relied on the same bound.
 - **Bitmap intersection.** Each field is cut into 4-bit groups. For every group value, a bitmap marks the rules that
   match it, and a lookup ANDs one bitmap per group. An AVX2 version handles 256 bits at a time.
 - **Transactions.** Changes go to a clone of the match data. Commit publishes the clone with one pointer swap, and
@@ -108,7 +108,7 @@ ranges, used for virtual memory areas, with lock-free readers and locked writers
 | One leaf per network address | IPv4 leaves | **No**: BART nodes already hold every length within a stride |
 | One hash probe per length in use | ipset | **No** for routing tables with dozens of lengths; a possible frozen layout for sets with two or three lengths |
 | Bitmap intersection over concatenated fields | nftables PIPAPO | **Out of scope**: packet classification, not longest-prefix match |
-| Interval trees for overlapping ranges | rbtree, maple tree | **Not needed yet**: the range lookup handles nested ranges by splitting them into prefixes |
+| Interval trees for overlapping ranges | rbtree, maple tree | **Not needed**: ranges are left to a separate library |
 | Lock-free readers with deferred freeing | RCU throughout | **Already the design**: copy-on-write nodes freed by the garbage collector |
 
 One lesson from Linux's history also supports this project's direction. The IPv4 routing cache, a hash table of

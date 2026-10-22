@@ -126,9 +126,7 @@ public interface IReadOnlyIPPrefixLookup<TPrefix, TValue> : IReadOnlyCollection<
 
     /// <summary>Writes every stored prefix that contains an address into a span, in the order of <see cref="GetMatches(IPAddress)" />.</summary>
     /// <param name="address">An IPv4 or IPv6 address.</param>
-    /// <param name="destination">
-    ///     Where to write the matches. For prefixes, 129 entries always suffice; overlapping ranges can need any number.
-    /// </param>
+    /// <param name="destination">Where to write the matches; 129 entries always suffice.</param>
     /// <returns>The number of matches written.</returns>
     /// <exception cref="ArgumentException">The destination is too small.</exception>
     int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination);

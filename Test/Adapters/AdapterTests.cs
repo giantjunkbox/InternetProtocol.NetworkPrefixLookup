@@ -21,7 +21,6 @@ using System.Net.Sockets;
 using System.Text.Json;
 using Bitvantage.InternetProtocol;
 using MaxMind.Db;
-using NetTools;
 
 namespace Test.Adapters;
 
@@ -77,30 +76,6 @@ public class AdapterTests
 
         Assert.That(lookup.Remove(IPNetwork2.Parse("10.128.0.0/9")));
         Assert.That(lookup.TryGetMatchValue(IPAddress.Parse("10.200.0.1"), out var after) && after == 8);
-    }
-
-    [Test]
-    public void IPAddressRange_lookups()
-    {
-        var lookup = new IPAddressRangeLookup<string>();
-        lookup.Add(IPAddressRange.Parse("192.168.0.10-192.168.0.20"), "small");
-        lookup.Add(IPAddressRange.Parse("192.168.0.0/24"), "block");
-        lookup.Add(IPAddressRange.Parse("fe80::1-fe80::ff"), "link");
-
-        foreach (IReadOnlyIPPrefixLookup<IPAddressRange, string> form in new IReadOnlyIPPrefixLookup<IPAddressRange, string>[] { lookup, lookup.Freeze() })
-        {
-            Assert.That(form.TryGetMatchValue(IPAddress.Parse("192.168.0.15"), out var value) && value == "small");
-            Assert.That(form.TryGetMatchValue(IPAddress.Parse("192.168.0.9"), out value) && value == "block");
-            Assert.That(form.TryGetMatchValue(IPAddress.Parse("192.168.1.9"), out _), Is.False);
-            Assert.That(form.TryGetMatchValue(IPAddress.Parse("fe80::80"), out value) && value == "link");
-            Assert.That(form.TryGetMatchValue(IPAddress.Parse("fe80::100"), out _), Is.False);
-            Assert.That(form.TryGetMatch(IPAddress.Parse("192.168.0.20"), out var range, out _) && range.ToString() == "192.168.0.10-192.168.0.20");
-            Assert.That(form.ContainsPrefix(IPAddressRange.Parse("192.168.0.0-192.168.0.255")), "matched by its ends, however it was written");
-            Assert.That(form.Count, Is.EqualTo(3));
-        }
-
-        Assert.That(lookup.Remove(IPAddressRange.Parse("192.168.0.10-192.168.0.20")));
-        Assert.That(lookup.TryGetMatchValue(IPAddress.Parse("192.168.0.15"), out var after) && after == "block");
     }
 
     private static string DataPath(string file) => Path.Combine(TestContext.CurrentContext.TestDirectory, "Data", "MaxMind", file);

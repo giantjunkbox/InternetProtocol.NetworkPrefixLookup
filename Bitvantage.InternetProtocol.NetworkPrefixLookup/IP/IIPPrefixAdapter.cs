@@ -47,20 +47,3 @@ public interface IIPPrefixAdapter<in TPrefix>
     /// <param name="prefix">The prefix.</param>
     static abstract int GetLength(TPrefix prefix);
 }
-
-/// <summary>
-///     Teaches <see cref="IPRangeLookup{TRange,TAdapter,TValue}" /> to read a range type: its first and last address.
-///     Implement it on an empty struct.
-/// </summary>
-/// <remarks>The range is read once, when it is added or looked up.</remarks>
-/// <typeparam name="TRange">The range type.</typeparam>
-public interface IIPRangeAdapter<in TRange>
-{
-    /// <summary>The first address in the range.</summary>
-    /// <param name="range">The range.</param>
-    static abstract IPAddress GetFirst(TRange range);
-
-    /// <summary>The last address in the range, of the same family as the first.</summary>
-    /// <param name="range">The range.</param>
-    static abstract IPAddress GetLast(TRange range);
-}

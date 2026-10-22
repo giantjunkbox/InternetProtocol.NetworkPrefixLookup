@@ -351,17 +351,18 @@ Concrete classes hide the generic parameters, because C# cannot infer the key an
 | Core package, no dependencies | `IPNetworkLookup<TValue>` | `FrozenIPNetworkLookup<TValue>` | `IPNetworkAdapter` for `System.Net.IPNetwork` |
 | `NetworkPrefix` package | `NetworkPrefixLookup<TValue>` | `FrozenNetworkPrefixLookup<TValue>` | `NetworkPrefixAdapter` |
 | `IPNetwork2` package | `IPNetwork2Lookup<TValue>` | `FrozenIPNetwork2Lookup<TValue>` | `IPNetwork2Adapter` for `System.Net.IPNetwork2` |
-| `IPAddressRange` package | `IPAddressRangeLookup<TValue>` | `FrozenIPAddressRangeLookup<TValue>` | `IPAddressRangeAdapter`, a [range adapter](#ranges) |
 | `MaxMind` package | `MaxMindNetworkLookup<TValue>` | `FrozenMaxMindNetworkLookup<TValue>` | `MaxMindNetworkAdapter` for `MaxMind.Db.Network`, plus a database loader |
 
 Each concrete read-write class redeclares `Freeze` with `new` so that it returns its own frozen class. Today's
 value-less `NetworkPrefixLookup` becomes a lookup whose value type is an empty struct.
 
-The three third-party packages cover the most downloaded network types on NuGet that are not already
+The two third-party packages cover the most downloaded network types on NuGet that are not already
 `System.Net.IPNetwork`. [Adapter-Survey.md](Adapter-Survey.md) has the survey, including the popular types that need
 no package, such as Npgsql's `cidr` mapping.
 
 ### Ranges
+
+Not shipped: the owner left ranges to a separate library, as the Status section records. The proposal follows.
 
 Some libraries describe networks as ranges with a first and a last address, and a range need not be a CIDR block, as in
 `192.168.0.10-192.168.0.20`. A range adapter supplies the two ends:
@@ -445,11 +446,11 @@ Version 3 implements this interface. Where it differs from the proposal above:
 | Freezing | `Freeze(options)` applies one layout to both address families, and `Freeze(ipv4, ipv6)`, with no defaults, takes one for each. A single `Freeze(ipv4 = null, ipv6 = null)` let `Freeze(compressed)` compress only IPv4 |
 | Null state | Every `Try…` method's `out` parameters carry `[MaybeNullWhen(false)]`, as `Dictionary.TryGetValue`'s do |
 | Address conversions | `IPAddressBits.ToIPv4Bits` and `ToIPv6Bits` throw `ArgumentException` for an address of the other family |
-| Shared base classes | `IPPrefixLookupBase` and `IPRangeLookupBase` hold the read-only members of each read-write and frozen pair once, specialized by the marker structs `ReadWriteForm` and `FrozenForm`. They are public only because the public lookups derive from them; they are hidden from IntelliSense, and only the library can derive from them |
+| Shared base class | `IPPrefixLookupBase` holds the read-only members of the read-write and frozen lookups once, specialized by the marker structs `ReadWriteForm` and `FrozenForm`. It is public only because the public lookups derive from it; it is hidden from IntelliSense, and only the library can derive from it |
 | IP layer batches | `IPPrefixLookup.BeginBatch` returns a `Batch` that publishes each family atomically, IPv4 first |
 | Frozen IP lookups | A frozen class's protected constructor takes the read-write lookup to copy, so adapter packages can define their own pairs |
 | Value-less lookups | `NoValueLookupExtensions` adds `TryAdd(prefix)`, `Add(prefix)`, `TryGetMatch(address, out prefix)` and `ContainsMatch(address)` |
-| Ranges | As proposed, in `IPRangeLookup` and `FrozenIPRangeLookup`. `GetMatches` returns ranges smallest first and, with overlapping ranges, can need more than 129 entries |
+| Ranges | Not shipped, nor the `IPAddressRange` package. A range lookup as proposed was built and then removed: the owner had not asked for it, and it added a second write path whose writes were not bounded when many ranges shared a piece. Ranges are left to a separate library |
 | Adapter packages | As in the table above. The MaxMind loader is `MaxMindDatabase.Load<T>`, which stores MaxMind's IPv4 networks once, as IPv4. `IncludeAliasedNetworks` also stores them under `::/96`, where an IPv6 database keeps them, and under its three alias networks, so that every address answers as `Reader.Find` does |
 | Package names | As in the table above, approved by the owner |
 | Package versions | 3.0.0 for every package |

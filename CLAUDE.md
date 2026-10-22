@@ -10,7 +10,7 @@ redesign: a generic core that works on bits only, an IP layer on top, and adapte
 network types.
 
 Read `Documentation/Architecture.md` before changing anything under `Bitvantage.InternetProtocol.NetworkPrefixLookup/`.
-It covers the node layout, the canonical-shape and copy-on-write rules, the frozen tables, the IP and range layers,
+It covers the node layout, the canonical-shape and copy-on-write rules, the frozen tables, the IP layer,
 measured numbers and limitations. `Documentation/Architecture-v2.md` describes the version 2 binary trie that version 3
 replaced.
 
@@ -37,6 +37,8 @@ Decisions made by the user:
 - Public API compatibility is not a concern while version 3 is unreleased.
 - The package names as they are, and version 3.0.0 for every package.
 - No code generators or scripts in other languages: the repository stays C#.
+- Ranges with arbitrary ends, such as `192.168.0.10-192.168.0.20`, are left to a separate library: there is no range
+  lookup and no `IPAddressRange` package.
 
 Choice made while building version 3 that the user has not yet reviewed: the read-write core follows the BART-style
 prototype (`Documentation/Bart-Comparison.md`).
@@ -52,16 +54,14 @@ interface differs from the proposal. `Documentation/Adapter-Survey.md` explains 
   - `Keys/`: `IBitKey<TSelf>`, `Bits32` and `Bits128`.
   - `Core/`: `BitTrie` (the read-write trie), `FrozenBitTrie`, `IReadOnlyBitTrie`, `BitSet256` with the ART tables,
     `PrefixEntry`, `NoValue`.
-  - `IP/`: the adapter interfaces, `IPAddressBits`, `IPPrefixLookup`, `IPRangeLookup`, their frozen forms and shared
-    base classes, and
+  - `IP/`: the adapter interface, `IPAddressBits`, `IPPrefixLookup`, its frozen form and shared base class, and
     `IPNetworkLookup` for `System.Net.IPNetwork`.
-- `Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix/`, `.IPNetwork2/`, `.IPAddressRange/`, `.MaxMind/`: the
-  adapter packages, each an adapter struct and a read-write and frozen class pair. The MaxMind package also has
-  `MaxMindDatabase.Load`.
-- The read-only members of each read-write and frozen IP lookup pair are written once, in `IPPrefixLookupBase` and
-  `IPRangeLookupBase`. A marker type argument, `ReadWriteForm` or `FrozenForm`, lets the JIT call each form's sealed
-  trie type directly; see "One copy of the read-only members" in `Documentation/Architecture.md`. Make every lookup's
-  call into a trie through those typed calls, not through `IReadOnlyBitTrie`, which would not inline.
+- `Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix/`, `.IPNetwork2/`, `.MaxMind/`: the adapter packages,
+  each an adapter struct and a read-write and frozen class pair. The MaxMind package also has `MaxMindDatabase.Load`.
+- The read-only members of the read-write and frozen IP lookups are written once, in `IPPrefixLookupBase`. A marker
+  type argument, `ReadWriteForm` or `FrozenForm`, lets the JIT call each form's sealed trie type directly; see "One copy
+  of the read-only members" in `Documentation/Architecture.md`. Make every lookup's call into a trie through those
+  typed calls, not through `IReadOnlyBitTrie`, which would not inline.
 - `Test/` contains NUnit tests in `Core/`, `IP/` and `Adapters/`, and two MaxMind test databases in `Data/MaxMind/`
   (Apache-2.0 or MIT, notice included). `PerformanceTest/` contains BenchmarkDotNet benchmarks and a memory report.
 - `Prototypes/GenericTrie/` holds the prototypes the design was measured with. It is not in the solution and references
@@ -112,7 +112,7 @@ ROUTEVIEWS_DIR=/tmp/routeviews dotnet run -c Release --project PerformanceTest
 ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 3 minutes
 ```
 
-**Test baseline:** all 58 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
+**Test baseline:** all 46 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
 text with `Environment.NewLine`, so it passes with either line ending. Keep `.gitattributes` at `text=auto`.
 
 The whole solution builds with no warnings. Do not add any.

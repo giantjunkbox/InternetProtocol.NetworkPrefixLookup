@@ -421,26 +421,6 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         }
     }
 
-    // The writer's view of exactly this prefix, which includes an uncommitted batch, for the range lookups, which work
-    // out a change from what is stored before they write it.
-    internal bool TryGetPendingValue(in TKey bits, int length, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value)
-    {
-        using (_lock.EnterScope())
-        {
-            ref var entry = ref FindExact(_w, in bits, length);
-            if (Unsafe.IsNullRef(ref entry))
-            {
-                prefix = default!;
-                value = default!;
-                return false;
-            }
-
-            prefix = entry.Prefix;
-            value = entry.Value;
-            return true;
-        }
-    }
-
     private static ref Entry FindExact(Node n, in TKey bits, int length)
     {
         for (var depth = 0; ; depth++)

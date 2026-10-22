@@ -16,12 +16,11 @@ longest-prefix-match queries. It is written for people who want to change the in
 6. [Writes, batches and readers](#writes-batches-and-readers)
 7. [The frozen trie](#the-frozen-trie)
 8. [The IP layer](#the-ip-layer)
-9. [Ranges](#ranges)
-10. [Adapter packages](#adapter-packages)
-11. [Diagnostics](#diagnostics)
-12. [Performance](#performance)
-13. [Testing and benchmarking](#testing-and-benchmarking)
-14. [Limitations](#limitations)
+9. [Adapter packages](#adapter-packages)
+10. [Diagnostics](#diagnostics)
+11. [Performance](#performance)
+12. [Testing and benchmarking](#testing-and-benchmarking)
+13. [Limitations](#limitations)
 
 ## Purpose and packages
 
@@ -31,13 +30,13 @@ contains a given prefix, and look prefixes up exactly.
 
 | Package | Contents | Depends on |
 | --- | --- | --- |
-| `Bitvantage.InternetProtocol.NetworkPrefixLookup` | The keys, the core tries, the IP layer, range lookups, and `IPNetworkLookup` for `System.Net.IPNetwork` | Nothing |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup` | The keys, the core tries, the IP layer, and `IPNetworkLookup` for `System.Net.IPNetwork` | Nothing |
 | `….NetworkPrefixLookup.NetworkPrefix` | `NetworkPrefixLookup<TValue>` and the value-less `NetworkPrefixLookup` | `Bitvantage.InternetProtocol.NetworkPrefix` |
 | `….NetworkPrefixLookup.IPNetwork2` | `IPNetwork2Lookup<TValue>` | `IPNetwork2` |
-| `….NetworkPrefixLookup.IPAddressRange` | `IPAddressRangeLookup<TValue>`, a range lookup | `IPAddressRange` |
 | `….NetworkPrefixLookup.MaxMind` | `MaxMindNetworkLookup<TValue>` and `MaxMindDatabase.Load` | `MaxMind.Db` |
 
-[Adapter-Survey.md](Adapter-Survey.md) explains why these libraries get packages. All projects target .NET 10 only.
+[Adapter-Survey.md](Adapter-Survey.md) explains why these libraries get packages. Ranges with arbitrary ends, such as
+`192.168.0.10-192.168.0.20`, are left to a separate library. All projects target .NET 10 only.
 
 ## Repository layout
 
@@ -45,25 +44,25 @@ contains a given prefix, and look prefixes up exactly.
 | --- | --- |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup/Keys/` | `IBitKey<TSelf>`, `Bits32` and `Bits128` |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup/Core/` | `BitTrie`, `FrozenBitTrie`, `IReadOnlyBitTrie`, `BitSet256` and the ART tables, `PrefixEntry`, `NoValue` |
-| `Bitvantage.InternetProtocol.NetworkPrefixLookup/IP/` | Adapter interfaces, `IPAddressBits`, `IPPrefixLookup`, `IPRangeLookup`, their frozen forms and shared base classes, `IPNetworkLookup` |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup/IP/` | Adapter interfaces, `IPAddressBits`, `IPPrefixLookup`, its frozen form and shared base class, `IPNetworkLookup` |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup.*/` | One adapter package each |
 | `Test/` | NUnit tests: `Core/`, `IP/`, `Adapters/`, and MaxMind test databases in `Data/` |
 | `PerformanceTest/` | BenchmarkDotNet benchmarks and a memory report |
 | `Prototypes/GenericTrie/` | The prototypes the design was measured with; not part of the solution |
 
-The read-only members of `IPPrefixLookup` and `FrozenIPPrefixLookup` are written once, in `IPPrefixLookupBase`, and
-those of the two range lookups in `IPRangeLookupBase`; see [The IP layer](#the-ip-layer).
+The read-only members of `IPPrefixLookup` and `FrozenIPPrefixLookup` are written once, in `IPPrefixLookupBase`; see
+[The IP layer](#the-ip-layer).
 
 ## Layers
 
 | Layer | Types | Knows about |
 | --- | --- | --- |
-| IP layer | `IPPrefixLookup`, `IPRangeLookup`, `IPNetworkLookup`, the adapter packages, their frozen forms | `IPAddress`, address families, the caller's prefix or range type |
+| IP layer | `IPPrefixLookup`, `IPNetworkLookup`, the adapter packages, their frozen forms | `IPAddress`, address families, the caller's prefix type |
 | Core | `BitTrie<TKey, TPrefix, TValue>`, `FrozenBitTrie<TKey, TPrefix, TValue>` | Bits and lengths only |
 | Keys | `IBitKey<TSelf>`, `Bits32` and `Bits128` | Bit arithmetic for one fixed width |
 
 The core stores a *prefix object* and a *value* with each prefix. The prefix object is whatever the caller wants back
-from a lookup: the IP layer stores the caller's `IPNetwork`, `NetworkPrefix` or range. Routing tables and the core
+from a lookup: the IP layer stores the caller's `IPNetwork` or `NetworkPrefix`. Routing tables and the core
 never create prefix objects, so diagnostics take a formatter for bits and lengths instead.
 
 Both forms of every layer implement one read-only interface, `IReadOnlyBitTrie` in the core and
@@ -286,15 +285,13 @@ read a prefix's family, network bits and length. Generic code over a struct is s
 caller's type costs no indirection.
 
 **One copy of the read-only members.** The read-write and frozen lookups answer the same queries from different trie
-types. Their read-only members live once, in `IPPrefixLookupBase<TPrefix, TAdapter, TValue, TForm>`, and for ranges in
-`IPRangeLookupBase`. The base holds each family's trie through `IReadOnlyBitTrie`, but never calls through it, which
-would be an interface call that does not inline. `TForm` is an empty struct, `ReadWriteForm` or `FrozenForm`. Each
-call into a trie tests `typeof(TForm)` and casts the trie to that form's sealed class with `Unsafe.As`. The JIT
-compiles generic code separately for each struct type argument and resolves the test as it compiles, so each form
-keeps only its direct, inlinable call. A struct wrapper around each trie, with an interface constraint, would do the
-same, but the range tries hold the internal `RangePiece`, which a public base class's type arguments cannot name. The
-base classes and the two marker structs are public, because public classes derive from them, and are hidden from
-IntelliSense. Their constructors are `private protected`, so only the library can derive from them.
+types. Their read-only members live once, in `IPPrefixLookupBase<TPrefix, TAdapter, TValue, TForm>`. The base holds each
+family's trie through `IReadOnlyBitTrie`, but never calls through it, which would be an interface call that does not
+inline. `TForm` is an empty struct, `ReadWriteForm` or `FrozenForm`. Each call into a trie tests `typeof(TForm)` and
+casts the trie to that form's sealed class with `Unsafe.As`. The JIT compiles generic code separately for each struct
+type argument and resolves the test as it compiles, so each form keeps only its direct, inlinable call. The base class
+and the two marker structs are public, because public classes derive from them, and are hidden from IntelliSense. Its
+constructor is `private protected`, so only the library can derive from them.
 
 Measured against the duplicated classes it replaced, in one session with old and new back to back, the shared base
 was as fast or faster in all five cases: IPv4 and IPv6 from integers, read-write and frozen, and IPv4 from `IPAddress`
@@ -322,30 +319,6 @@ it: in the shared code, the read-write form calls only `BitTrie.Find` and the fr
   `new` to return their own frozen class. A frozen class's protected constructor takes the read-write lookup, so
   adapter packages can define their own pairs.
 - Null prefixes are rejected without boxing struct prefixes.
-
-## Ranges
-
-`IPRangeLookup<TRange, TAdapter, TValue>` stores ranges with a first and a last address. `IIPRangeAdapter<TRange>`
-reads the two ends.
-
-- **Pieces.** A range is stored as the fewest prefixes that cover it exactly: from the first address, repeatedly the
-  largest aligned block that fits. That is one prefix for a CIDR block, at most 62 for IPv4 and 254 for IPv6.
-- **Claims.** Each piece's prefix object is the winning range, and its value is a `RangePiece`: the winner's value and
-  ends and, rarely, the other ranges that split into exactly the same piece, smallest first. A lookup reads the winner
-  directly, as fast as a prefix lookup. A range's ends are read once, when it is added, and stored with each claim, so
-  a caller that changes a stored range object cannot make the pieces disagree with the range list.
-- **Nesting.** An address in nested ranges gets the inner range, because the inner range's covering piece is longer or,
-  when the pieces are identical, the inner range is the smaller claim. Removing a range removes its claims, uncovering
-  the others. Partly overlapping ranges get whichever range's covering piece is longer.
-- **The range list.** An `ImmutableSortedDictionary` keyed by family, first and last address answers `Count`,
-  enumeration, `TryGetValue`, `ContainsPrefix` and `Remove`. The writer keeps its own view, which runs ahead of the
-  published one during a batch.
-- **`TryGetMatch(range)`** returns the smallest stored range that contains the whole range. Every stored range that
-  contains it has a piece containing its first address, so the candidates are the claims on that address's matches.
-- **Writes** take the range lookup's own lock, then the tries' locks. A write works out the new claims of every piece
-  from the writer's view of the trie, which includes an open batch, before it changes anything, so a write either
-  completes or changes nothing. A range of several pieces is written in a batch of its own, or in the caller's, so
-  readers see all of its pieces change at once.
 
 ## Adapter packages
 
@@ -573,7 +546,6 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 | --- | --- |
 | `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 8-, 16-, 32- and 128-bit keys (8 and 16 are test-only types; 8 has no shortcut blocks), before and after removals; canonical shape; batches commit and discard; a commit that throws, a batch ended on another thread, a batch in which a write threw; `Version`; frozen root sizes; lock-free readers during churn; lookups that overlap several writes; concurrent writers |
 | `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; IPv4-mapped addresses with mapping off and on; address conversions; writes and batches, including failed and wrong-thread batches; freezing both families at one moment; one freeze layout for both families; a reader during churn |
-| `IP/IPRangeLookupTests` | Exact coverage, the fewest pieces, nested ranges and removal, partly overlapping ranges, random nested ranges against brute force, batches, writes that see the open batch, ranges read once, failed and wrong-thread batches, the frozen form |
 | `Adapters/AdapterTests` | Each adapter package in both forms; MaxMind databases against `Reader.Find`, at IPv4, IPv4-compatible and IPv4-mapped addresses, and a hand-built database with a record above the IPv4 networks |
 
 ## Limitations
@@ -590,17 +562,10 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
   would exceed 2^31 entries. The security review measured these.
 - **Freezing blocks writers** for its duration: 220 ms leaf-pushed and 240 ms compressed for the real IPv4 table, as
   measured under Building the real tables.
-- **Ranges that share a piece** cost time in proportion to their number at every write to that piece, because the
-  piece's claims are an array rebuilt by each write: adding 16,000 ranges that share one piece took 92 seconds, a
-  `Remove` 25 ms, and `GetMatches` lists all of them. This breaks the bounded-write rule for ranges; until the claims
-  move to a sorted structure, do not let untrusted callers add ranges without a limit. The range list itself costs a
-  logarithmic number of steps per write.
 - **Close pairs of long prefixes use more memory**: two /128 prefixes that share 120 bits need a chain of 15 nodes, so
   100,000 such pairs held 281 MB where 200,000 random /128 prefixes held 17 MB. Each write still does bounded work.
 - **Batches cannot span an await**: the writer lock belongs to the thread that took it. Ending a batch on another thread
   throws and leaves it open, and a batch that is never ended blocks every writer.
-- **A range lookup's `Clear`** publishes the IPv4 pieces, the IPv6 pieces and the range list one after another, so a
-  reader can briefly see the pieces gone while the ranges are still listed.
 - **MaxMind databases must be trusted**: the loader walks every path of the search tree, and a hostile file whose tree
   shares subtrees can expand into exponentially many networks. A database whose own data covers Teredo or 6to4
   addresses loses it by default, because the loader takes those networks for MaxMind's aliases.

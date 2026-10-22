@@ -8,19 +8,17 @@ contains it, and its value. Suited to routing tables, packet classification, acc
   table as it was at one moment, never part of a write, and every write does a bounded amount of work, so there are no
   pauses for growth or compaction.
 - **Frozen tables** for data that is loaded once and then only read, with lookups up to 1.8 times as fast again.
-- **Address ranges** that need not be CIDR blocks, such as `192.168.0.10-192.168.0.20`.
-- **Your network type**: `System.Net.IPNetwork` is built in, and small packages add `NetworkPrefix`, `IPNetwork2`,
-  `IPAddressRange` and MaxMind databases.
+- **Your network type**: `System.Net.IPNetwork` is built in, and small packages add `NetworkPrefix`, `IPNetwork2` and
+  MaxMind databases.
 - **No dependencies** in the core package. Targets .NET 10.
 
 ## Packages
 
 | Package | For |
 | --- | --- |
-| `Bitvantage.InternetProtocol.NetworkPrefixLookup` | `System.Net.IPNetwork`, address ranges and prefixes of your own types, and keys other than IP addresses |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup` | `System.Net.IPNetwork`, prefixes of your own types, and keys other than IP addresses |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix` | `Bitvantage.InternetProtocol.NetworkPrefix`, with the class names of version 2 |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup.IPNetwork2` | `System.Net.IPNetwork2` from the IPNetwork2 package |
-| `Bitvantage.InternetProtocol.NetworkPrefixLookup.IPAddressRange` | `NetTools.IPAddressRange` ranges from the IPAddressRange package |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup.MaxMind` | `MaxMind.Db` networks, and loading a whole GeoIP2 or GeoLite2 database |
 
 ```sh
@@ -132,34 +130,6 @@ var small = routes.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compr
 ```
 
 `Freeze(ipv4, ipv6)` takes a different layout for each address family.
-
-## Ranges
-
-A range lookup stores ranges with a first and a last address, which need not be CIDR blocks, and finds the smallest
-stored range that contains an address:
-
-```csharp
-using NetTools;
-
-var ranges = new IPAddressRangeLookup<string>();
-ranges.Add(IPAddressRange.Parse("192.168.0.0/24"), "office");
-ranges.Add(IPAddressRange.Parse("192.168.0.10-192.168.0.20"), "printers");
-
-ranges.TryGetMatchValue(IPAddress.Parse("192.168.0.15"), out var name); // "printers"
-ranges.TryGetMatchValue(IPAddress.Parse("192.168.0.50"), out name);     // "office"
-```
-
-Nested ranges work as expected: an address in both gets the inner range, and removing the inner range uncovers the
-outer one. Partly overlapping ranges have no single right answer, so split them into ranges that nest or do not touch.
-Each range is stored as the fewest CIDR blocks that cover it, at most 62 for IPv4 and 254 for IPv6, and a lookup is a
-prefix lookup on those blocks. Range lookups have the same read-write and frozen forms.
-
-Ranges that split into the same block, such as many ranges starting at one address, share it, and every write to that
-block costs time in proportion to the number of ranges sharing it: adding 16,000 such ranges took over a minute. Do not
-let untrusted users add ranges without a limit.
-
-For a range type of your own, implement `IIPRangeAdapter<TRange>`, which returns a range's first and last address, on a
-struct, and use `IPRangeLookup<TRange, TAdapter, TValue>`.
 
 ## MaxMind databases
 

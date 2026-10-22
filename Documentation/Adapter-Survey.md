@@ -20,7 +20,7 @@ package. Download counts are NuGet totals on 2026-10-19.
 | MaxMind.Db | 36.8 M | `MaxMind.Db.Network` | Active; 5.2.0 released 2026-09 | **Add**: adapter plus a loader for MaxMind databases |
 | IPNetwork2 | 35.6 M | `System.Net.IPNetwork2` | Active; 4.3.0 targets .NET 10 | **Add**: adapter |
 | MaxMind.GeoIP2 | 32.9 M | Uses `MaxMind.Db.Network` in responses | Active; 6.1.0 released 2026-07 | Covered by the MaxMind.Db package |
-| IPAddressRange | 30.8 M | `NetTools.IPAddressRange` | Active; each 6.x release has 2 to 8 M downloads, 6.3.0 targets .NET 10 | **Add**: range adapter |
+| IPAddressRange | 30.8 M | `NetTools.IPAddressRange` | Active; each 6.x release has 2 to 8 M downloads, 6.3.0 targets .NET 10 | Recommended as a range adapter; **dropped** with range support |
 | IPNetwork | 1.1 M | `LukeSkywalker.IPNetwork`, the predecessor of IPNetwork2 | Last release 2015 | No package |
 | IpMatcher | 0.56 M | A matcher, not a network type | Active, small | No package; a possible competitor to benchmark |
 | IpSet | 0.19 M | Range and set helpers | Last release 2019 | No package |
@@ -35,8 +35,9 @@ that take strings, or has fewer than 70,000 downloads.
 
 ## Recommended packages
 
-All three are built in version 3, as `Bitvantage.InternetProtocol.NetworkPrefixLookup.IPNetwork2`,
-`….IPAddressRange` and `….MaxMind`, beside `….NetworkPrefix` for this project's own prefix type.
+Two of the three are built in version 3, as `Bitvantage.InternetProtocol.NetworkPrefixLookup.IPNetwork2` and
+`….MaxMind`, beside `….NetworkPrefix` for this project's own prefix type. The `IPAddressRange` package was built and
+then dropped with range support, which the owner left to a separate library.
 
 ### IPNetwork2
 
@@ -58,6 +59,8 @@ IPNetwork2 keeps its addresses as `BigInteger` values, so `Network` probably bui
 That only affects adding and prefix queries; lookups by address never call the adapter.
 
 ### IPAddressRange
+
+Dropped: the owner left ranges to a separate library. The recommendation as written follows.
 
 `NetTools.IPAddressRange` holds `Begin` and `End` addresses. A range can be a CIDR block, such as `192.168.0.0/24`, or
 any span, such as `192.168.0.10-192.168.0.20`. `GetPrefixLength()` throws for a range that is not a CIDR block.

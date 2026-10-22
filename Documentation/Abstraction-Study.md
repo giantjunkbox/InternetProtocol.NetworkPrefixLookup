@@ -432,8 +432,9 @@ Status after building version 3 of the library:
 2. **Core.** Done: `Core/BitTrie.cs` and `Core/FrozenBitTrie.cs`, with remove, longest match by prefix, all matches,
    exact lookups, clear, count, batches and a version number. The tests run every query against a reference for 16-,
    32-, 64-, 128- and 192-bit keys.
-3. **IP layer.** Done, with the dual-stack lookup, `IPAddress` conversions, the `IPNetwork` adapter, the range lookup
-   and address formatting for `ToTextTree` and `ToDotTree`. The `NetworkPrefix` adapter is its own package.
+3. **IP layer.** Done, with the dual-stack lookup, `IPAddress` conversions, the `IPNetwork` adapter and address
+   formatting for `ToTextTree` and `ToDotTree`. The `NetworkPrefix` adapter is its own package. A range lookup was
+   built here and later removed.
 4. **Port the tests.** Done. The 19 tests of version 2 asserted the shape of the binary trie, which no longer exists;
    their scenarios became lookup assertions, and shape is checked by comparing `ToTextTree` output between insertion
    orders and after removals.
@@ -443,9 +444,9 @@ Status after building version 3 of the library:
 7. **Benchmarks.** Done in `PerformanceTest`: the version 2 benchmarks on the same data, and IPv4 and IPv6 lookups and
    builds on the real tables. Version 2 cannot run in the same process, because the two assemblies share a name, so
    that comparison spans two runs. The Bart.NET comparison stays in the prototype.
-8. **Third-party adapters.** Done: the IPNetwork2, IPAddressRange and MaxMind packages, with a MaxMind loader that is
-   checked against MaxMind's reader.
-9. **Packaging and documentation.** Done: four adapter packages beside the dependency-free core, and an updated README,
+8. **Third-party adapters.** Done: the IPNetwork2 and MaxMind packages, with a MaxMind loader that is checked against
+   MaxMind's reader. An IPAddressRange package was built and later removed with the range lookup.
+9. **Packaging and documentation.** Done: three adapter packages beside the dependency-free core, and an updated README,
    [Architecture.md](Architecture.md) and CLAUDE.md. Every package is at version 3.0.0, as the owner chose.
 
 ## Risks
