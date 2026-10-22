@@ -27,9 +27,10 @@ public sealed record MaxMindLoadOptions
 {
     /// <summary>
     ///     Loads the IPv4 networks of an IPv6 database a second time as IPv6 networks under <c>::/96</c>, where the
-    ///     database keeps them, and loads the networks under <c>::ffff:0:0/96</c>, <c>2001::/32</c> and
-    ///     <c>2002::/16</c>, which it points at them. Every IPv4 network is then stored four more times, and every
-    ///     address finds what <see cref="Reader.Find{T}(IPAddress,InjectableValues?)" /> finds. The default is false:
+    ///     database keeps them, and loads the networks under <c>2001::/32</c> and <c>2002::/16</c>, and, when the lookup
+    ///     does not map IPv4-mapped addresses, under <c>::ffff:0:0/96</c>, which it points at them. Every IPv4 network is
+    ///     then stored up to four more times, and every address finds what
+    ///     <see cref="Reader.Find{T}(IPAddress,InjectableValues?)" /> finds. The default is false:
     ///     only the IPv4 networks are stored, and an IPv4-mapped address still finds its IPv4 network, because MaxMind
     ///     lookups turn <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> on by default. IPv4-compatible addresses
     ///     such as <c>::10.1.2.3</c>, and Teredo and 6to4 addresses, then find only the IPv6 networks that cover them. A
@@ -104,6 +105,10 @@ public static class MaxMindDatabase
         {
             if (!options.IncludeAliasedNetworks && IsAliased(network))
                 return;
+            // a lookup that maps IPv4-mapped addresses refuses networks inside ::ffff:0:0/96, and answers those addresses
+            // from the IPv4 networks, as the alias would
+            if (lookup.Options.MapIPv4MappedAddresses && IsMapped(network))
+                return;
             lookup.TryAdd(network, data);
             // the same network as the database stores it, so that IPv4-compatible addresses find it
             if (compatible && network.NetworkAddress.AddressFamily == AddressFamily.InterNetwork)
@@ -126,6 +131,10 @@ public static class MaxMindDatabase
     // 0.0.0.0/0, because it holds the whole IPv4 part.
     private static Network ToNetwork(IPAddress start, int length) =>
         length < 0 && start.AddressFamily == AddressFamily.InterNetwork ? new Network(IPAddress.IPv6Any, length + 96) : new Network(start, length);
+
+    private static bool IsMapped(Network network) =>
+        network.NetworkAddress.AddressFamily == AddressFamily.InterNetworkV6 && network.PrefixLength >= 96
+        && IPAddressBits.ToIPv6Bits(network.NetworkAddress) >> 32 == 0xFFFF;
 
     private static bool IsAliased(Network network)
     {

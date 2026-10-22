@@ -233,10 +233,12 @@ public class AdapterTests
     {
         using var reader = new Reader(DataPath("MaxMind-DB-test-mixed-24.mmdb"));
         var full = MaxMindDatabase.Load<Dictionary<string, object>>(reader, new MaxMindLoadOptions { IncludeAliasedNetworks = true });
+        var asGiven = MaxMindDatabase.Load<Dictionary<string, object>>(reader, new MaxMindLoadOptions { IncludeAliasedNetworks = true, LookupOptions = new IPLookupOptions() });
         var lean = MaxMindDatabase.Load<Dictionary<string, object>>(reader);
         var ipv4 = full.Count(e => e.Prefix.NetworkAddress.AddressFamily == AddressFamily.InterNetwork);
         Assert.That(ipv4, Is.GreaterThan(0));
-        Assert.That(full.Count - lean.Count, Is.EqualTo(4 * ipv4), "each IPv4 network appears under ::/96 and three aliases");
+        Assert.That(asGiven.Count - lean.Count, Is.EqualTo(4 * ipv4), "each IPv4 network appears under ::/96 and three aliases");
+        Assert.That(full.Count - lean.Count, Is.EqualTo(3 * ipv4), "a lookup that maps IPv4-mapped addresses refuses the ::ffff:0:0/96 alias");
         Assert.That(lean.Any(e => InAlias(e.Prefix.NetworkAddress)), Is.False);
     }
 }

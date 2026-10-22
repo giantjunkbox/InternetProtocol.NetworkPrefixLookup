@@ -32,8 +32,9 @@ public sealed record IPLookupOptions
     ///     lookups turn it on by default.
     /// </summary>
     /// <remarks>
-    ///     Only address lookups are mapped; prefixes are stored and looked up as given. With this on, an IPv6 prefix
-    ///     inside <c>::ffff:0:0/96</c> is stored and listed, but no address lookup returns it.
+    ///     Only address lookups are mapped; prefixes are stored and looked up as given. With this on, adding an IPv6 prefix
+    ///     inside <c>::ffff:0:0/96</c> throws <see cref="ArgumentException" />, because no address lookup could return it:
+    ///     add the IPv4 prefix instead.
     /// </remarks>
     public bool MapIPv4MappedAddresses { get; init; }
 }

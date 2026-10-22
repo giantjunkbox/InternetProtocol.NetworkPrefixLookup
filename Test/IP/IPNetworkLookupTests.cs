@@ -216,7 +216,6 @@ public class IPNetworkLookupTests
         // with mapping on, it gets exactly the answer of the IPv4 address it holds, in every form
         var map = new IPNetworkLookup<string>(new IPLookupOptions { MapIPv4MappedAddresses = true });
         map.Add(N("10.0.0.0/8"), "10.0.0.0/8");
-        map.Add(N("::ffff:0:0/96"), "::ffff:0:0/96");
         map.Add(N("::/0"), "::/0");
         foreach (var form in new IReadOnlyIPPrefixLookup<IPNetwork, string>[] { map, map.Freeze(), map.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }) })
         {
@@ -225,15 +224,46 @@ public class IPNetworkLookupTests
             Assert.That(form.TryGetMatchIPv6(IPAddressBits.ToIPv6Bits(mapped), out _, out value) && value == "10.0.0.0/8");
             Assert.That(form.GetMatches(mapped).Select(m => m.Value), Is.EqualTo(new[] { "10.0.0.0/8" }));
 
-            // no IPv4 prefix holds 11.1.2.3, so neither form matches; the IPv6 prefixes never answer a mapped address
+            // no IPv4 prefix holds 11.1.2.3, so neither form matches; ::/0, which contains every mapped address, never
+            // answers one
             var other = IPAddress.Parse("::ffff:11.1.2.3");
             Assert.That(Match(form, "::ffff:11.1.2.3"), Is.Null);
             Assert.That(form.TryGetMatchValue(other.GetAddressBytes(), out _), Is.False);
             Assert.That(form.TryGetMatchValueIPv6(IPAddressBits.ToIPv6Bits(other), out _), Is.False);
             Assert.That(Match(form, "11.1.2.3"), Is.Null);
-            Assert.That(form.ContainsPrefix(N("::ffff:0:0/96")), "still stored");
             Assert.That(Match(form, "2001:db8::1"), Is.EqualTo("::/0"), "other IPv6 addresses are unaffected");
         }
+    }
+
+    [Test]
+    public void With_mapping_on_prefixes_inside_the_mapped_range_are_refused()
+    {
+        var map = new IPNetworkLookup<string>(new IPLookupOptions { MapIPv4MappedAddresses = true });
+        foreach (var text in new[] { "::ffff:0:0/96", "::ffff:10.0.0.0/104", "::ffff:10.1.2.3/128" })
+        {
+            var network = N(text);
+            Assert.Throws<ArgumentException>(() => map.TryAdd(network, text), text);
+            Assert.Throws<ArgumentException>(() => map.Add(network, text), text);
+            Assert.Throws<ArgumentException>(() => map.AddOrUpdate(network, text), text);
+            Assert.Throws<ArgumentException>(() => map.GetOrAdd(network, _ => text), text);
+            Assert.That(map.Remove(network), Is.False, text);
+        }
+
+        // prefixes that merely contain the mapped range are stored, and so is everything with mapping off
+        Assert.That(map.TryAdd(N("::/0"), "::/0"));
+        Assert.That(map.TryAdd(N("::/80"), "::/80"));
+        Assert.That(map.Count, Is.EqualTo(2));
+        Assert.That(new IPNetworkLookup<string>().TryAdd(N("::ffff:10.0.0.0/104"), "as given"));
+
+        // a refused write changes nothing, so the batch it was written in still commits
+        using (var batch = map.BeginBatch())
+        {
+            map.Add(N("10.0.0.0/8"), "10.0.0.0/8");
+            Assert.Throws<ArgumentException>(() => map.Add(N("::ffff:10.0.0.0/104"), "refused"));
+            batch.Commit();
+        }
+
+        Assert.That(Match(map, "::ffff:10.1.2.3"), Is.EqualTo("10.0.0.0/8"));
     }
 
     [Test]

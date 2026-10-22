@@ -349,8 +349,8 @@ slower, inside the container's drift.
   as given and a mapped address on the wire is malformed or crafted (RFC 4942, section 2.2). Turn it on for addresses
   from dual-mode sockets. MaxMind lookups turn it on by default, because MaxMind's own reader answers mapped addresses
   from the IPv4 networks. Prefixes are always stored and looked up as given, so with mapping on an IPv6 prefix inside
-  `::ffff:0:0/96` is stored and listed but answers no address lookup. The check costs one test of a flag on IPv6
-  lookups only.
+  `::ffff:0:0/96` could never answer an address lookup; adding one throws `ArgumentException`, before anything
+  changes, so a batch it was written in still commits. The check costs one test of a flag on IPv6 lookups only.
 - **Batches** begin a batch on both tries. On commit each family publishes atomically, IPv4 first.
 - **Freezing** copies both families' prefixes out under both tries' writer locks, taken in the order batches take
   them, so the frozen copy is the lookup at one moment even though a reader of the read-write lookup can see one
@@ -372,9 +372,11 @@ Each package defines an adapter struct and a read-write and frozen class pair. T
   MaxMind's IPv6 databases keep the IPv4 networks under `::/96`, which `FindAll` reports as IPv4, and point
   `::ffff:0:0/96`, `2001::/32` and `2002::/16` at them, so a full walk returns every IPv4 network four times. The loader
   skips the three aliases by default, and the lookup it returns maps IPv4-mapped addresses, so `::ffff:` addresses still
-  find their IPv4 network without a second copy of it. `IncludeAliasedNetworks` loads the aliases and stores each IPv4 network once more under `::/96`, for exact
-  agreement with `Reader.Find` at every address, which the tests check at every network boundary of two MaxMind test
-  databases, in IPv4, IPv4-compatible and IPv4-mapped form.
+  find their IPv4 network without a second copy of it. `IncludeAliasedNetworks` loads the aliases and stores each IPv4
+  network once more under `::/96`, for exact agreement with `Reader.Find` at every address, which the tests check at
+  every network boundary of two MaxMind test databases, in IPv4, IPv4-compatible and IPv4-mapped form. It skips the
+  `::ffff:0:0/96` alias when the lookup maps those addresses: such a lookup refuses prefixes there, and answers the
+  addresses from the IPv4 networks, as the alias would.
 
 ## Diagnostics
 

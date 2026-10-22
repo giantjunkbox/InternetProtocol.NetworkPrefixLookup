@@ -1,64 +1,71 @@
 # Public Interface
 
-This document describes the public interface of the redesigned library: the generic core from
-[Abstraction-Study.md](Abstraction-Study.md), the frozen lookups from [Optimization-Log.md](Optimization-Log.md), and
-the IP layer on top. It began as a design for review; version 3 of the library now implements it, and
-[Status](#status) lists where the shipped interface differs from the proposal below. The XML documentation in the code
-is the reference for the shipped interface.
+This document describes the public interface of version 3 as it ships: what each type is for, how the types fit
+together, and the rules behind them. The XML documentation in the code is the reference for every member;
+[Architecture.md](Architecture.md) describes the internals and the measurements quoted here. The interface began as a
+proposal built on [Abstraction-Study.md](Abstraction-Study.md); [How the interface got here](#how-the-interface-got-here)
+records where the shipped interface differs from that proposal and why.
 
 ## Overview
 
-Three layers, as in the study, each knowing less than the one above it:
+Three layers, each knowing less than the one above it:
 
 | Layer | Types | Knows about |
 | --- | --- | --- |
-| IP layer | `IPPrefixLookup<TPrefix, TAdapter, TValue>`, `IPNetworkLookup<TValue>`, their frozen forms | `IPAddress`, IPv4 and IPv6, your prefix type |
+| IP layer | `IPPrefixLookup<TPrefix, TAdapter, TValue>`, `IPNetworkLookup<TValue>`, the adapter packages' lookups, their frozen forms | `IPAddress`, IPv4 and IPv6, your prefix type |
 | Core | `BitTrie<TKey, TPrefix, TValue>`, `FrozenBitTrie<TKey, TPrefix, TValue>` | Bits and lengths only |
 | Keys | `IBitKey<TSelf>`, `Bits32`, `Bits128` | Bit arithmetic for one fixed width |
 
-Every layer comes in two forms:
+Every layer comes in two forms, which implement the same read-only interface, so code that only looks things up
+accepts either:
 
-| Form | For | Lookups | Changes |
+| Form | For | Lookups on the real IPv4 table | Changes |
 | --- | --- | --- | --- |
-| Read-write | Tables that change during their life | Multi-level index, about 14 times faster than today on real IPv4 | Every write does a bounded amount of work: no pauses for growth or compaction |
-| Frozen | Tables loaded once, then only read | Leaf-pushed tables, a further 1.9 to 2.7 times faster | None; freeze a new copy to change |
-
-Both forms implement the same read-only interface, so code that only looks things up accepts either.
+| Read-write | Tables that change during their life | 15 times as fast as version 2 | Any number of readers without locks while one writer works; every write does a bounded amount of work, with no pauses for growth or compaction |
+| Frozen | Tables loaded once, then only read | About 1.8 times as fast again | None; freeze a new copy to change it |
 
 There is one read-write design, not a choice of write modes. A second code path is worth its cost only when it is
-clearly faster, as the frozen form is. A read-write variant that pauses for compaction is expected to be only a few
-percent faster, which the prototype has to confirm; see [Bounded writes](#bounded-writes).
+clearly faster, as the frozen form is.
+
+| Package | Contents | Depends on |
+| --- | --- | --- |
+| `Bitvantage.InternetProtocol.NetworkPrefixLookup` | Keys, core, IP layer, `IPNetworkLookup` for `System.Net.IPNetwork` | Nothing |
+| `….NetworkPrefixLookup.NetworkPrefix` | `NetworkPrefixLookup<TValue>` and the value-less `NetworkPrefixLookup` | `Bitvantage.InternetProtocol.NetworkPrefix` |
+| `….NetworkPrefixLookup.IPNetwork2` | `IPNetwork2Lookup<TValue>` | `IPNetwork2` |
+| `….NetworkPrefixLookup.MaxMind` | `MaxMindNetworkLookup<TValue>` and `MaxMindDatabase.Load` | `MaxMind.Db` |
+
+All packages target .NET 10 and are at version 3.0.0. Everything is in the `Bitvantage.InternetProtocol` namespace.
 
 ## Keys
 
 A key is a fixed-width bit string, left-aligned: bit 0 is the most significant bit. The core needs only these
-operations. All are `static abstract`, so the JIT compiles each key type into plain machine instructions.
+operations. All are `static abstract`, so the JIT compiles each key type into plain machine instructions:
 
 ```csharp
 public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
 {
-    static abstract int Width { get; }                                         // 32 or 128 for IP
+    static abstract int Width { get; }                                         // a multiple of 8, at most 128
 
     static abstract TSelf Truncate(in TSelf key, int length);                  // clear every bit from length on
-    static abstract TSelf MaskFor(int length);                                 // stored with each leaf
+    static abstract TSelf MaskFor(int length);                                 // the first length bits set
     static abstract bool MatchesUnderMask(in TSelf key, in TSelf bits, in TSelf mask);
 
-    static abstract int GetBits(in TSelf key, int offset, int count);          // 1 to 24 bits, for strides and tables
+    static abstract int GetBits(in TSelf key, int offset, int count);          // 1 to 24 bits, as 0 to 2^count - 1
     static abstract TSelf SetBits(in TSelf key, int offset, int count, int value);
     static virtual int GetTopBits(in TSelf key, int count) => TSelf.GetBits(key, 0, count);
 }
+
+public readonly struct Bits32 : IBitKey<Bits32>, IEquatable<Bits32>   { public readonly uint Value;    public Bits32(uint value); }
+public readonly struct Bits128 : IBitKey<Bits128>, IEquatable<Bits128> { public readonly UInt128 Value; public Bits128(UInt128 value); }
 ```
 
-The proposal also had `CommonPrefixLength`, `SplitFor`, `IsSet` and a default `FromTopBits`, which a binary-trie core
-needs to route between two siblings and to choose a child. The shipped core is a multibit trie and uses none of them,
-so they were removed; see [Status](#status).
-
-- `Width` is new. The prototype passes the width to each trie's constructor instead.
-- `GetBit` and `StartsWith` from the prototype are dropped. Only the uncached tries used them.
-- `GetTopBits` gets a default implementation, so a new key type writes six members. The shipped types override it,
-  which saves an instruction.
-- Shipped key types: `Bits32` and `Bits128`. Each has a constructor from its integer. `Bits64` and `Bits192` were
-  dropped; see [Status](#status).
+- **Two key types ship**, `Bits32` for IPv4 and `Bits128` for IPv6. A new key type writes six members; the default
+  `GetTopBits` is there to override for speed.
+- **Widths are fixed at compile time** and limited to 128 bits. The read-write trie throws `NotSupportedException` for
+  a width that is not a multiple of 8.
+- **`GetBits` must return a value from 0 to 2^count - 1.** The trie indexes its tables with it, so a custom key that
+  returns anything else breaks the trie's memory safety.
+- **Context such as a VRF** is served by one lookup per context, not by wider keys.
 
 ## Core
 
@@ -70,32 +77,35 @@ public readonly record struct PrefixEntry<TPrefix, TValue>(TPrefix Prefix, TValu
 public interface IReadOnlyBitTrie<TKey, TPrefix, TValue> : IReadOnlyCollection<PrefixEntry<TPrefix, TValue>>
     where TKey : struct, IBitKey<TKey>
 {
-    // longest match for a full-width key, such as an address
+    // the longest stored prefix that contains a full-width key, such as an address
     bool TryGetMatch(in TKey key, out TPrefix prefix, out TValue value);
     bool TryGetMatchValue(in TKey key, out TValue value);
 
-    // longest stored prefix that contains the given prefix, which may be the prefix itself
+    // the longest stored prefix that contains the prefix (bits, length), which may be the prefix itself
     bool TryGetMatch(in TKey bits, int length, out TPrefix prefix, out TValue value);
 
-    // exact prefix, dictionary-style
+    // exactly this prefix, as a dictionary does
     bool TryGetValue(in TKey bits, int length, out TValue value);
+    bool TryGetValue(in TKey bits, int length, out TPrefix prefix, out TValue value);
     bool ContainsPrefix(in TKey bits, int length);
 
     // every stored prefix that contains the key, longest first
     IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(in TKey key);
-    int GetMatches(in TKey key, Span<PrefixEntry<TPrefix, TValue>> destination); // returns the count; Width + 1 always fits
+    int GetMatches(in TKey key, Span<PrefixEntry<TPrefix, TValue>> destination); // TKey.Width + 1 entries always suffice
 }
 ```
 
-- **`out` parameters** for lookups, as decided: all measured result shapes tied, and this one keeps the node layout
-  private.
-- **`TryGetMatchValue`** skips the prefix. When frozen, it reads a dense array of values, which was 12 to 54% faster in
-  quick timings on the real tables.
-- **Naming.** `TryGetValue` and `ContainsPrefix` match exactly, as `Dictionary` does. Everything named `Match` finds the
-  longest containing prefix.
-- **Enumeration** returns entries in address order, a shorter prefix before a longer one at the same address. `Count`
-  is an `int`: the node arrays use `int` indexes, so a table cannot hold more.
-- **Lengths** outside 0 to `TKey.Width` throw `ArgumentOutOfRangeException`. Bits after the length are ignored.
+- **`out` parameters.** All measured result shapes tied, and this one keeps the node layout private. Every `Try…`
+  method's `out` parameters carry `[MaybeNullWhen(false)]`, as `Dictionary.TryGetValue`'s do.
+- **Naming.** Everything named `Match` finds the longest containing prefix; `TryGetValue` and `ContainsPrefix` match
+  exactly.
+- **`TryGetMatchValue`** skips the prefix object. A frozen trie answers it from a dense array of values, which is faster.
+- **Lengths** outside 0 to `TKey.Width` throw `ArgumentOutOfRangeException`. Bits after a prefix's length are ignored.
+- **Enumeration** returns entries in address order, a shorter prefix before a longer one at the same address.
+- **Allocation.** Lookups allocate nothing, except the list form of `GetMatches`; the span form writes into the
+  caller's span.
+- **The prefix object** is whatever the caller stores with a prefix and wants back from lookups. The core never creates
+  one, so the diagnostics below take a formatter for bits and lengths instead.
 
 ### Read-write trie
 
@@ -103,115 +113,43 @@ public interface IReadOnlyBitTrie<TKey, TPrefix, TValue> : IReadOnlyCollection<P
 public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPrefix, TValue>
     where TKey : struct, IBitKey<TKey>
 {
-    public BitTrie(BitTrieOptions? options = null);
-    public BitTrie(IEnumerable<(TKey Bits, int Length, TPrefix Prefix, TValue Value)> items, BitTrieOptions? options = null);
+    public BitTrie();
+    public BitTrie(IEnumerable<(TKey Bits, int Length, TPrefix Prefix, TValue Value)> items);   // loaded as one batch
 
     public bool TryAdd(in TKey bits, int length, TPrefix prefix, TValue value);
-    public void Add(in TKey bits, int length, TPrefix prefix, TValue value);      // throws if the prefix is present
-    public bool AddOrUpdate(in TKey bits, int length, TPrefix prefix, TValue value); // true when added
+    public void Add(in TKey bits, int length, TPrefix prefix, TValue value);                     // throws if present
+    public bool AddOrUpdate(in TKey bits, int length, TPrefix prefix, TValue value);             // true when added
     public TValue GetOrAdd(in TKey bits, int length, TPrefix prefix, Func<TPrefix, TValue> valueFactory);
-    public bool Remove(in TKey bits, int length);                                 // false for a routing node
+    public bool Remove(in TKey bits, int length);
     public void Clear();
 
-    public Batch BeginBatch();                     // Commit() publishes it all at once; disposing without Commit discards it
-    public void Compact(bool trimExcess = false);
-    public BitTrieStatistics GetStatistics();
-    public long Version { get; }                   // renewed on every published change, for validating cached results
+    public Batch BeginBatch();
+    public long Version { get; }
     public FrozenBitTrie<TKey, TPrefix, TValue> Freeze(FrozenBitTrieOptions? options = null);
-
+    public BitTrieStatistics GetStatistics();
     public string ToTextTree(Func<TKey, int, string> format);
     public string ToDotTree(Func<TKey, int, string> format);
+
+    public sealed class Batch : IDisposable { public void Commit(); public void Dispose(); }
 }
 
-public sealed record BitTrieOptions
-{
-    public int Capacity { get; init; }                                  // expected prefixes; sizes the arrays once
-    public int IndexRootBits { get; init; } = 16;
-    public int IndexTableBits { get; init; } = 8;
-    public int IndexThreshold { get; init; } = 8;                       // 32: smaller index, cheaper updates
-}
-
-public readonly record struct BitTrieStatistics(int Prefixes, int Nodes, long Bytes, int GarbageNodes, int GarbageValues, int GarbageIndexEntries);
+public readonly record struct BitTrieStatistics(int Prefixes, int Nodes, long Bytes);
 ```
 
-- **Construction from a sequence bulk loads**, the fastest way to fill a table.
-- **Batches** are atomic, as nftables transactions are. Changes made after `BeginBatch` build privately; readers keep
-  seeing the table as it was. `Commit` publishes them all with one reference write, and disposing the batch without
-  committing discards them. A bulk load into an existing table is a batch. `BartTrie` implements this as
-  `BeginBulkLoad`, `EndBulkLoad` and `AbortBulkLoad`; see [Linux-Survey.md](Linux-Survey.md).
+- **Writes** are serialized by an internal lock, so there is no separate concurrent class. Each does a bounded amount of
+  work: no step grows with the size of the table.
+- **Batches** are atomic. Changes made after `BeginBatch` build privately, and readers keep seeing the table as it was;
+  `Commit` publishes them all with one reference write, and disposing the batch without committing discards them. A
+  batch holds the writer lock until it ends, and the lock belongs to the thread that took it, so a batch must end on
+  the thread that began it and cannot span an `await`; ending it on another thread throws and leaves it open. If a
+  write inside the batch throws, `Commit` discards the batch and throws.
 - **`Version`** changes with every published change, so a caller can cache lookup results and check them with one
-  comparison, as Linux's IPv6 routes do with serial numbers.
-- **Cleanup is continuous**, so there is no compaction policy to choose. `Compact()` is still there for an application
-  with a quiet moment: it finishes the cleanup at once and restores the depth-first layout that bulk loading produces,
-  taking 0.1 to 1.4 seconds on the real tables. Readers are never blocked. `trimExcess` drops all headroom, for a table
-  that will no longer grow.
-- **Index tuning.** A threshold of 8 was fastest on the real tables. A threshold of 32 made lookups about 10% slower,
-  with a smaller index and cheaper updates. The root and table widths are exposed for unusual key widths. 16 and 8
-  were best for both IP families.
-- **Diagnostics** take a formatter for bits and length, because routing nodes have no prefix object. The IP layer
-  supplies one.
-
-### Bounded writes
-
-The read-write trie is designed so that no write ever stalls: a router following a live feed, or a service with a latency
-budget per request, can use it as it is. The prototype's `SnapshotTrie` does not have this property yet, so the
-storage changes from contiguous arrays to chunks.
-
-**What it removes.** Worst-case latency was measured on the real IPv4 table, with one writer making a million random
-removals and re-additions as fast as it could while one reader timed every lookup (`tail-latency` in the prototype):
-
-| | Median write | 99.99th percentile | Slowest writes |
-| --- | --- | --- | --- |
-| Never compacting | 3.4 µs | 535 µs | 162 to 434 ms when the arrays grew |
-| Compacting when garbage exceeds live values | 3.1 µs | 273 µs | 378 to 804 ms compacting, 29 to 315 ms growing |
-
-Apart from those, the slowest writes took 4 to 12 ms, after changes to prefixes from /8 to /24. Some of that is index
-refresh, which is known to be expensive for short prefixes, but the reader alone stalled for up to 12 ms with an idle
-writer, so these writes cannot be told apart from scheduling noise in this container. Readers were never held up by the
-writer: lookup latency had the same tail with an idle writer. Garbage collection paused for at most 1 ms per run.
-
-**What changes inside.** Each source of a long write gets a bounded replacement:
-
-| In `SnapshotTrie`, in one write | In the new design |
-| --- | --- |
-| A full array grows by copying all of it: tens of MB | Storage is a list of fixed-size chunks; growing adds a chunk and copies nothing |
-| Compaction rebuilds everything at once | Each write also moves a few live nodes out of the emptiest chunk. An empty chunk leaves the next snapshot, and the garbage collector frees it once no reader holds an older snapshot, so readers need no extra bookkeeping |
-| A change to a short prefix rewrites every index entry beneath it | Each index entry records only the best match whose length falls in its own level, and a lookup combines the levels as it descends. A change then rewrites entries in one level: at most 256, or up to 65,536 root entries for a prefix shorter than 16 bits |
-| Bulk loads and compaction allocate arrays of tens of MB | Chunks are small and long-lived, so writes make no large allocations |
-
-Removing a node also has to repoint the index entries whose walk starts at it. Keeping that bounded is the hardest part
-of the design and the first thing the prototype has to settle.
-
-A simpler route has since turned up in Go's BART, described in [Bart-Comparison.md](Bart-Comparison.md): small
-multibit nodes, updated by copying the node that changes and linking it in with one reference write. Writes are then
-bounded, readers stay lock-free, and the garbage collector frees replaced nodes, with no chunks or cleanup at all. The
-prototype, `BartTrie`, meets the targets below on the real tables and misses two: lookups on small tables that fit in
-cache, and garbage-collection pauses of up to 38 ms under heavy churn. It was the recommended route, and version 3 is
-built on it; the chunked design above was not built.
-
-**Targets.** These are what the prototype must show, with the same tail-latency test:
-
-- **Bounded work.** The test should also count the nodes and index entries each write touches, which timer noise
-  cannot distort. The largest count must not grow with the table.
-- **Latency.** No write slower than the worst stall of the idle control, 12 ms in this container, against 804 ms today.
-  On a quiet machine the target is 1 ms.
-- **Memory** within 1.5 times the compacted size under sustained churn. Never compacting reached 4.8 times in the
-  churn test.
-- **Lookups** within 10% of `SnapshotTrie`, on the real tables and on a table small enough to fit in cache. Each node
-  and index read goes through a chunk table, one extra load from a table small enough to stay in L1. On tables larger
-  than the cache that should cost a few percent; on small tables it costs more, which is why both are measured.
-- **Average writes and bulk loads** within 10% of `SnapshotTrie`. Each write pays for its share of the cleanup, which
-  compaction used to do in bulk, so the total work should be similar.
-
-If the prototype misses the lookup or write targets by a wide margin, a contiguous variant with compaction comes back
-as an option, and this section says by how much. Otherwise there is only this design.
-
-Other notes:
-
-- `Capacity` allocates the chunks up front, so that even the first writes after loading allocate nothing.
-- `Freeze` reads the whole table, so it blocks writers for its duration.
-- Heavy churn scatters the nodes that changed. On the real tables that cost lookups at most about 15% in the churn
-  test; `Compact()` restores the layout.
+  comparison. Read it before the lookups it is to vouch for.
+- **`Freeze`** copies the prefixes out under the writer lock and builds the frozen tables after releasing it, so
+  writers wait only for the copy; readers never wait.
+- **`GetOrAdd`** calls its factory under the writer lock, so the factory must not write to the same trie.
+- **Diagnostics.** `ToTextTree` and `ToDotTree` render the node structure, one for tests and people, one for Graphviz;
+  the IP layer supplies an address formatter.
 
 ### Frozen trie
 
@@ -219,101 +157,104 @@ Other notes:
 public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPrefix, TValue>
     where TKey : struct, IBitKey<TKey>
 {
-    public FrozenBitTrieOptions Options { get; }
-    public long Bytes { get; }
+    public FrozenBitTrieOptions Options { get; }   // as given to Freeze
+    public FrozenLayout Layout { get; }            // the layout built, which Options may leave to the data
+    public long Bytes { get; }                     // memory held by the tables and entries
 }
 
 public sealed record FrozenBitTrieOptions
 {
-    public FrozenLayout Layout { get; init; } = FrozenLayout.LeafPushed;
-    public int? RootBits { get; init; }                 // default: 16 for leaf-pushed, 18 for compressed
+    public FrozenLayout? Layout { get; init; }          // null: chosen from the data
+    public int? RootBits { get; init; }                 // null: sized to the number of prefixes
     public int TableBits { get; init; } = 8;            // leaf-pushed child tables
-    public bool ValueOnlyLookups { get; init; } = true; // keep a dense copy of the values
+    public bool ValueOnlyLookups { get; init; } = true; // keep a dense copy of the values for TryGetMatchValue
 }
 
 public enum FrozenLayout { LeafPushed, Compressed }
 ```
 
-- **Built only by `Freeze`.** To build one straight from a sequence, construct a `BitTrie` from it and freeze that; the
-  temporary trie is then garbage. A frozen trie never changes. To change it, update the read-write trie and freeze
-  again, then swap the reference.
-- **Layouts.** `LeafPushed` with a 16-bit root is the default: 2.4 times faster than the read-write design on real IPv4
-  and 1.9 times on IPv6. `Compressed` is the low-memory choice: tables of 7 MB on real IPv4 and 4.5 MB on IPv6,
-  against 28 and 51 MB, for lookups about 1.4 times faster than the read-write design. A 24-bit root with 8-bit tables
-  is the fastest IPv4 shape, at 66 MB.
-- **Freezing** blocks writers while it runs. Building the tables alone took 0.5 to 2.6 seconds on the real tables,
-  depending on the layout. Readers of the read-write trie are not affected.
-- **`ValueOnlyLookups`** costs one value per prefix: 4 MB for `int` values on real IPv4. Turn it off for large value
-  types if `TryGetMatchValue` is not used.
+- **Built only by `Freeze`.** A frozen trie never changes. To change it, update the read-write trie, freeze again and
+  swap the reference; readers of the old copy are unaffected.
+- **Layouts.** `LeafPushed` is the fastest on clustered tables such as routing tables. `Compressed`, after Poptrie, is
+  much smaller, and also faster when prefixes are scattered across the address space, where leaf-pushed tables grow
+  very large: 100,000 random IPv6 /128 prefixes take 1.4 GB leaf-pushed against 56 MB compressed. Unless the options
+  name a layout, `Freeze` takes leaf-pushed, or compressed when the leaf-pushed child tables would hold more than 256
+  entries per prefix and more than 16 MB in all. Measured on eleven tables, compressed was both smaller and faster
+  there, and the real routing tables, at 7 (IPv4) and 55 (IPv6) entries per prefix, stay leaf-pushed;
+  [Architecture.md](Architecture.md#the-frozen-trie) has the table.
+- **No nodes.** A frozen trie keeps only its tables and entries. Each entry records its length and the nearest shorter
+  stored prefix that contains it, which answers `GetMatches`, `TryGetMatch` for a prefix and `TryGetValue` without the
+  nodes.
+- **`ValueOnlyLookups`** costs one value per prefix. Turn it off for large value types if `TryGetMatchValue` is not used.
 
-**Keeping the full interface without the nodes.** Lookups read only the tables and the entries, so a frozen trie can
-drop the trie nodes, which are 44 MB on real IPv4. The other queries still work if each entry records its length and the
-entry of the nearest shorter prefix that contains it. That costs 5 bytes per prefix:
+### What readers see
 
-- `GetMatches` finds the longest match, then follows those links up to the shortest.
-- `TryGetMatch` for a prefix finds the longest match for the prefix's first address, then follows the links until the
-  length is no longer than the query's.
-- `TryGetValue` does the same and checks that the length is equal. If the prefix is stored, it lies on that chain,
-  because it contains its own first address.
-
-Estimated memory, computed from array sizes including those links and the dense `int` values:
-
-| Design | Real IPv4 | Real IPv6 |
-| --- | --- | --- |
-| Read-write, threshold 8, measured | 113 MB | 64 MB |
-| Frozen, leaf-pushed 16/8 | about 61 MB | about 58 MB |
-| Frozen, compressed, 18-bit root | about 40 MB | about 12 MB |
-
-### Thread safety
-
-- **Read-write trie.** Any number of threads may read while writes happen. Reads take no locks, and each sees the
-  table either before or after any single change, never in between. Writes are serialized by an internal lock, so
-  there is no separate concurrent class. An uncontended lock costs roughly 20 ns, about 3% of an insert on the real
-  tables; that is an estimate, not a measurement. Enumeration during writes is safe and sees each entry whole, but is
-  not a snapshot of the entire table at one instant.
-- **Frozen trie.** Immutable after `Freeze` returns. Any number of threads may read.
+- **Read-write trie.** Any number of threads may read while one writes, and reads take no locks. Each lookup sees the
+  table as it was at one moment: before or after any single change, never part of one. A lookup that overlaps two
+  writes looks again. Enumeration during writes is safe and sees each entry whole, but is not a snapshot of the whole
+  table.
+- **Frozen trie.** Immutable; any number of threads may read it.
 
 ## IP layer
 
-The IP layer holds one core for IPv4 (`Bits32`) and one for IPv6 (`Bits128`), routes each call by address family, and
-converts addresses without allocating. Your prefix type plugs in through a struct adapter, as in the study:
+The IP layer holds one read-write or frozen trie for IPv4 (`Bits32`) and one for IPv6 (`Bits128`), sends each call to
+the family it belongs to, and converts addresses without allocating. Your prefix type plugs in through a struct
+adapter, whose static members the JIT inlines:
 
 ```csharp
-public interface IIPPrefixAdapter<TPrefix>
+public interface IIPPrefixAdapter<in TPrefix>
 {
     static abstract bool IsIPv4(TPrefix prefix);
     static abstract uint GetIPv4Bits(TPrefix prefix);    // left-aligned
     static abstract UInt128 GetIPv6Bits(TPrefix prefix); // left-aligned
     static abstract int GetLength(TPrefix prefix);
 }
+
+public static class IPAddressBits
+{
+    public static uint ToIPv4Bits(IPAddress address);    // throws for an IPv6 address
+    public static UInt128 ToIPv6Bits(IPAddress address); // throws for an IPv4 address
+    public static IPAddress FromIPv4Bits(uint bits);
+    public static IPAddress FromIPv6Bits(UInt128 bits);
+}
 ```
 
-### Read-only interface
+### Read-only interface and options
 
 ```csharp
 public interface IReadOnlyIPPrefixLookup<TPrefix, TValue> : IReadOnlyCollection<PrefixEntry<TPrefix, TValue>>
 {
-    // longest match for an address
+    // the longest stored prefix that contains an address
     bool TryGetMatch(IPAddress address, out TPrefix prefix, out TValue value);
     bool TryGetMatch(ReadOnlySpan<byte> address, out TPrefix prefix, out TValue value); // 4 or 16 bytes, network order
     bool TryGetMatchIPv4(uint address, out TPrefix prefix, out TValue value);           // host order
     bool TryGetMatchIPv6(UInt128 address, out TPrefix prefix, out TValue value);
-    bool TryGetMatchValue(IPAddress address, out TValue value);
-    // ... TryGetMatchValue also for spans, uint and UInt128
+    bool TryGetMatchValue(IPAddress address, out TValue value);                          // and for spans, uint and UInt128
 
     // prefixes
-    bool TryGetMatch(TPrefix network, out TPrefix prefix, out TValue value); // longest stored prefix containing it
-    bool TryGetValue(TPrefix prefix, out TValue value);                      // exact
+    bool TryGetMatch(TPrefix network, out TPrefix prefix, out TValue value);             // the longest stored prefix containing it
+    bool TryGetValue(TPrefix prefix, out TValue value);                                  // exactly this prefix
     bool ContainsPrefix(TPrefix prefix);
 
-    IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(IPAddress address);
-    int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination);
+    IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(IPAddress address);           // longest first
+    int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination);   // 129 entries always suffice
+}
+
+public sealed record IPLookupOptions
+{
+    public bool MapIPv4MappedAddresses { get; init; }   // off by default; MaxMind lookups turn it on
 }
 ```
 
-The span, `uint` and `UInt128` overloads serve callers that never have an `IPAddress`, such as packet parsers. The
-`IPAddress` overloads convert through the `Address` property for IPv4, which was about 30% faster end to end than
-`TryWriteBytes`. They use `TryWriteBytes` for IPv6.
+- **Addresses.** The span, `uint` and `UInt128` overloads serve callers that never hold an `IPAddress`, such as packet
+  parsers. Scope IDs are ignored.
+- **Enumeration** returns the IPv4 prefixes, then the IPv6 prefixes, each in address order.
+- **IPv4-mapped addresses** such as `::ffff:10.1.2.3` are looked up as given by default, which suits routing tables and
+  packet classification, where a mapped address on the wire is malformed or crafted (RFC 4942, section 2.2). With
+  `MapIPv4MappedAddresses` on, as for addresses from dual-mode sockets, an address lookup treats a mapped address as the
+  IPv4 address it holds, strictly: it gets exactly the answer the IPv4 address gets. Prefixes are stored and looked up
+  as given, so with mapping on, adding a prefix inside `::ffff:0:0/96` throws `ArgumentException`: no address lookup
+  could ever return it.
 
 ### Read-write and frozen lookups
 
@@ -321,8 +262,11 @@ The span, `uint` and `UInt128` overloads serve callers that never have an `IPAdd
 public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup<TPrefix, TValue>
     where TAdapter : struct, IIPPrefixAdapter<TPrefix>
 {
-    public IPPrefixLookup(BitTrieOptions? options = null);
-    public IPPrefixLookup(IEnumerable<KeyValuePair<TPrefix, TValue>> items, BitTrieOptions? options = null);
+    public IPPrefixLookup(IPLookupOptions? options = null);
+    public IPPrefixLookup(IEnumerable<KeyValuePair<TPrefix, TValue>> items, IPLookupOptions? options = null);
+
+    public IPLookupOptions Options { get; }
+    public long Version { get; }
 
     public bool TryAdd(TPrefix prefix, TValue value);
     public void Add(TPrefix prefix, TValue value);
@@ -331,66 +275,78 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     public bool Remove(TPrefix prefix);
     public void Clear();
 
-    public Batch BeginBatch();                     // each family publishes atomically when the batch commits
-    public void Compact(bool trimExcess = false);
-    public IPLookupStatistics GetStatistics();     // per family
-    public FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> Freeze(FrozenBitTrieOptions? ipv4 = null, FrozenBitTrieOptions? ipv6 = null);
-
+    public Batch BeginBatch();
+    public FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> Freeze(FrozenBitTrieOptions? options = null);   // both families
+    public FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> Freeze(FrozenBitTrieOptions ipv4, FrozenBitTrieOptions ipv6);
+    public IPLookupStatistics GetStatistics();
     public string ToTextTree(AddressFamily family);
     public string ToDotTree(AddressFamily family);
 }
 
 public class FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup<TPrefix, TValue>
-    where TAdapter : struct, IIPPrefixAdapter<TPrefix>;
+    where TAdapter : struct, IIPPrefixAdapter<TPrefix>
+{
+    protected internal FrozenIPPrefixLookup(IPPrefixLookup<TPrefix, TAdapter, TValue> source, FrozenBitTrieOptions? ipv4, FrozenBitTrieOptions? ipv6);
+    public IPLookupOptions Options { get; }    // those of the lookup it was frozen from
+    public long Bytes { get; }
+}
+
+public readonly record struct IPLookupStatistics(BitTrieStatistics IPv4, BitTrieStatistics IPv6);
 ```
 
-Concrete classes hide the generic parameters, because C# cannot infer the key and adapter types:
+- **Null prefixes** are rejected with `ArgumentNullException`, without boxing struct prefixes.
+- **Batches** begin a batch on both families. On commit each family publishes atomically, IPv4 first, so a reader can
+  see the new IPv4 prefixes a moment before the new IPv6 ones. If either half's writes failed, nothing is published.
+- **Freezing** copies both families under both writer locks, so a frozen copy is the lookup at one moment.
+  `Freeze(options)` applies one layout to both families; `Freeze(ipv4, ipv6)` takes one for each.
+- **Shared code.** The read-only members of the two classes are written once, in an internal struct that each class
+  forwards to, so no infrastructure type is public.
+- **Adapter packages** derive their own pair: the frozen class's protected constructor takes the read-write lookup to
+  copy.
+
+Concrete classes hide the generic parameters, because C# cannot infer the key and adapter types. Each read-write class
+redeclares `Freeze` with `new` to return its own frozen class:
 
 | Package | Read-write | Frozen | Adapter |
 | --- | --- | --- | --- |
-| Core package, no dependencies | `IPNetworkLookup<TValue>` | `FrozenIPNetworkLookup<TValue>` | `IPNetworkAdapter` for `System.Net.IPNetwork` |
-| `NetworkPrefix` package | `NetworkPrefixLookup<TValue>` | `FrozenNetworkPrefixLookup<TValue>` | `NetworkPrefixAdapter` |
-| `IPNetwork2` package | `IPNetwork2Lookup<TValue>` | `FrozenIPNetwork2Lookup<TValue>` | `IPNetwork2Adapter` for `System.Net.IPNetwork2` |
-| `MaxMind` package | `MaxMindNetworkLookup<TValue>` | `FrozenMaxMindNetworkLookup<TValue>` | `MaxMindNetworkAdapter` for `MaxMind.Db.Network`, plus a database loader |
+| Core package | `IPNetworkLookup<TValue>` | `FrozenIPNetworkLookup<TValue>` | `IPNetworkAdapter` for `System.Net.IPNetwork` |
+| `NetworkPrefix` | `NetworkPrefixLookup<TValue>`, `NetworkPrefixLookup` | `FrozenNetworkPrefixLookup<TValue>`, `FrozenNetworkPrefixLookup` | `NetworkPrefixAdapter` |
+| `IPNetwork2` | `IPNetwork2Lookup<TValue>` | `FrozenIPNetwork2Lookup<TValue>` | `IPNetwork2Adapter` for `System.Net.IPNetwork2` |
+| `MaxMind` | `MaxMindNetworkLookup<TValue>` | `FrozenMaxMindNetworkLookup<TValue>` | `MaxMindNetworkAdapter` for `MaxMind.Db.Network` |
 
-Each concrete read-write class redeclares `Freeze` with `new` so that it returns its own frozen class. Today's
-value-less `NetworkPrefixLookup` becomes a lookup whose value type is an empty struct.
+[Adapter-Survey.md](Adapter-Survey.md) explains why these libraries get packages, and which popular types need none.
 
-The two third-party packages cover the most downloaded network types on NuGet that are not already
-`System.Net.IPNetwork`. [Adapter-Survey.md](Adapter-Survey.md) has the survey, including the popular types that need
-no package, such as Npgsql's `cidr` mapping.
+### Lookups without values
 
-### Ranges
+`NoValue` is an empty struct for sets of prefixes. `NoValueLookupExtensions` adds `TryAdd(prefix)` and `Add(prefix)`
+to any read-write lookup whose value type is `NoValue`, `TryGetMatch(address, out prefix)` to any read-only one, and
+`ContainsMatch(address)` to every lookup. The `NetworkPrefix` package's value-less `NetworkPrefixLookup` keeps the
+version 2 class name.
 
-Not shipped: the owner left ranges to a separate library, as the Status section records. The proposal follows.
-
-Some libraries describe networks as ranges with a first and a last address, and a range need not be a CIDR block, as in
-`192.168.0.10-192.168.0.20`. A range adapter supplies the two ends:
+### MaxMind databases
 
 ```csharp
-public interface IIPRangeAdapter<TRange>
+public static class MaxMindDatabase
 {
-    static abstract IPAddress GetFirst(TRange range);
-    static abstract IPAddress GetLast(TRange range);
+    public static MaxMindNetworkLookup<T> Load<T>(string path, MaxMindLoadOptions? options = null) where T : class;
+    public static MaxMindNetworkLookup<T> Load<T>(Reader reader, MaxMindLoadOptions? options = null) where T : class;
 }
 
-public class IPRangeLookup<TRange, TAdapter, TValue> : IReadOnlyIPPrefixLookup<TRange, TValue>
-    where TAdapter : struct, IIPRangeAdapter<TRange>;    // same members as IPPrefixLookup, with ranges for prefixes
+public sealed record MaxMindLoadOptions
+{
+    public bool IncludeAliasedNetworks { get; init; }   // also store MaxMind's alias networks
+    public int CacheSize { get; init; } = 16384;
+    public InjectableValues? Injectables { get; init; }
+    public IPLookupOptions? LookupOptions { get; init; } // default: mapping on
+}
 ```
 
-The range lookup lives in the core package and stores each range as the fewest prefixes that cover it exactly: one for
-a CIDR block, at most 62 for an IPv4 range and 254 for an IPv6 range. Every piece holds the caller's range and value, so
-lookups return the range.
-
-- **Nested ranges** work as expected: an address in both gets the inner range. When an inner range splits into a piece
-  identical to one of the outer range's pieces, that piece keeps both claims, the smaller range first, so removing the
-  inner range uncovers the outer one again.
-- **Partly overlapping ranges** have no single right answer. An address in both gets whichever range's covering piece
-  is smaller, which is well defined but rarely what a caller means, so the documentation should advise splitting them.
-- **Counting and listing** report ranges, not pieces. `TryGetValue` and `Remove` take the range, and match it exactly.
-- **Ranges are read once**, when added. Changing a range object that is already stored changes nothing in the lookup.
-- **A range's pieces change together.** Readers see all of a range's pieces added, updated or removed at once, and a
-  write that fails changes nothing.
+The loader reads every network through `Reader.FindAll<T>` into one batch. MaxMind's IPv6 databases keep the IPv4
+networks under `::/96` and point three alias networks at them; the loader stores the IPv4 networks once, as IPv4, and
+the lookup maps IPv4-mapped addresses, so lookups answer as MaxMind's reader does. `IncludeAliasedNetworks` also stores
+the copies under `::/96`, `2001::/32` and `2002::/16`, and under `::ffff:0:0/96` when the lookup does not map those
+addresses, so that every address answers as MaxMind's reader does. Databases must be trusted:
+a hostile file can expand into a huge number of networks.
 
 ## Examples
 
@@ -406,21 +362,28 @@ if (routes.TryGetMatch(IPAddress.Parse("10.1.2.3"), out var network, out var asn
     Console.WriteLine($"{network} -> AS{asn}");
 ```
 
-A table loaded once, then only read, such as an IP-to-AS map:
+Many changes that readers should see at once:
 
 ```csharp
-FrozenIPNetworkLookup<int> origins = new IPNetworkLookup<int>(LoadPrefixes()).Freeze();
-
-// on many threads
-if (origins.TryGetMatchValue(packet.SourceAddress, out var asn)) Count(asn);
+using (var batch = routes.BeginBatch())
+{
+    foreach (var (prefix, asn) in update)
+        routes.AddOrUpdate(prefix, asn);
+    batch.Commit();
+}
 ```
 
-Reloading the read-only table without stopping readers:
+A table loaded once, then only read, and reloaded without stopping readers:
 
 ```csharp
-private volatile FrozenIPNetworkLookup<int> _origins;
+private volatile FrozenIPNetworkLookup<int> _origins = Load();
 
-void Reload() => _origins = new IPNetworkLookup<int>(LoadPrefixes()).Freeze(); // readers switch on their next lookup
+static FrozenIPNetworkLookup<int> Load() => new IPNetworkLookup<int>(LoadPrefixes()).Freeze();
+
+void Reload() => _origins = Load();   // readers switch on their next lookup
+
+// on many threads
+if (_origins.TryGetMatchValue(packet.SourceAddress, out var asn)) Count(asn);
 ```
 
 One routing table per VRF:
@@ -431,31 +394,31 @@ vrfs[7] = new IPNetworkLookup<int>(LoadRoutes(vrf: 7));
 vrfs[7].TryGetMatchValue(destination, out var nextHop);
 ```
 
-## Status
+## How the interface got here
 
-Version 3 implements this interface. Where it differs from the proposal above:
+The interface was first proposed for review, before the read-write core was chosen. Where the shipped interface
+differs from that proposal:
 
-| Part | Shipped |
-| --- | --- |
-| Read-write core | `BitTrie` is built on the BART-style design measured as `BartTrie`, not on chunks, so there is nothing to tune or compact: no `BitTrieOptions`, no `Compact`, and `BitTrieStatistics` has no garbage counts. Its constructor throws `NotSupportedException` for widths that are not a multiple of 8 |
-| Key interface | Six required members and a default `GetTopBits`. `CommonPrefixLength`, `SplitFor`, `IsSet` and `FromTopBits` were removed, because the multibit core uses none of them |
-| Key types | Only `Bits32` and `Bits128` ship, and key widths are limited to 128 bits. `Bits192` was for context such as a VRF, which one lookup per context serves better: in front of the address it would cost a trie level per 8 bits and waste the shortcut table and the frozen root. `Bits64` was for keys such as MAC address prefixes, which come in a few fixed lengths that a hash table handles |
-| Read-only core interface | Adds `TryGetValue(bits, length, out prefix, out value)`, an exact lookup that also returns the prefix object |
-| Frozen core | `FrozenBitTrie` keeps no nodes; parent links answer the other queries, as proposed. It exposes `Options` and `Bytes`. Without `RootBits`, the root follows the number of prefixes instead of always being 16 or 18 bits, so small and empty tables stay small |
-| IP layer options | `IPLookupOptions.MapIPv4MappedAddresses` looks up an IPv4-mapped address as the IPv4 address it holds. The owner chose to leave it off by default, since routing tables and packet classification are the main use cases, and to have MaxMind lookups turn it on by default |
-| Freezing | `Freeze(options)` applies one layout to both address families, and `Freeze(ipv4, ipv6)`, with no defaults, takes one for each. A single `Freeze(ipv4 = null, ipv6 = null)` let `Freeze(compressed)` compress only IPv4 |
-| Null state | Every `Try…` method's `out` parameters carry `[MaybeNullWhen(false)]`, as `Dictionary.TryGetValue`'s do |
-| Address conversions | `IPAddressBits.ToIPv4Bits` and `ToIPv6Bits` throw `ArgumentException` for an address of the other family |
-| Shared code | The read-only members of the read-write and frozen lookups are written once, in an internal struct that each class forwards to, so the two classes implement `IReadOnlyIPPrefixLookup` directly and no infrastructure type is public. An earlier public base class, `IPPrefixLookupBase`, was replaced for that reason |
-| IP layer batches | `IPPrefixLookup.BeginBatch` returns a `Batch` that publishes each family atomically, IPv4 first |
-| Frozen IP lookups | A frozen class's protected constructor takes the read-write lookup to copy, so adapter packages can define their own pairs |
-| Value-less lookups | `NoValueLookupExtensions` adds `TryAdd(prefix)`, `Add(prefix)`, `TryGetMatch(address, out prefix)` and `ContainsMatch(address)` |
-| Ranges | Not shipped, nor the `IPAddressRange` package. A range lookup as proposed was built and then removed: the owner had not asked for it, and it added a second write path whose writes were not bounded when many ranges shared a piece. Ranges are left to a separate library |
-| Adapter packages | As in the table above. The MaxMind loader is `MaxMindDatabase.Load<T>`, which stores MaxMind's IPv4 networks once, as IPv4. `IncludeAliasedNetworks` also stores them under `::/96`, where an IPv6 database keeps them, and under its three alias networks, so that every address answers as `Reader.Find` does |
-| Package names | As in the table above, approved by the owner |
-| Package versions | 3.0.0 for every package |
+| Part | Proposed | Shipped, and why |
+| --- | --- | --- |
+| Read-write core | Chunked storage with continuous cleanup, `BitTrieOptions` for capacity and index tuning, `Compact()` | Built on the BART-style design measured as `BartTrie` ([Bart-Comparison.md](Bart-Comparison.md)): copy-on-write multibit nodes, bounded writes with nothing to tune or compact. No options, no `Compact`, no garbage counts in `BitTrieStatistics` |
+| Key interface | Also `CommonPrefixLength`, `SplitFor`, `IsSet` and `FromTopBits` | Removed: a binary-trie core needed them, the multibit core does not |
+| Key types | `Bits32`, `Bits64`, `Bits128`, `Bits192` | `Bits32` and `Bits128`. `Bits192` was for a VRF in front of the address, which one lookup per context serves better; `Bits64` was for keys such as MAC prefixes, which come in a few fixed lengths that a hash table handles |
+| Exact lookups | `TryGetValue(bits, length, out value)` | Also an overload that returns the prefix object |
+| Frozen root | 16 or 18 bits always | Sized to the number of prefixes unless `RootBits` is given, so small and empty tables stay small |
+| Frozen layout | Leaf-pushed unless the caller chose otherwise | Chosen from the data unless the caller chooses, because leaf-pushed tables can grow to gigabytes on scattered prefixes |
+| Freezing | `Freeze(ipv4 = null, ipv6 = null)` | `Freeze(options)` for both families and `Freeze(ipv4, ipv6)` for one each: the single method let `Freeze(compressed)` compress only IPv4. Writers wait only while the prefixes are copied |
+| IPv4-mapped addresses | Not covered | `IPLookupOptions.MapIPv4MappedAddresses`, off by default and on for MaxMind lookups, with prefixes inside `::ffff:0:0/96` rejected while it is on |
+| Null state | Plain `out` parameters | `[MaybeNullWhen(false)]` on every `Try…` method |
+| Address conversions | Unchecked | `IPAddressBits.ToIPv4Bits` and `ToIPv6Bits` throw for an address of the other family |
+| Shared code of the IP lookups | Not covered | First a public base class, then an internal struct each class forwards to, so that no infrastructure type is public |
+| Ranges | `IPRangeLookup` and an `IPAddressRange` adapter package | Built, then removed: the owner had not asked for them, and they added a second write path whose writes were not bounded when many ranges shared a piece. Ranges with arbitrary ends are left to a separate library |
+| MaxMind | An adapter | Also `MaxMindDatabase.Load<T>`, with alias networks loaded only on request |
 
 ## Open questions
 
 - **Whether `Add` should exist** next to `TryAdd`, `AddOrUpdate` and `GetOrAdd`. It is there for familiarity with
   `Dictionary`.
+- **Further operations** suggested by the review, not yet decided: `ContainsMatch` on the read-only interface, removing
+  a prefix only when its value matches, overlap tests, listing the prefixes inside or containing a prefix, per-family
+  counts, `GetMatches` from integers, and one `Batch` type for every lookup.

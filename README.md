@@ -74,6 +74,9 @@ var acl = new IPNetworkLookup<bool>(new IPLookupOptions { MapIPv4MappedAddresses
 Leave it off for addresses read from packets: there a mapped address is malformed or crafted, and treating it as IPv4
 would let it match IPv4 rules. MaxMind lookups turn mapping on by default, because MaxMind's own reader works that way.
 
+With mapping on, an IPv6 prefix inside `::ffff:0:0/96` could never match an address, so adding one throws
+`ArgumentException`; add the IPv4 prefix instead.
+
 ## Tables that change
 
 Writes follow dictionary rules: `TryAdd`, `Add`, `AddOrUpdate`, `GetOrAdd`, `Remove` and `Clear`.
@@ -146,7 +149,8 @@ On MaxMind's test database the read-write lookup answered about 80 times as fast
 one about 180 times as fast. The loader stores each IPv4 network once. MaxMind's IPv6 databases also answer some IPv6
 addresses from the IPv4 data, through IPv4-compatible, 6to4 and Teredo aliases. Set
 `MaxMindLoadOptions.IncludeAliasedNetworks` to load those too, and every address then gets the answer
-`Reader.Find` gives, at the cost of storing each IPv4 network four more times.
+`Reader.Find` gives, at the cost of storing each IPv4 network three more times: under `::/96`, `2001::/32` and
+`2002::/16`. The `::ffff:0:0/96` alias is not needed, because the lookup maps those addresses to IPv4.
 
 Load only databases you trust. A database's search tree can point many branches at one subtree, as MaxMind's aliases do,
 and a hostile file of a few hundred bytes can expand into millions of networks. The records are shared between networks

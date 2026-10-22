@@ -93,13 +93,19 @@ public static class NoValueLookupExtensions
     /// <summary>Adds a prefix. Returns false when it is already present.</summary>
     /// <param name="lookup">The lookup.</param>
     /// <param name="prefix">The prefix to add.</param>
+    /// <exception cref="ArgumentException">
+    ///     <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> is on and the prefix lies inside <c>::ffff:0:0/96</c>.
+    /// </exception>
     public static bool TryAdd<TPrefix, TAdapter>(this IPPrefixLookup<TPrefix, TAdapter, NoValue> lookup, TPrefix prefix)
         where TAdapter : struct, IIPPrefixAdapter<TPrefix> => lookup.TryAdd(prefix, default);
 
     /// <summary>Adds a prefix.</summary>
     /// <param name="lookup">The lookup.</param>
     /// <param name="prefix">The prefix to add.</param>
-    /// <exception cref="ArgumentException">The prefix is already present.</exception>
+    /// <exception cref="ArgumentException">
+    ///     The prefix is already present, or <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> is on and the prefix lies
+    ///     inside <c>::ffff:0:0/96</c>.
+    /// </exception>
     public static void Add<TPrefix, TAdapter>(this IPPrefixLookup<TPrefix, TAdapter, NoValue> lookup, TPrefix prefix)
         where TAdapter : struct, IIPPrefixAdapter<TPrefix> => lookup.Add(prefix, default);
 

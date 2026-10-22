@@ -137,18 +137,25 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     /// <summary>Adds a prefix. Returns false, and changes nothing, when it is already present.</summary>
     /// <param name="prefix">The prefix; host bits after its length are ignored.</param>
     /// <param name="value">Its value.</param>
+    /// <exception cref="ArgumentException">
+    ///     <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> is on and the prefix lies inside <c>::ffff:0:0/96</c>, where no
+    ///     address lookup would find it.
+    /// </exception>
     public bool TryAdd(TPrefix prefix, TValue value)
     {
         IPAddressBits.ThrowIfNull(prefix);
         return TAdapter.IsIPv4(prefix)
             ? _v4.TryAdd(new Bits32(TAdapter.GetIPv4Bits(prefix)), TAdapter.GetLength(prefix), prefix, value)
-            : _v6.TryAdd(new Bits128(TAdapter.GetIPv6Bits(prefix)), TAdapter.GetLength(prefix), prefix, value);
+            : _v6.TryAdd(StoredIPv6Bits(prefix), TAdapter.GetLength(prefix), prefix, value);
     }
 
     /// <summary>Adds a prefix.</summary>
     /// <param name="prefix">The prefix; host bits after its length are ignored.</param>
     /// <param name="value">Its value.</param>
-    /// <exception cref="ArgumentException">The prefix is already present.</exception>
+    /// <exception cref="ArgumentException">
+    ///     The prefix is already present, or <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> is on and the prefix lies
+    ///     inside <c>::ffff:0:0/96</c>.
+    /// </exception>
     public void Add(TPrefix prefix, TValue value)
     {
         if (!TryAdd(prefix, value))
@@ -159,23 +166,44 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     /// <param name="prefix">The prefix; host bits after its length are ignored.</param>
     /// <param name="value">Its value.</param>
     /// <returns>True when the prefix was added, false when it was replaced.</returns>
+    /// <exception cref="ArgumentException">
+    ///     <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> is on and the prefix lies inside <c>::ffff:0:0/96</c>, where no
+    ///     address lookup would find it.
+    /// </exception>
     public bool AddOrUpdate(TPrefix prefix, TValue value)
     {
         IPAddressBits.ThrowIfNull(prefix);
         return TAdapter.IsIPv4(prefix)
             ? _v4.AddOrUpdate(new Bits32(TAdapter.GetIPv4Bits(prefix)), TAdapter.GetLength(prefix), prefix, value)
-            : _v6.AddOrUpdate(new Bits128(TAdapter.GetIPv6Bits(prefix)), TAdapter.GetLength(prefix), prefix, value);
+            : _v6.AddOrUpdate(StoredIPv6Bits(prefix), TAdapter.GetLength(prefix), prefix, value);
     }
 
     /// <summary>Returns the value of a prefix, adding it with a value from <paramref name="valueFactory" /> if absent.</summary>
     /// <param name="prefix">The prefix; host bits after its length are ignored.</param>
     /// <param name="valueFactory">Creates the value, called only when the prefix is absent, while other writers wait. It must not write to this lookup.</param>
+    /// <exception cref="ArgumentException">
+    ///     <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> is on and the prefix lies inside <c>::ffff:0:0/96</c>, where no
+    ///     address lookup would find it.
+    /// </exception>
     public TValue GetOrAdd(TPrefix prefix, Func<TPrefix, TValue> valueFactory)
     {
         IPAddressBits.ThrowIfNull(prefix);
         return TAdapter.IsIPv4(prefix)
             ? _v4.GetOrAdd(new Bits32(TAdapter.GetIPv4Bits(prefix)), TAdapter.GetLength(prefix), prefix, valueFactory)
-            : _v6.GetOrAdd(new Bits128(TAdapter.GetIPv6Bits(prefix)), TAdapter.GetLength(prefix), prefix, valueFactory);
+            : _v6.GetOrAdd(StoredIPv6Bits(prefix), TAdapter.GetLength(prefix), prefix, valueFactory);
+    }
+
+    // The bits of an IPv6 prefix to store. With mapping on, an address lookup sends every IPv4-mapped address to the IPv4
+    // trie, so a prefix inside ::ffff:0:0/96 could be stored and listed but never found by address; it is refused, before
+    // anything changes, so that a batch it was written in stays sound.
+    private Bits128 StoredIPv6Bits(TPrefix prefix)
+    {
+        var bits = TAdapter.GetIPv6Bits(prefix);
+        if (Options.MapIPv4MappedAddresses && TAdapter.GetLength(prefix) >= 96 && bits >> 32 == 0xFFFF)
+            throw new ArgumentException(
+                $"The prefix {prefix} lies inside ::ffff:0:0/96. With MapIPv4MappedAddresses on, address lookups treat those addresses as IPv4, so no lookup would find it; add the IPv4 prefix instead.",
+                nameof(prefix));
+        return new Bits128(bits);
     }
 
     /// <summary>Removes a prefix. Returns false when it is not present.</summary>
