@@ -1479,7 +1479,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
                 item.Bits = TKey.Truncate(item.Bits, item.Length);
             }
 
-            var root = Build(items, 0);
+            var root = Build(items, 0, new int[17 * 3 * 256]);
             var published = new Published(root, _hasTable);
             if (published.Blocks != null)
                 for (var first = 0; first < 256; first++)
@@ -1497,8 +1497,11 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     // sort by octet that builds the trie as it goes, in place, with no comparisons. The node's own prefixes and fringes
     // go first; the rest are moved into one run per octet, and a run of one becomes a leaf, a longer run a child node, as
     // the canonical shape requires. Two items with the same prefix end up in one node at the same base index or octet.
-    // The node is stamped 0 and shares its arrays, as after a batch commit, so later writes copy it.
-    private static Node Build(Span<(TKey Bits, int Length, TPrefix Prefix, TValue Value)> items, int depth)
+    // The node is stamped 0 and shares its arrays, as after a batch commit, so later writes copy it. Each depth has its
+    // own counts, starts and fill points in scratch, all zero between nodes, and a node visits only the octets it
+    // occupies: most nodes of an IPv6 table hold a handful of items, and visiting all 256 octets in each made the build
+    // slower than adding the items one at a time.
+    private static Node Build(Span<(TKey Bits, int Length, TPrefix Prefix, TValue Value)> items, int depth, int[] scratch)
     {
         var offset = depth << 3;
         var n = new Node { Count = items.Length, Shared = AllArrays };
@@ -1538,21 +1541,32 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
         // the longer items, into one run per octet: count them, then move each into its run (American flag sort)
         var below = items[own..];
-        Span<int> starts = stackalloc int[257];
+        var counts = scratch.AsSpan(depth * 768, 256);
+        var starts = scratch.AsSpan(depth * 768 + 256, 256);
+        var fill = scratch.AsSpan(depth * 768 + 512, 256);
+        var occupied = default(BitSet256);
+        var grouped = true; // already in octet order, as items in address order are, so no item needs to move
+        var previous = 0;
         foreach (ref var item in below)
-            starts[TKey.GetBits(item.Bits, offset, 8) + 1]++;
-        int kids = 0, leaves = 0;
-        for (var octet = 0; octet < 256; octet++)
         {
-            if (starts[octet + 1] == 1) leaves++;
-            else if (starts[octet + 1] > 1) kids++;
-            starts[octet + 1] += starts[octet];
+            var octet = TKey.GetBits(item.Bits, offset, 8);
+            if (counts[octet]++ == 0)
+                occupied.Set(octet);
+            grouped &= octet >= previous;
+            previous = octet;
         }
 
-        Span<int> fill = stackalloc int[256];
-        starts[..256].CopyTo(fill);
-        for (var octet = 0; octet < 256; octet++)
-            while (fill[octet] < starts[octet + 1])
+        int kids = 0, leaves = 0, start = 0;
+        for (var octet = occupied.First(); octet < 256; octet = occupied.NextSet(octet + 1))
+        {
+            if (counts[octet] == 1) leaves++;
+            else kids++;
+            starts[octet] = fill[octet] = start;
+            start += counts[octet];
+        }
+
+        for (var octet = grouped ? 256 : occupied.First(); octet < 256; octet = occupied.NextSet(octet + 1))
+            while (fill[octet] < starts[octet] + counts[octet])
             {
                 var target = TKey.GetBits(below[fill[octet]].Bits, offset, 8);
                 if (target == octet)
@@ -1568,19 +1582,20 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         n.KidNodes = NewArray<Node>(kids);
         n.LeafEntries = NewArray<Leaf>(leaves);
         int k = 0, l = 0;
-        for (var octet = 0; octet < 256; octet++)
+        for (var octet = occupied.First(); octet < 256; octet = occupied.NextSet(octet + 1))
         {
-            var run = below[starts[octet]..starts[octet + 1]];
+            var run = below.Slice(starts[octet], counts[octet]);
+            counts[octet] = 0; // zero again for the next node at this depth; a child uses the next depth's scratch
             if (run.Length == 1)
             {
                 ref var item = ref run[0];
                 n.Leaves.Set(octet);
                 n.LeafEntries[l++] = new Leaf { Bits = item.Bits, Mask = TKey.MaskFor(item.Length), Length = item.Length, Entry = new Entry { Prefix = item.Prefix, Value = item.Value } };
             }
-            else if (run.Length > 1)
+            else
             {
                 n.Kids.Set(octet);
-                n.KidNodes[k++] = Build(run, depth + 1);
+                n.KidNodes[k++] = Build(run, depth + 1, scratch);
             }
         }
 
