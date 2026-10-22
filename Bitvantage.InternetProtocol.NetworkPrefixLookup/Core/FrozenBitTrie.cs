@@ -46,8 +46,13 @@ public enum FrozenLayout
 /// <summary>Options for <see cref="BitTrie{TKey,TPrefix,TValue}.Freeze" />.</summary>
 public sealed record FrozenBitTrieOptions
 {
-    /// <summary>The layout of the lookup tables. The default is <see cref="FrozenLayout.LeafPushed" />.</summary>
-    public FrozenLayout Layout { get; init; } = FrozenLayout.LeafPushed;
+    /// <summary>
+    ///     The layout of the lookup tables, or null, the default, to choose it from the data:
+    ///     <see cref="FrozenLayout.LeafPushed" />, unless its child tables would hold more than 256 entries per prefix and
+    ///     more than 4,194,304 entries in all, or more than fit in an array; then <see cref="FrozenLayout.Compressed" />,
+    ///     which for such scattered prefixes is both much smaller and faster.
+    /// </summary>
+    public FrozenLayout? Layout { get; init; }
 
     /// <summary>
     ///     The number of key bits the root table decides, from 1 to 24, and at most the key width. By default it follows
@@ -169,15 +174,12 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
     {
         ArgumentNullException.ThrowIfNull(options);
         var count = contents.Entries.Length;
-        if (!Enum.IsDefined(options.Layout))
-            throw new ArgumentException($"Unknown layout {options.Layout}.", nameof(options));
-        _compressed = options.Layout == FrozenLayout.Compressed;
-        var rootBits = options.RootBits ?? DefaultRootBits(count, _compressed);
-        if (rootBits is < 1 or > 24)
-            throw new ArgumentOutOfRangeException(nameof(options), rootBits, "RootBits ranges from 1 to 24.");
+        if (options.Layout is { } given && !Enum.IsDefined(given))
+            throw new ArgumentException($"Unknown layout {given}.", nameof(options));
+        if (options.RootBits is < 1 or > 24)
+            throw new ArgumentOutOfRangeException(nameof(options), options.RootBits, "RootBits ranges from 1 to 24.");
         if (options.TableBits is < 1 or > 16)
             throw new ArgumentOutOfRangeException(nameof(options), options.TableBits, "TableBits ranges from 1 to 16.");
-        _rootBits = Math.Min(rootBits, TKey.Width);
         _tableBits = options.TableBits;
         Options = options;
 
@@ -193,18 +195,29 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
         }
 
         var builder = new Builder(bits, _lengths, _tableBits);
+
+        // The leaf-pushed child tables are counted first, so that they go into one array of the exact size; the count also
+        // decides the layout when the options leave it to the data.
+        var leafRootBits = Math.Min(options.RootBits ?? DefaultRootBits(count, compressed: false), TKey.Width);
+        long entries = 0;
+        if (options.Layout != FrozenLayout.Compressed)
+        {
+            var counting = new Runs(0, count, 0, leafRootBits, bits, _lengths);
+            while (counting.Next(out _, out var lo, out var hi))
+                entries += builder.CountTables(lo, hi, leafRootBits);
+            entries <<= _tableBits;
+        }
+
+        Layout = options.Layout ?? (LeafPushedTooLarge(entries, count) ? FrozenLayout.Compressed : FrozenLayout.LeafPushed);
+        _compressed = Layout == FrozenLayout.Compressed;
+        _rootBits = _compressed ? Math.Min(options.RootBits ?? DefaultRootBits(count, compressed: true), TKey.Width) : leafRootBits;
         _root = new uint[1 << _rootBits];
         builder.FillAnswers(0, count, 0, _rootBits, _root);
         if (!_compressed)
         {
-            // count the child tables first, so that they go into one array of the exact size
-            long tables = 0;
-            var counting = new Runs(0, count, 0, _rootBits, bits, _lengths);
-            while (counting.Next(out _, out var lo, out var hi))
-                tables += builder.CountTables(lo, hi, _rootBits);
-            if (tables << _tableBits > int.MaxValue)
+            if (entries > int.MaxValue)
                 throw new InvalidOperationException("The leaf-pushed tables would exceed 2^31 entries; use the compressed layout or other table sizes.");
-            _tables = builder.Tables = new uint[tables << _tableBits];
+            _tables = builder.Tables = new uint[entries];
         }
 
         var runs = new Runs(0, count, 0, _rootBits, bits, _lengths);
@@ -231,6 +244,15 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
         }
     }
 
+    // Leaf-pushed tables are the fastest on clustered prefixes such as routing tables, but grow with scattered ones: on
+    // 100,000 random IPv6 /128 prefixes their child tables held 3,459 entries per prefix, 1.4 GB, where the compressed
+    // layout took 56 MB and answered in a third of the time. Measured on eleven tables, the compressed layout was both
+    // smaller and faster wherever the child tables held more than 256 entries per prefix, except on tables small enough
+    // to stay in the cache, where leaf-pushed was still faster; hence the second condition, 16 MB of child tables. The
+    // real IPv4 and IPv6 tables need 7 and 55 entries per prefix. See Architecture.md, "The frozen trie".
+    private static bool LeafPushedTooLarge(long entries, int count) =>
+        entries > int.MaxValue || (entries > 1 << 22 && entries > 256L * count);
+
     // Measured on random and real IPv4 prefixes. Leaf-pushed tables are smallest with a root that is a multiple of their
     // 8-bit child tables, but an 8-bit root made lookups 2.5 times slower at 64 prefixes, so only nearly empty tables,
     // where the 256 KB root is almost all of the memory, get it. Compressed tables are as fast or faster with about 16
@@ -245,6 +267,9 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
 
     /// <summary>The options the trie was built with.</summary>
     public FrozenBitTrieOptions Options { get; }
+
+    /// <summary>The layout of the lookup tables: the one the options name, or the one chosen from the data.</summary>
+    public FrozenLayout Layout { get; }
 
     /// <summary>The number of stored prefixes.</summary>
     public int Count => _entries.Length;

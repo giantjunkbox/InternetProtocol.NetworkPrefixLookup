@@ -1464,7 +1464,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     ///     not affect it. Writes wait while the prefixes are copied out, but not while the copy's tables are built; reads
     ///     never wait.
     /// </summary>
-    /// <param name="options">The layout of the copy's lookup tables; the defaults suit IP routing tables.</param>
+    /// <param name="options">The layout of the copy's lookup tables; by default the layout is chosen from the data.</param>
     public FrozenBitTrie<TKey, TPrefix, TValue> Freeze(FrozenBitTrieOptions? options = null)
     {
         FrozenBitTrie<TKey, TPrefix, TValue>.Contents contents;

@@ -250,7 +250,7 @@ under writes. It holds no nodes:
 A table entry is an entry index + 1, 0 for no match, or, with the top bit set, the start of a child table or the index
 of a compressed node.
 
-**Leaf-pushed**, the default: a root table over the first 16 bits and child tables of 8 bits wherever a block still
+**Leaf-pushed**: a root table over the first 16 bits and child tables of 8 bits wherever a block still
 holds a longer prefix. Every other entry holds the final answer for its whole block, so a lookup reads only tables.
 `RootBits` and `TableBits` choose other shapes, such as 24/8 for IPv4.
 
@@ -258,6 +258,32 @@ holds a longer prefix. Every other entry holds the final answer for its whole bl
 bits. A node is two 64-bit
 masks and two offsets: one mask marks the slots that lead to a child node, the other the slots where a run of equal
 answers starts. A popcount up to the slot finds the child or the answer.
+
+**Choosing the layout.** Unless `FrozenBitTrieOptions.Layout` names one, the builder counts the child tables the
+leaf-pushed layout would need, which it must do anyway to allocate them in one array, and takes the compressed layout
+when they would hold more than 256 entries per prefix and more than 4,194,304 entries in all, 16 MB, or more than an
+array can hold. `FrozenBitTrie.Layout` reports the choice. The rule comes from building both layouts of eleven tables
+on 2026-10-22, with a million lookups at addresses inside the stored prefixes (Stopwatch, best of five rounds; the
+table's own child-table entries per prefix in parentheses):
+
+| Table | Leaf-pushed | Compressed | Chosen |
+| --- | --- | --- | --- |
+| Real IPv4, 1,054,037 prefixes (6.9) | 47 MB, 26 ns | 25 MB, 28 ns | Leaf-pushed |
+| Real IPv6, 239,598 prefixes (55) | 58 MB, 80 ns | 9 MB, 53 ns | Leaf-pushed |
+| Random IPv4 /24, 100,000 (132) | 55 MB, 14.5 ns | 6 MB, 16.2 ns | Leaf-pushed |
+| Small IPv4, every 1,054th real prefix (250) | 1.3 MB, 4.4 ns | 0.1 MB, 8.8 ns | Leaf-pushed |
+| Small IPv6, every 240th real prefix (498) | 2.3 MB, 19 ns | 0.2 MB, 28 ns | Leaf-pushed |
+| Random IPv4, the version 2 data, 96,944 (276) | 109 MB, 44 ns | 7 MB, 28 ns | Compressed |
+| Random IPv4 /32, 100,000 (387) | 157 MB, 58 ns | 11 MB, 40 ns | Compressed |
+| Random IPv6 /48 in 2000::/3, 100,000 (783) | 315 MB, 177 ns | 16 MB, 67 ns | Compressed |
+| Random IPv6 /64, 100,000 (1,411) | 566 MB, 450 ns | 25 MB, 258 ns | Compressed |
+| Random IPv6 /128, 100,000 (3,459) | 1.39 GB, 1,207 ns | 56 MB, 418 ns | Compressed |
+
+Above 256 entries per prefix the compressed layout was smaller and faster on every table that did not fit in the
+cache; the small tables, which do, stayed faster leaf-pushed, hence the 16 MB floor. Real IPv6 is the one table where
+this quick probe and BenchmarkDotNet disagree: `RealTableBenchmarks` measured leaf-pushed about 8% faster in four
+sessions the same day, so it stays leaf-pushed. The rule depends on `TableBits`, because wider child tables hold more
+entries.
 
 **Root size.** Unless `RootBits` is set, the root follows the number of prefixes, because a fixed root costs 256 KB
 (leaf-pushed) or 1 MB (compressed) even in an empty table. Measured on random and real IPv4 prefixes:
@@ -575,7 +601,7 @@ prototype `BartTrie` 147 to 156 ms. On IPv6 the library took 341 ms and the prot
 | Enumeration over set bits only; freeze copies under the lock and builds after | Enumeration 2 to 6 times faster, freezing 1.5 to 3 times, writers wait 69 ms instead of 153 ms on real IPv4 | Done; see [Since the baseline](#since-the-baseline) |
 | `GetMatches(IPAddress)` into a stack buffer instead of a list | Less garbage | Measured: 1.45 to 1.7 times slower; not done |
 | Lookups without bounds checks | | Measured: no difference; not done |
-| Choose the frozen layout from the data | Leaf-pushed for clustered tables, compressed for scattered ones | Not tried; the caller chooses today |
+| Choose the frozen layout from the data | Leaf-pushed for clustered tables, compressed for scattered ones | Done; see [The frozen trie](#the-frozen-trie) |
 | A 24-bit root for frozen IPv4 tables | Already possible with `RootBits = 24`: 0.37 of the read-write time in the prototype, at about twice the memory | Option exists |
 | Pruned backtracking, best match per shortcut slot, child positions cached per node | | Tried in the prototype, slower; see [Bart-Comparison.md](Bart-Comparison.md#remedies-tried) |
 | Shortcut blocks per first octet instead of a flat 65,536-slot table | Small tries hold almost nothing; batch commits stop allocating 1 MB | Done; see below |
@@ -607,10 +633,12 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 - **Small tables that fit in cache** look up several times slower than in the prototype's binary trie with an index,
   because a lookup walks several levels and backtracks: on the version 2 benchmark data, 154 ms per million lookups
   against 29 ms in an earlier session. Freeze such tables, with the compressed layout if their prefixes are scattered.
-- **Leaf-pushed frozen tables grow with scattered prefixes**: 105 MB for the 96,944 random prefixes of the version 2
-  benchmark, where the compressed layout needs 8 MB. IPv6 host routes are worse: 100,000 random /128 prefixes take
-  1.3 GB leaf-pushed against 53 MB compressed, and from about 650,000 the leaf-pushed builder refuses, because its tables
-  would exceed 2^31 entries. The security review measured these.
+- **Leaf-pushed frozen tables grow with scattered prefixes**: 109 MB for the 96,944 random prefixes of the version 2
+  benchmark, where the compressed layout needs 7 MB, and 1.4 GB against 56 MB for 100,000 random IPv6 /128 prefixes;
+  from about 650,000 such prefixes the leaf-pushed builder refuses, because its tables would exceed 2^31 entries. The
+  default now chooses the compressed layout for such tables, so this applies only when a caller asks for leaf-pushed.
+  Between the two thresholds a table can take up to 256 child-table entries per prefix leaf-pushed: 55 MB for 100,000
+  random /24 prefixes, against 6 MB compressed.
 - **Freezing blocks writers** while it copies the prefixes out: 69 ms for the real IPv4 table and 24 ms for the real
   IPv6 table, measured under [Since the baseline](#since-the-baseline). The tables are built after the writer lock is
   released.

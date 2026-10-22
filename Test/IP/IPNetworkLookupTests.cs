@@ -343,7 +343,7 @@ public class IPNetworkLookupTests
 
         var compressed = new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed };
         Assert.That(lookup.Freeze(compressed).Bytes, Is.EqualTo(lookup.Freeze(compressed, compressed).Bytes));
-        Assert.That(lookup.Freeze(compressed, new FrozenBitTrieOptions()).Bytes, Is.GreaterThan(lookup.Freeze(compressed).Bytes), "scattered IPv6 host routes take more room leaf-pushed");
+        Assert.That(lookup.Freeze(compressed, new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed }).Bytes, Is.GreaterThan(lookup.Freeze(compressed).Bytes), "scattered IPv6 host routes take more room leaf-pushed");
     }
 
     [Test]

@@ -37,7 +37,7 @@ public class RealTableBenchmarks
     {
         var lookup = RouteViews.Build(table);
         var compressed = new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed };
-        return (lookup, lookup.Freeze(), lookup.Freeze(compressed, compressed));
+        return (lookup, lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed }), lookup.Freeze(compressed, compressed));
     }
 
     [GlobalSetup]
@@ -180,7 +180,7 @@ public class RealBuildBenchmarks
     public object IPv4_Batch() => RouteViews.Build(RouteViews.IPv4);
 
     [Benchmark, IterationCount(10)]
-    public object IPv4_FreezeLeafPushed() => V4.Value.Freeze();
+    public object IPv4_FreezeLeafPushed() => V4.Value.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
 
     [Benchmark, IterationCount(10)]
     public object IPv4_FreezeCompressed() => V4.Value.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });
@@ -192,7 +192,7 @@ public class RealBuildBenchmarks
     public object IPv6_Batch() => RouteViews.Build(RouteViews.IPv6);
 
     [Benchmark, IterationCount(10)]
-    public object IPv6_FreezeLeafPushed() => V6.Value.Freeze();
+    public object IPv6_FreezeLeafPushed() => V6.Value.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
 
     [Benchmark, IterationCount(10)]
     public object IPv6_FreezeCompressed() => V6.Value.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });

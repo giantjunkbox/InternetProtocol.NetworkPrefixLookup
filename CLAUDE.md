@@ -39,6 +39,8 @@ Decisions made by the user:
 - No code generators or scripts in other languages: the repository stays C#.
 - Ranges with arbitrary ends, such as `192.168.0.10-192.168.0.20`, are left to a separate library: there is no range
   lookup and no `IPAddressRange` package.
+- A frozen table chooses its layout from the data unless the caller names one: leaf-pushed, or compressed when the
+  leaf-pushed child tables would hold more than 256 entries per prefix and more than 16 MB in all.
 
 Choice made while building version 3 that the user has not yet reviewed: the read-write core follows the BART-style
 prototype (`Documentation/Bart-Comparison.md`).
@@ -113,7 +115,7 @@ ROUTEVIEWS_DIR=/tmp/routeviews dotnet run -c Release --project PerformanceTest
 ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 3 minutes
 ```
 
-**Test baseline:** all 46 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
+**Test baseline:** all 49 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
 text with `Environment.NewLine`, so it passes with either line ending. Keep `.gitattributes` at `text=auto`.
 
 The whole solution builds with no warnings. Do not add any.

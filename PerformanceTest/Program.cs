@@ -62,7 +62,7 @@ public static class Program
                 lookup.TryAdd(data.Prefixes[i], data.Values[i]);
             var seconds = sw.Elapsed.TotalSeconds;
             var held = ComparisonData.HeapBytes() - before;
-            var frozen = lookup.Freeze();
+            var frozen = lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
             var frozenHeld = ComparisonData.HeapBytes() - before - held;
             var compressed = lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }, new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });
             var compressedHeld = ComparisonData.HeapBytes() - before - held - frozenHeld;
@@ -96,7 +96,7 @@ public static class Program
         var random = RandomTableBenchmarks.CreateNetworks();
         var addresses = RandomTableBenchmarks.CreateAddresses();
         var randomLookup = new NetworkPrefixLookup<string>(random.Select(n => KeyValuePair.Create(n, string.Empty)));
-        var frozenRandom = randomLookup.Freeze();
+        var frozenRandom = randomLookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
         Console.WriteLine($"random table, {randomLookup.Count:N0} prefixes: read-write {randomLookup.GetStatistics().IPv4.Bytes / 1048576.0:F1} MB, " +
                           $"frozen leaf-pushed {frozenRandom.Bytes / 1048576.0:F1} MB, frozen compressed {randomLookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }).Bytes / 1048576.0:F1} MB");
         foreach (var (name, lookup) in new (string, IReadOnlyIPPrefixLookup<NetworkPrefix, string>)[] { ("read-write", randomLookup), ("frozen", frozenRandom) })
@@ -118,14 +118,14 @@ public static class Program
         var v6 = RouteViews.IPv6;
         IPNetworkLookup<int>? lookupV4 = null, lookupV6 = null;
         Report("IPv4 read-write, built as one batch", () => lookupV4 = RouteViews.Build(v4));
-        Report("IPv4 frozen, leaf-pushed 16/8", () => lookupV4!.Freeze());
+        Report("IPv4 frozen, leaf-pushed 16/8", () => lookupV4!.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed }));
         Report("IPv4 frozen, compressed 18", () => lookupV4!.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }));
         Report("IPv6 read-write, built as one batch", () => lookupV6 = RouteViews.Build(v6));
         Report("IPv6 frozen, leaf-pushed 16/8", () => lookupV6!.Freeze(new FrozenBitTrieOptions()));
         Report("IPv6 frozen, compressed 18", () => lookupV6!.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }));
         Console.WriteLine($"IPv4 statistics: {lookupV4!.GetStatistics().IPv4}");
         Console.WriteLine($"IPv6 statistics: {lookupV6!.GetStatistics().IPv6}");
-        Console.WriteLine($"IPv4 frozen bytes: leaf-pushed {lookupV4.Freeze().Bytes / 1048576.0:F1} MB, compressed {lookupV4.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }).Bytes / 1048576.0:F1} MB");
-        Console.WriteLine($"IPv6 frozen bytes: leaf-pushed {lookupV6.Freeze().Bytes / 1048576.0:F1} MB, compressed {lookupV6.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }).Bytes / 1048576.0:F1} MB");
+        Console.WriteLine($"IPv4 frozen bytes: leaf-pushed {lookupV4.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed }).Bytes / 1048576.0:F1} MB, compressed {lookupV4.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }).Bytes / 1048576.0:F1} MB");
+        Console.WriteLine($"IPv6 frozen bytes: leaf-pushed {lookupV6.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed }).Bytes / 1048576.0:F1} MB, compressed {lookupV6.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }).Bytes / 1048576.0:F1} MB");
     }
 }

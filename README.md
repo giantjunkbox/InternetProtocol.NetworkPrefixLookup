@@ -118,18 +118,19 @@ if (origins.TryGetMatchValue(packet.SourceAddress, out var asn)) Count(asn);
 ```
 
 To change a frozen table, change the read-write one, freeze it again and swap the reference; readers switch on their
-next lookup. Freezing makes writers wait while it runs, but not readers.
+next lookup. Freezing makes writers wait only while it copies the prefixes out, never readers.
 
-The default layout is the fastest for routing tables. The compressed layout uses less memory, and is the better choice
-when prefixes are scattered across the address space, such as random /25 to /32 blocks or IPv6 host routes. For those
-the default layout can grow very large: 100,000 random IPv6 /128 prefixes take 1.3 GB leaf-pushed against 53 MB
-compressed, and from about 650,000 the default layout refuses to freeze at all.
+A frozen table has one of two layouts. Leaf-pushed is the fastest for clustered tables such as routing tables.
+Compressed uses much less memory, and is also faster when prefixes are scattered across the address space, such as
+random host routes, for which leaf-pushed tables can grow very large: 100,000 random IPv6 /128 prefixes take 1.4 GB
+leaf-pushed against 56 MB compressed. By default `Freeze` chooses for each address family from its data, so a table of
+scattered prefixes gets the compressed layout. To choose yourself:
 
 ```csharp
 var small = routes.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });
 ```
 
-`Freeze(ipv4, ipv6)` takes a different layout for each address family.
+`Freeze(ipv4, ipv6)` takes different options for each address family.
 
 ## MaxMind databases
 

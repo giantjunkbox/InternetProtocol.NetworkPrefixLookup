@@ -63,7 +63,7 @@ public class NetworkPrefixLookup<TValue> : IPPrefixLookup<NetworkPrefix, Network
     ///     the prefixes are copied out, but not while the copy's tables are built; reads never wait.
     /// </summary>
     /// <param name="options">
-    ///     The layout of both address families' tables; the default is leaf-pushed, with a root sized to each table.
+    ///     The layout of both address families' tables; by default each family's layout is chosen from its data.
     /// </param>
     public new FrozenNetworkPrefixLookup<TValue> Freeze(FrozenBitTrieOptions? options = null) => new(this, options, options);
 
@@ -112,7 +112,7 @@ public class NetworkPrefixLookup : NetworkPrefixLookup<NoValue>
     ///     prefixes are copied out, but not while the copy's tables are built; reads never wait.
     /// </summary>
     /// <param name="options">
-    ///     The layout of both address families' tables; the default is leaf-pushed, with a root sized to each table.
+    ///     The layout of both address families' tables; by default each family's layout is chosen from its data.
     /// </param>
     public new FrozenNetworkPrefixLookup Freeze(FrozenBitTrieOptions? options = null) => new(this, options, options);
 

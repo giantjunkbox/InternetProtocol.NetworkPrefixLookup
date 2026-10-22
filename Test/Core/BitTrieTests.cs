@@ -434,6 +434,37 @@ public class BitTrieTests
         Assert.That(large.Freeze().Bytes, Is.GreaterThan(1L << 18), "a full 16-bit root from 32 prefixes");
     }
 
+    [Test]
+    public void The_frozen_layout_follows_the_data_unless_it_is_given()
+    {
+        // /24 prefixes clustered in 79 /16 blocks, as in a routing table: about one child-table entry per prefix
+        var clustered = new BitTrie<Bits32, int, int>();
+        for (var i = 0; i < 20_000; i++)
+            clustered.Add(new Bits32(0x0A000000u | ((uint)i << 8)), 24, i, i);
+        Assert.That(clustered.Freeze().Layout, Is.EqualTo(FrozenLayout.LeafPushed));
+        Assert.That(clustered.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }).Layout, Is.EqualTo(FrozenLayout.Compressed), "a layout given is kept");
+
+        // scattered host routes: each needs its own chain of child tables, about 3,500 entries
+        var random = new Random(3);
+        var scattered = new BitTrie<Bits128, int, int>();
+        var keys = new List<Bits128>();
+        for (var i = 0; i < 2_000; i++)
+        {
+            var key = new Bits128(((UInt128)(ulong)random.NextInt64() << 64) | (ulong)random.NextInt64());
+            if (scattered.TryAdd(key, 128, i, i)) keys.Add(key);
+        }
+
+        var chosen = scattered.Freeze();
+        Assert.That(chosen.Layout, Is.EqualTo(FrozenLayout.Compressed));
+        Assert.That(chosen.Options.Layout, Is.Null);
+        foreach (var key in keys)
+            Assert.That(chosen.TryGetMatchValue(key, out var value) && scattered.TryGetMatchValue(key, out var expected) && value == expected);
+
+        // the same scattering in a table small enough to stay in the cache keeps the faster layout
+        var small = new BitTrie<Bits128, int, int>(keys.Take(500).Select((k, i) => (k, 128, i, i)));
+        Assert.That(small.Freeze().Layout, Is.EqualTo(FrozenLayout.LeafPushed));
+    }
+
     [Test(Description = "The default frozen root follows the number of prefixes; root entries take 4 bytes.")]
     public void Frozen_roots_follow_the_number_of_prefixes()
     {

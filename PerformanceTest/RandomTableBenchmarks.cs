@@ -33,7 +33,7 @@ public class RandomTableBenchmarks
     private static readonly List<IPAddress> Addresses = CreateAddresses();
     private static readonly uint[] AddressBits = Addresses.Select(IPAddressBits.ToIPv4Bits).ToArray();
     private static readonly NetworkPrefixLookup<string> Lookup = new(Networks.Select(n => KeyValuePair.Create(n, string.Empty)));
-    private static readonly FrozenNetworkPrefixLookup<string> Frozen = Lookup.Freeze();
+    private static readonly FrozenNetworkPrefixLookup<string> Frozen = Lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
     private static readonly FrozenNetworkPrefixLookup<string> FrozenCompressed = Lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });
 
     // v2: 100,000 prefixes taken from the random sequence, then made distinct
@@ -110,7 +110,7 @@ public class RandomTableBenchmarks
     }
 
     [Benchmark, IterationCount(30)]
-    public object Freeze_100K() => Lookup.Freeze();
+    public object Freeze_100K() => Lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
 
     private static IEnumerable<NetworkPrefix> RandomPrefixes(int seed)
     {

@@ -37,8 +37,8 @@ public class FrozenRootBenchmarks
     public void Setup()
     {
         var lookup = new NetworkPrefixLookup<string>(RandomTableBenchmarks.CreateNetworks().Take(Prefixes).Select(n => KeyValuePair.Create(n, string.Empty)));
-        _fullRoot = lookup.Freeze(new FrozenBitTrieOptions { RootBits = 16 });
-        _sizedRoot = lookup.Freeze();
+        _fullRoot = lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed, RootBits = 16 });
+        _sizedRoot = lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
         _compressedFullRoot = lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed, RootBits = 18 });
         _compressedSizedRoot = lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });
         _keys = RandomTableBenchmarks.CreateAddresses().Select(IPAddressBits.ToIPv4Bits).ToArray();

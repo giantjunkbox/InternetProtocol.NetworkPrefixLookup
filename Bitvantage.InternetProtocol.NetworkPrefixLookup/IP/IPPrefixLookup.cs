@@ -293,7 +293,7 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     ///     the prefixes are copied out, but not while the copy's tables are built; reads never wait.
     /// </summary>
     /// <param name="options">
-    ///     The layout of both address families' tables; the default is leaf-pushed, with a root sized to each table.
+    ///     The layout of both address families' tables; by default each family's layout is chosen from its data.
     /// </param>
     public FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> Freeze(FrozenBitTrieOptions? options = null) => new(this, options, options);
 

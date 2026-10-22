@@ -43,7 +43,7 @@ public class ComparisonBenchmarks
     {
         _data = ComparisonData.Get(Table);
         _lookup = Build(batch: true);
-        _frozen = _lookup.Freeze();
+        _frozen = _lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
     }
 
     private NetworkPrefixLookup<int> Build(bool batch)
