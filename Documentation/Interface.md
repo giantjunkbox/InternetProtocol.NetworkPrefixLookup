@@ -56,8 +56,8 @@ public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
     internal static virtual int GetTopBits(in TSelf key, int count) => TSelf.GetBits(key, 0, count);
 }
 
-public readonly struct Bits32 : IBitKey<Bits32>, IEquatable<Bits32>   { public readonly uint Value;    public Bits32(uint value); }
-public readonly struct Bits128 : IBitKey<Bits128>, IEquatable<Bits128> { public readonly UInt128 Value; public Bits128(UInt128 value); }
+public readonly struct Bits32 : IBitKey<Bits32>, IEquatable<Bits32>   { public uint Value { get; }    public Bits32(uint value); }
+public readonly struct Bits128 : IBitKey<Bits128>, IEquatable<Bits128> { public UInt128 Value { get; } public Bits128(UInt128 value); }
 ```
 
 - **Two key types**, `Bits32` for IPv4 and `Bits128` for IPv6, and no others. The interface is public because the

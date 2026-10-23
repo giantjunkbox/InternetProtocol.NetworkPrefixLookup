@@ -25,7 +25,7 @@ namespace Bitvantage.InternetProtocol;
 public readonly struct Bits32 : IBitKey<Bits32>, IEquatable<Bits32>
 {
     /// <summary>The bits, with bit 0 of the key in the most significant bit.</summary>
-    public readonly uint Value;
+    public uint Value { get; }
 
     /// <summary>Creates a key from its bits, with bit 0 of the key in the most significant bit.</summary>
     /// <param name="value">The bits.</param>
