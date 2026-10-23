@@ -294,6 +294,61 @@ public class BitTrieTests
     }
 
     [Test]
+    public void Conditional_writes_compare_the_stored_value()
+    {
+        var trie = new BitTrie<Bits32, string, string?>();
+        var bits = new Bits32(0x0A000000);
+        trie.Add(bits, 8, "a", "one");
+        Assert.That(trie.Remove(new Bits32(0x0B000000), 8, out _), Is.False, "absent");
+        Assert.That(trie.TryRemove(bits, 8, "two"), Is.False, "another value");
+        Assert.That(trie.TryUpdate(bits, 8, "b", "three", "two"), Is.False, "another value");
+        Assert.That(trie.TryGetValue(bits, 8, out var prefix, out var value) && prefix == "a" && value == "one", "unchanged");
+
+        Assert.That(trie.TryUpdate(bits, 8, "b", "three", "one"), Is.True);
+        Assert.That(trie.TryGetValue(bits, 8, out prefix, out value) && prefix == "b" && value == "three", "prefix object and value replaced");
+        Assert.That(trie.TryRemove(bits, 8, "three"), Is.True);
+        Assert.That(trie.Count, Is.Zero);
+        Assert.That(trie.TryRemove(bits, 8, "three") || trie.TryUpdate(bits, 8, "c", "x", "three"), Is.False, "absent");
+
+        // null values compare like any other, and host bits after the length are ignored
+        trie.Add(new Bits32(0x0A0000FF), 24, "c", null);
+        Assert.That(trie.TryUpdate(new Bits32(0x0A000000), 24, "c", "set", null), Is.True);
+        Assert.That(trie.Remove(new Bits32(0x0A000001), 24, out var removed) && removed == "set");
+
+        // inside a batch the check sees the batch's own writes
+        using (var batch = trie.BeginBatch())
+        {
+            trie.Add(bits, 8, "d", "four");
+            Assert.That(trie.TryUpdate(bits, 8, "d", "five", "four"), Is.True);
+            Assert.That(trie.TryRemove(bits, 8, "five"), Is.True);
+            trie.Add(bits, 8, "e", "six");
+            batch.Commit();
+        }
+
+        Assert.That(trie.TryGetValue(bits, 8, out value) && value == "six");
+    }
+
+    [Test(Description = "Compare-and-update is atomic: counting with it from several threads loses no increment.")]
+    public void Compare_and_update_from_several_threads_loses_nothing()
+    {
+        var trie = new BitTrie<Bits32, int, int>();
+        var bits = new Bits32(0xC0A80000);
+        trie.Add(bits, 16, 0, 0);
+        const int threads = 4, increments = 20_000;
+        Parallel.For(0, threads, new ParallelOptions { MaxDegreeOfParallelism = threads }, _ =>
+        {
+            for (var i = 0; i < increments; i++)
+                while (true)
+                {
+                    trie.TryGetValue(bits, 16, out var current);
+                    if (trie.TryUpdate(bits, 16, 0, current + 1, current)) break;
+                }
+        });
+
+        Assert.That(trie.TryGetValue(bits, 16, out var total) && total == threads * increments);
+    }
+
+    [Test]
     public void Lookups_backtrack_any_number_of_levels()
     {
         // 10.1.2.64/26 and 10.1.2.128/25 make nodes at depths 1, 2 and 3 on the path of 10.1.2.3, which neither contains,

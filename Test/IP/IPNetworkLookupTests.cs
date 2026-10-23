@@ -274,6 +274,28 @@ public class IPNetworkLookupTests
     }
 
     [Test]
+    public void Conditional_writes_work_in_both_families()
+    {
+        var lookup = Lookup("10.0.0.0/8", "2001:db8::/32");
+        foreach (var text in new[] { "10.0.0.0/8", "2001:db8::/32" })
+        {
+            var network = N(text);
+            Assert.That(lookup.TryUpdate(network, "new", "other"), Is.False, text);
+            Assert.That(lookup.TryUpdate(network, "new", text), Is.True, text);
+            Assert.That(lookup.TryRemove(network, text), Is.False, text);
+            Assert.That(lookup.TryRemove(network, "new"), Is.True, text);
+            lookup.Add(network, "again");
+            Assert.That(lookup.Remove(network, out var removed) && removed == "again", text);
+            Assert.That(lookup.Remove(network, out _), Is.False, text);
+        }
+
+        Assert.That(lookup.Count, Is.Zero);
+        var map = new IPNetworkLookup<string>(new IPLookupOptions { MapIPv4MappedAddresses = true });
+        Assert.Throws<ArgumentException>(() => map.TryUpdate(N("::ffff:10.0.0.0/104"), "x", "y"));
+        Assert.That(map.TryRemove(N("::ffff:10.0.0.0/104"), "y") || map.Remove(N("::ffff:10.0.0.0/104"), out _), Is.False);
+    }
+
+    [Test]
     public void With_mapping_on_prefixes_inside_the_mapped_range_are_refused()
     {
         var map = new IPNetworkLookup<string>(new IPLookupOptions { MapIPv4MappedAddresses = true });

@@ -123,7 +123,10 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     public void Add(in TKey bits, int length, TPrefix prefix, TValue value);                     // throws if present
     public bool AddOrUpdate(in TKey bits, int length, TPrefix prefix, TValue value);             // true when added
     public TValue GetOrAdd(in TKey bits, int length, TPrefix prefix, Func<TPrefix, TValue> valueFactory);
+    public bool TryUpdate(in TKey bits, int length, TPrefix prefix, TValue newValue, TValue expectedValue);
     public bool Remove(in TKey bits, int length);
+    public bool Remove(in TKey bits, int length, out TValue value);                              // returns the value
+    public bool TryRemove(in TKey bits, int length, TValue expectedValue);
     public void Clear();
 
     public Batch BeginBatch();
@@ -141,6 +144,10 @@ public readonly record struct BitTrieStatistics(int Prefixes, int Nodes, long By
 
 - **Writes** are serialized by an internal lock, so there is no separate concurrent class. Each does a bounded amount of
   work: no step grows with the size of the table.
+- **Atomic conditional writes**, as in `ConcurrentDictionary`: `GetOrAdd` adds only when the prefix is absent, and
+  `TryUpdate` and `TryRemove` change it only when its value equals the one expected, compared with
+  `EqualityComparer<TValue>.Default`. Each checks and writes under the writer lock, so no other write lands in between;
+  inside a batch the check sees the batch's own changes.
 - **Loading a whole table.** The constructor from a sequence builds the trie in one pass, with the prefixes in any
   order: on the real tables 1.3 to 3.9 times as fast as adding them in a batch, with a third less allocation. A prefix
   that appears twice throws `ArgumentException`.
@@ -279,7 +286,10 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     public void Add(TPrefix prefix, TValue value);
     public bool AddOrUpdate(TPrefix prefix, TValue value);
     public TValue GetOrAdd(TPrefix prefix, Func<TPrefix, TValue> valueFactory);
+    public bool TryUpdate(TPrefix prefix, TValue newValue, TValue expectedValue);
     public bool Remove(TPrefix prefix);
+    public bool Remove(TPrefix prefix, out TValue value);
+    public bool TryRemove(TPrefix prefix, TValue expectedValue);
     public void Clear();
 
     public Batch BeginBatch();
@@ -427,5 +437,5 @@ differs from that proposal:
 
 - **Whether `Add` should exist** next to `TryAdd`, `AddOrUpdate` and `GetOrAdd`. It is there for familiarity with
   `Dictionary`.
-- **Further operations** suggested by the review, not yet decided: removing a prefix only when its value matches, overlap tests, listing the prefixes inside or containing a prefix, per-family
+- **Further operations** suggested by the review, not yet decided: overlap tests, listing the prefixes inside or containing a prefix, per-family
   counts, `GetMatches` from integers, and one `Batch` type for every lookup.

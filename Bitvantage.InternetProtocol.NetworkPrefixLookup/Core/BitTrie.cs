@@ -778,16 +778,84 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     {
         CheckLength(length);
         using (_lock.EnterScope())
+            return DeleteOrFailBatch(in bits, length);
+    }
+
+    /// <summary>Removes a prefix and returns its value. Returns false when it is not present.</summary>
+    /// <param name="bits">The prefix bits; bits after the length are ignored.</param>
+    /// <param name="length">The prefix length.</param>
+    /// <param name="value">The value the prefix had.</param>
+    public bool Remove(in TKey bits, int length, [MaybeNullWhen(false)] out TValue value)
+    {
+        CheckLength(length);
+        using (_lock.EnterScope())
         {
-            try
+            ref var entry = ref FindExact(_w, in bits, length);
+            if (Unsafe.IsNullRef(ref entry))
             {
-                return Delete(in bits, length);
+                value = default!;
+                return false;
             }
-            catch
-            {
-                if (_batch) _batchFailed = true;
-                throw;
-            }
+
+            value = entry.Value;
+            return DeleteOrFailBatch(in bits, length);
+        }
+    }
+
+    /// <summary>Removes a prefix only when its value equals <paramref name="expectedValue" />.</summary>
+    /// <param name="bits">The prefix bits; bits after the length are ignored.</param>
+    /// <param name="length">The prefix length.</param>
+    /// <param name="expectedValue">The value the prefix must have, compared with <see cref="EqualityComparer{T}.Default" />.</param>
+    /// <returns>True when the prefix was removed; false, with nothing changed, when it is absent or has another value.</returns>
+    /// <remarks>
+    ///     The check and the removal happen under the writer lock, so no other write lands between them, as with
+    ///     <c>ConcurrentDictionary.TryRemove</c>. Inside a batch the check sees the batch's own changes.
+    /// </remarks>
+    public bool TryRemove(in TKey bits, int length, TValue expectedValue)
+    {
+        CheckLength(length);
+        using (_lock.EnterScope())
+        {
+            ref var entry = ref FindExact(_w, in bits, length);
+            return !Unsafe.IsNullRef(ref entry) && EqualityComparer<TValue>.Default.Equals(entry.Value, expectedValue) && DeleteOrFailBatch(in bits, length);
+        }
+    }
+
+    /// <summary>Replaces the prefix object and value of a prefix only when its value equals <paramref name="expectedValue" />.</summary>
+    /// <param name="bits">The prefix bits; bits after the length are ignored.</param>
+    /// <param name="length">The prefix length.</param>
+    /// <param name="prefix">The prefix object to store.</param>
+    /// <param name="newValue">The value to store.</param>
+    /// <param name="expectedValue">The value the prefix must have, compared with <see cref="EqualityComparer{T}.Default" />.</param>
+    /// <returns>True when the prefix was updated; false, with nothing changed, when it is absent or has another value.</returns>
+    /// <remarks>
+    ///     The check and the update happen under the writer lock, so no other write lands between them, as with
+    ///     <c>ConcurrentDictionary.TryUpdate</c>. Inside a batch the check sees the batch's own changes.
+    /// </remarks>
+    public bool TryUpdate(in TKey bits, int length, TPrefix prefix, TValue newValue, TValue expectedValue)
+    {
+        CheckLength(length);
+        using (_lock.EnterScope())
+        {
+            ref var entry = ref FindExact(_w, in bits, length);
+            if (Unsafe.IsNullRef(ref entry) || !EqualityComparer<TValue>.Default.Equals(entry.Value, expectedValue))
+                return false;
+
+            SetOrFailBatch(in bits, length, prefix, newValue, update: true);
+            return true;
+        }
+    }
+
+    private bool DeleteOrFailBatch(in TKey bits, int length)
+    {
+        try
+        {
+            return Delete(in bits, length);
+        }
+        catch
+        {
+            if (_batch) _batchFailed = true;
+            throw;
         }
     }
 

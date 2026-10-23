@@ -79,7 +79,9 @@ With mapping on, an IPv6 prefix inside `::ffff:0:0/96` could never match an addr
 
 ## Tables that change
 
-Writes follow dictionary rules: `TryAdd`, `Add`, `AddOrUpdate`, `GetOrAdd`, `Remove` and `Clear`.
+Writes follow dictionary rules: `TryAdd`, `Add`, `AddOrUpdate`, `GetOrAdd`, `Remove` and `Clear`. As in
+`ConcurrentDictionary`, `TryUpdate` and `TryRemove` change a prefix only when its value is the one you expect, checked
+and written under the writer lock, so another thread's write cannot land in between.
 
 - **Reads never wait.** Any number of threads can look up while writes happen. Lookups take no locks, and each sees the
   table as it was at one moment: before or after every write, never in between.
@@ -87,7 +89,7 @@ Writes follow dictionary rules: `TryAdd`, `Add`, `AddOrUpdate`, `GetOrAdd`, `Rem
 - **Every write does bounded work.** A write copies only the small node it changes, and the garbage collector frees
   the old one, so there are no pauses for growth or compaction however large the table gets.
 
-A batch publishes many changes at once, and is the fastest way to load a table:
+A batch publishes many changes at once:
 
 ```csharp
 using (var batch = routes.BeginBatch())

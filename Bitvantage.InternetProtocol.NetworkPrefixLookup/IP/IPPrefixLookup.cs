@@ -234,6 +234,55 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
             : _v6.GetOrAdd(StoredIPv6Bits(prefix), TAdapter.GetLength(prefix), prefix, valueFactory);
     }
 
+    /// <summary>Removes a prefix and returns its value. Returns false when it is not present.</summary>
+    /// <param name="prefix">The prefix; host bits after its length are ignored.</param>
+    /// <param name="value">The value the prefix had.</param>
+    public bool Remove(TPrefix prefix, [MaybeNullWhen(false)] out TValue value)
+    {
+        IPAddressBits.ThrowIfNull(prefix);
+        return TAdapter.IsIPv4(prefix)
+            ? _v4.Remove(new Bits32(TAdapter.GetIPv4Bits(prefix)), TAdapter.GetLength(prefix), out value)
+            : _v6.Remove(new Bits128(TAdapter.GetIPv6Bits(prefix)), TAdapter.GetLength(prefix), out value);
+    }
+
+    /// <summary>Removes a prefix only when its value equals <paramref name="expectedValue" />.</summary>
+    /// <param name="prefix">The prefix; host bits after its length are ignored.</param>
+    /// <param name="expectedValue">The value the prefix must have, compared with <see cref="EqualityComparer{T}.Default" />.</param>
+    /// <returns>True when the prefix was removed; false, with nothing changed, when it is absent or has another value.</returns>
+    /// <remarks>
+    ///     The check and the removal happen under the writer lock, so no other write lands between them, as with
+    ///     <c>ConcurrentDictionary.TryRemove</c>. Inside a batch the check sees the batch's own changes.
+    /// </remarks>
+    public bool TryRemove(TPrefix prefix, TValue expectedValue)
+    {
+        IPAddressBits.ThrowIfNull(prefix);
+        return TAdapter.IsIPv4(prefix)
+            ? _v4.TryRemove(new Bits32(TAdapter.GetIPv4Bits(prefix)), TAdapter.GetLength(prefix), expectedValue)
+            : _v6.TryRemove(new Bits128(TAdapter.GetIPv6Bits(prefix)), TAdapter.GetLength(prefix), expectedValue);
+    }
+
+    /// <summary>
+    ///     Replaces the stored prefix object and value of a prefix only when its value equals <paramref name="expectedValue" />.
+    /// </summary>
+    /// <param name="prefix">The prefix; host bits after its length are ignored.</param>
+    /// <param name="newValue">The value to store.</param>
+    /// <param name="expectedValue">The value the prefix must have, compared with <see cref="EqualityComparer{T}.Default" />.</param>
+    /// <returns>True when the prefix was updated; false, with nothing changed, when it is absent or has another value.</returns>
+    /// <remarks>
+    ///     The check and the update happen under the writer lock, so no other write lands between them, as with
+    ///     <c>ConcurrentDictionary.TryUpdate</c>. Inside a batch the check sees the batch's own changes.
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    ///     <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> is on and the prefix lies inside <c>::ffff:0:0/96</c>.
+    /// </exception>
+    public bool TryUpdate(TPrefix prefix, TValue newValue, TValue expectedValue)
+    {
+        IPAddressBits.ThrowIfNull(prefix);
+        return TAdapter.IsIPv4(prefix)
+            ? _v4.TryUpdate(new Bits32(TAdapter.GetIPv4Bits(prefix)), TAdapter.GetLength(prefix), prefix, newValue, expectedValue)
+            : _v6.TryUpdate(StoredIPv6Bits(prefix), TAdapter.GetLength(prefix), prefix, newValue, expectedValue);
+    }
+
     // The bits of an IPv6 prefix to store. With mapping on, an address lookup sends every IPv4-mapped address to the IPv4
     // trie, so a prefix inside ::ffff:0:0/96 could be stored and listed but never found by address; it is refused, before
     // anything changes, so that a batch it was written in stays sound.
