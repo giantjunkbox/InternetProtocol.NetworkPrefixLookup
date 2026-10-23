@@ -10,7 +10,8 @@ contains it, and its value. Suited to routing tables, packet classification, acc
 - **Frozen tables** for data that is loaded once and then only read, with lookups up to 1.8 times as fast again.
 - **Your network type**: `System.Net.IPNetwork` is built in, and small packages add `IPNetwork2` and MaxMind
   databases.
-- **No dependencies** in the core package. Targets .NET 10.
+- **No dependencies** in the core package. Targets .NET 10, works with trimming and native AOT, and ships Source Link and
+  symbols for stepping into the source.
 
 ## Packages
 

@@ -764,7 +764,7 @@ bits.
 ## Testing and benchmarking
 
 ```sh
-dotnet test Test -c Release                                    # all tests, about 2 minutes
+dotnet test Test -c Release                                    # all tests, about 20 seconds
 dotnet run -c Release --project PerformanceTest                # all benchmarks
 dotnet run -c Release --project PerformanceTest -- --filter '*RandomTable*'
 dotnet run -c Release --project PerformanceTest -- --memory    # memory per form and bytes allocated per lookup
@@ -777,6 +777,14 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 | `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 8-, 16-, 32- and 128-bit keys, including `GetMatches`, `GetSubnets` and `Overlaps` at the stored prefixes, one bit shorter and longer, and at every length (8 and 16 are test-only types; 8 has no shortcut blocks), before and after removals; canonical shape; batches commit and discard; a commit that throws, a batch ended on another thread, a batch in which a write threw; `Version`; frozen root sizes; lock-free readers during churn; lookups that overlap several writes; concurrent writers |
 | `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; the queries about networks; the counts per family; IPv4-mapped addresses and networks with mapping off and on; address conversions; writes and batches, including failed and wrong-thread batches; freezing both families at one moment; one freeze layout for both families; a reader during churn |
 | `Adapters/AdapterTests` | Each adapter package in both forms; MaxMind databases against `Reader.Find`, at IPv4, IPv4-compatible and IPv4-mapped addresses, and a hand-built database with a record above the IPv4 networks |
+
+**Native AOT and CI.** The library projects set `IsAotCompatible`, so the trimming and AOT analyzers check them, and
+report nothing. `AotSmokeTest` exercises each package once, the MaxMind loader included, and treats warnings as errors;
+published with native AOT it is a 4.9 MB executable whose checks all pass on linux-x64, and MaxMind.Db decodes the
+test database's records under native AOT too. The GitHub Actions workflow, `.github/workflows/ci.yml`, builds the
+solution with warnings as errors and runs the tests on Linux x64 and ARM64, Windows and macOS on ARM64, packs on Linux,
+and publishes and runs `AotSmokeTest` with native AOT on linux-x64 and linux-arm64. The packages carry Source Link and
+a symbol package, so a debugger can step into the source of the commit they were built from.
 
 ## Limitations
 

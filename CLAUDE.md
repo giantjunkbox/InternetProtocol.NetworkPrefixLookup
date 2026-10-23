@@ -87,6 +87,10 @@ interface differs from the original proposal. `Documentation/Adapter-Survey.md` 
 - `PerformanceTest.V2/` runs `ComparisonBenchmarks` against the original library, before the redesign, at commit
   `b512201`. It is not in the solution; `get-original.sh` extracts the original source into its ignored `Original/`
   folder, and it targets .NET 7, which the original shipped on, as well as .NET 10.
+- `AotSmokeTest/` exercises each package once. It is in the solution and treats warnings as errors, so its build runs
+  the AOT analyzers over the libraries' use, and CI publishes it with native AOT and runs it.
+- `.github/workflows/ci.yml` builds with warnings as errors, tests and packs on Linux x64 and ARM64, Windows and macOS
+  (ARM64), and publishes `AotSmokeTest` with native AOT for linux-x64 and linux-arm64.
 
 ## Build and test
 
@@ -99,11 +103,12 @@ export PATH="$HOME/.dotnet:$PATH" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 
 ```sh
 dotnet build -c Release                                   # whole solution
-dotnet test Test -c Release                               # all unit tests, about 2 minutes
+dotnet test Test -c Release                               # all unit tests, about 20 seconds
 dotnet test Test -c Release --filter "FullyQualifiedName~Test.IP"   # a subset
 dotnet run -c Release --project PerformanceTest           # all benchmarks
 dotnet run -c Release --project PerformanceTest -- --filter '*RandomTable*'   # a subset
 dotnet run -c Release --project PerformanceTest -- --memory                   # memory per form, bytes per lookup
+dotnet publish AotSmokeTest -c Release -r linux-x64 -o aot && ./aot/AotSmokeTest   # native AOT; needs clang
 ```
 
 `PerformanceTest` passes its arguments to BenchmarkDotNet, so `--filter` and `--artifacts` work.
@@ -140,6 +145,8 @@ The whole solution builds with no warnings. Do not add any.
   `Test/Test.csproj`, which uses spaces.
 - The library projects set `GenerateDocumentationFile`, so every public member needs an XML doc comment. A build
   must produce no CS1591, CS1570 or CS1574 warnings.
+- The library projects set `IsAotCompatible`: no reflection or runtime code generation, which the trimming and AOT
+  analyzers would report. They also publish Source Link and a symbol package.
 - Comment tags in the code:
   - `PERF:` marks a known cost on a hot path.
   - `KNOWN ISSUE:` marks a confirmed bug that was intentionally left unchanged.
