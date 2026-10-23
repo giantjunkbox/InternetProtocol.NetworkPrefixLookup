@@ -387,8 +387,8 @@ slower, inside the container's drift.
 Each package defines an adapter struct and a read-write and frozen class pair. Two need more than that:
 
 - **NetworkPrefix** adds the value-less `NetworkPrefixLookup`, deriving from `NetworkPrefixLookup<NoValue>`.
-  `NoValueLookupExtensions` in the core adds `TryAdd(prefix)`, `Add(prefix)`, `TryGetMatch(address, out prefix)` and
-  `ContainsMatch(address)` for any value-less lookup.
+  `NoValueLookupExtensions` in the core adds `TryAdd(prefix)`, `Add(prefix)` and `TryGetMatch(address, out prefix)` for
+  any value-less lookup. `ContainsMatch` is a member of both read-only interfaces.
 - **MaxMind** adds `MaxMindDatabase.Load<T>`, which reads every network through `Reader.FindAll<T>` into one batch.
   MaxMind's IPv6 databases keep the IPv4 networks under `::/96`, which `FindAll` reports as IPv4, and point
   `::ffff:0:0/96`, `2001::/32` and `2002::/16` at them, so a full walk returns every IPv4 network four times. The loader

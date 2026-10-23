@@ -82,6 +82,7 @@ public interface IReadOnlyBitTrie<TKey, TPrefix, TValue> : IReadOnlyCollection<P
     // the longest stored prefix that contains a full-width key, such as an address
     bool TryGetMatch(in TKey key, out TPrefix prefix, out TValue value);
     bool TryGetMatchValue(in TKey key, out TValue value);
+    bool ContainsMatch(in TKey key);                                     // whether any stored prefix contains the key
 
     // the longest stored prefix that contains the prefix (bits, length), which may be the prefix itself
     bool TryGetMatch(in TKey bits, int length, out TPrefix prefix, out TValue value);
@@ -235,6 +236,7 @@ public interface IReadOnlyIPPrefixLookup<TPrefix, TValue> : IReadOnlyCollection<
     bool TryGetMatchIPv4(uint address, out TPrefix prefix, out TValue value);           // host order
     bool TryGetMatchIPv6(UInt128 address, out TPrefix prefix, out TValue value);
     bool TryGetMatchValue(IPAddress address, out TValue value);                          // and for spans, uint and UInt128
+    bool ContainsMatch(IPAddress address);                                               // and for spans, uint and UInt128
 
     // prefixes
     bool TryGetMatch(TPrefix network, out TPrefix prefix, out TValue value);             // the longest stored prefix containing it
@@ -324,9 +326,10 @@ redeclares `Freeze` with `new` to return its own frozen class:
 ### Lookups without values
 
 `NoValue` is an empty struct for sets of prefixes. `NoValueLookupExtensions` adds `TryAdd(prefix)` and `Add(prefix)`
-to any read-write lookup whose value type is `NoValue`, `TryGetMatch(address, out prefix)` to any read-only one, and
-`ContainsMatch(address)` to every lookup. The `NetworkPrefix` package's value-less `NetworkPrefixLookup` keeps the
-version 2 class name.
+to any read-write lookup whose value type is `NoValue`, and `TryGetMatch(address, out prefix)` to any read-only one.
+`ContainsMatch`, the question a set is usually asked, is a member of both read-only interfaces: it stops at the
+answer and reads no entry or value, so it is faster than a match. The `NetworkPrefix` package's value-less
+`NetworkPrefixLookup` keeps the version 2 class name.
 
 ### MaxMind databases
 
@@ -424,6 +427,5 @@ differs from that proposal:
 
 - **Whether `Add` should exist** next to `TryAdd`, `AddOrUpdate` and `GetOrAdd`. It is there for familiarity with
   `Dictionary`.
-- **Further operations** suggested by the review, not yet decided: `ContainsMatch` on the read-only interface, removing
-  a prefix only when its value matches, overlap tests, listing the prefixes inside or containing a prefix, per-family
+- **Further operations** suggested by the review, not yet decided: removing a prefix only when its value matches, overlap tests, listing the prefixes inside or containing a prefix, per-family
   counts, `GetMatches` from integers, and one `Batch` type for every lookup.
