@@ -679,6 +679,25 @@ The `GetMatches` ratios point in opposite directions, inside one standard deviat
 also inside it (0.08), but both are higher, so the check for the top node on every frame of the walk may cost a few
 percent. Each enumeration allocates 176 to 192 bytes more, for the larger iterator.
 
+**The read-write walks for networks, without the node stack** (one session on 2026-10-23, 15 iterations per case, the
+code before kept as a copy; bare `BitTrie` on the real tables; 100,000 networks as in `RealNetworkQueryBenchmarks`,
+200,000 keys for `GetMatches` by key). `TryGetMatch` for a network now starts from a shortcut block and keeps only the
+parent; `GetMatches` collects on the way down and reverses; `GetSubnets` and enumeration are one iterator that yields
+entries without their bits and allocates its stack only below the first node.
+
+| Query | Real IPv4, before | After | Ratio | Real IPv6, before | After | Ratio |
+| --- | --- | --- | --- | --- | --- | --- |
+| `TryGetMatch` for a network | 12.4 ms | 10.5 ms | 0.85 | 20.0 ms | 17.2 ms | 0.86 |
+| `GetMatches` for a network, into a span | 18.5 ms | 14.9 ms | 0.81 | 26.9 ms | 20.4 ms | 0.76 |
+| `GetMatches` for a key, into a span | 53.5 ms | 42.5 ms | 0.81 | 66.4 ms | 51.0 ms | 0.77 |
+| `GetSubnets(...).Any()` | 33.2 ms, 332 B per call | 28.4 ms, 171 B | 0.85 | 37.1 ms, 420 B | 32.3 ms, 203 B | 0.88 |
+| `GetSubnets`, enumerated to the end | 290.9 ms | 235.7 ms | 0.82 | 147.9 ms | 104.1 ms | 0.71 |
+| Enumerating the whole trie | 44.5 ms | 41.3 ms | 0.93 | 15.8 ms | 12.1 ms | 0.77 |
+| The walk with bits that `Freeze` reads | 39.9 ms | 38.3 ms | 0.96 | 13.5 ms | 13.1 ms | 0.98 |
+
+The last row is the walk restored to its form for the whole trie, after `GetSubnets` stopped sharing it; it is inside
+the noise, as was the cost of sharing it, measured earlier as 1.04 and 1.05.
+
 **Memory held by the frozen tables** (`--memory`, the commit before against this one): they now keep each prefix's
 bits.
 
@@ -711,8 +730,8 @@ bits.
 | Lookups without the node stack, the parent in a local | 0.85 to 0.93 of the time on every table | Done; see [Since the baseline](#since-the-baseline) |
 | Enumeration over set bits only; freeze copies under the lock and builds after | Enumeration 2 to 6 times faster, freezing 1.5 to 3 times, writers wait 69 ms instead of 153 ms on real IPv4 | Done; see [Since the baseline](#since-the-baseline) |
 | `GetMatches(IPAddress)` into a stack buffer instead of a list | Less garbage | Measured: 1.45 to 1.7 times slower; not done |
-| `TryGetMatch` and `GetMatches` for a network without the node stack, from the shortcut blocks | They take 2.1 to 5.5 times as long as `Overlaps` on the read-write trie | Not tried |
-| `GetSubnets` on the read-write trie without its own iterator and stack when the network ends in one node | Less than its 357 to 446 bytes per call | Not tried |
+| `TryGetMatch` and `GetMatches` for a network without the node stack, from the shortcut blocks | They took 2.1 to 5.5 times as long as `Overlaps` on the read-write trie | Done: 0.76 to 0.86 of the time, and `GetMatches` by key 0.77 to 0.81; see [Since the baseline](#since-the-baseline) |
+| `GetSubnets` on the read-write trie as one iterator, without bits, with its stack only when needed | Less than its 357 to 446 bytes per call | Done: half the allocation, 0.71 to 0.88 of the time, and enumeration 0.77 to 0.93; see [Since the baseline](#since-the-baseline) |
 | Lookups without bounds checks | | Measured: no difference; not done |
 | Choose the frozen layout from the data | Leaf-pushed for clustered tables, compressed for scattered ones | Done; see [The frozen trie](#the-frozen-trie) |
 | A 24-bit root for frozen IPv4 tables | Already possible with `RootBits = 24`: 0.37 of the read-write time in the prototype, at about twice the memory | Option exists |
