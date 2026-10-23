@@ -406,7 +406,9 @@ Each package defines an adapter struct and a read-write and frozen class pair. T
   and `TryGetMatch(address, out prefix)` to any lookup whose values are `NoValue`, such as `IPNetworkLookup<NoValue>`.
   `ContainsMatch` is a member of both read-only interfaces. A `NetworkPrefix` package once kept version 2's value-less
   `NetworkPrefixLookup`; it was dropped with `NetworkPrefix` itself.
-- **MaxMind** adds `MaxMindDatabase.Load<T>`, which reads every network through `Reader.FindAll<T>` into one batch.
+- **MaxMind** adds `MaxMindDatabase.Load<T>`, which collects every network from `Reader.FindAll<T>` and builds the
+  lookup in one pass. A well-formed database reaches each network by one path, so a malformed one that yields a network
+  twice throws, where the batch the loader used to fill kept the first copy.
   MaxMind's IPv6 databases keep the IPv4 networks under `::/96`, which `FindAll` reports as IPv4, and point
   `::ffff:0:0/96`, `2001::/32` and `2002::/16` at them, so a full walk returns every IPv4 network four times. The loader
   skips the three aliases by default, and the lookup it returns maps IPv4-mapped addresses, so `::ffff:` addresses still
@@ -697,6 +699,25 @@ entries without their bits and allocates its stack only below the first node.
 
 The last row is the walk restored to its form for the whole trie, after `GetSubnets` stopped sharing it; it is inside
 the noise, as was the cost of sharing it, measured earlier as 1.04 and 1.05.
+
+**MaxMind on a full-size database** (`RealMaxMindBenchmarks`, one session on 2026-10-23). `MaxMindWriter` writes the
+RouteViews tables as an ASN database, splitting outer networks around inner ones as MaxMind's files do: 1,240,422 IPv4
+and 413,309 IPv6 networks, which the benchmark checks against `Reader.Find` at 20,000 addresses before measuring.
+
+| Loading it | Time | Allocated | Gen1 collections per thousand loads |
+| --- | --- | --- | --- |
+| A batch of `TryAdd` calls, as before | 2,674 ms | 1,038 MB | 30,000 |
+| Built in one pass | 2,437 ms, 0.91 | 1,218 MB | 21,000 |
+
+`FindAll` decoding the records takes most of the time and allocation either way. The one-pass build allocates 17% more:
+the loader collects the networks into a list, and the constructor copies them into one buffer per family before
+building, where the batch only copied nodes. It still takes 0.91 of the time, with a third fewer Gen1 collections.
+
+| 200,000 lookups, half IPv4 and half IPv6 | Time | Ratio | Allocated |
+| --- | --- | --- | --- |
+| `Reader.Find` | 167.1 ms | 1.00 | 68.8 MB |
+| Read-write lookup | 29.8 ms | 0.18 | nothing |
+| Frozen lookup, leaf-pushed | 17.2 ms | 0.10 | nothing |
 
 **Memory held by the frozen tables** (`--memory`, the commit before against this one): they now keep each prefix's
 bits.

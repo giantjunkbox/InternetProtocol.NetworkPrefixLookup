@@ -395,7 +395,8 @@ public sealed record MaxMindLoadOptions
 }
 ```
 
-The loader reads every network through `Reader.FindAll<T>` into one batch. MaxMind's IPv6 databases keep the IPv4
+The loader collects every network from `Reader.FindAll<T>` and builds the lookup in one pass; a database that yields a
+network twice, which a well-formed one cannot, throws `ArgumentException`. MaxMind's IPv6 databases keep the IPv4
 networks under `::/96` and point three alias networks at them; the loader stores the IPv4 networks once, as IPv4, and
 the lookup maps IPv4-mapped addresses, so lookups answer as MaxMind's reader does. `IncludeAliasedNetworks` also stores
 the copies under `::/96`, `2001::/32` and `2002::/16`, and under `::ffff:0:0/96` when the lookup does not map those

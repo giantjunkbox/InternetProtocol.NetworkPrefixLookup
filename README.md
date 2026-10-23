@@ -166,8 +166,9 @@ var countries = MaxMindDatabase.Load<Dictionary<string, object>>("GeoLite2-Count
 countries.TryGetMatchValue(IPAddress.Parse("81.2.69.160"), out var record);
 ```
 
-On MaxMind's test database the read-write lookup answered about 80 times as fast as MaxMind's own reader, and the frozen
-one about 180 times as fast. The loader stores each IPv4 network once. MaxMind's IPv6 databases also answer some IPv6
+On a database the size of a full routing table, 1.65 million networks made from the RouteViews tables, MaxMind's own
+reader took 835 ns per lookup and allocated 344 bytes; the read-write lookup took 0.18 of that time and the frozen one
+0.10, allocating nothing. The loader builds the lookup in one pass, and stores each IPv4 network once. MaxMind's IPv6 databases also answer some IPv6
 addresses from the IPv4 data, through IPv4-compatible, 6to4 and Teredo aliases. Set
 `MaxMindLoadOptions.IncludeAliasedNetworks` to load those too, and every address then gets the answer
 `Reader.Find` gives, at the cost of storing each IPv4 network three more times: under `::/96`, `2001::/32` and
