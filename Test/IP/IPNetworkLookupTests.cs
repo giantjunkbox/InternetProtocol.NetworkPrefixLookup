@@ -310,6 +310,28 @@ public class IPNetworkLookupTests
             var span = new PrefixEntry<IPNetwork, string>[129];
             Assert.That(form.GetMatches(IPAddress.Parse("10.1.2.3"), span), Is.EqualTo(2));
             Assert.That(span[0].Value, Is.EqualTo("10.1.0.0/16"));
+
+            // every form of GetMatches agrees with the IPAddress form
+            foreach (var text in new[] { "10.1.2.3", "10.9.9.9", "11.0.0.1", "2001:db8::1", "2001:db9::1", "::ffff:10.1.2.3" })
+            {
+                var address = IPAddress.Parse(text);
+                var expected = Values(form.GetMatches(address));
+                Assert.That(Values(form.GetMatches(address.GetAddressBytes())), Is.EqualTo(expected), text);
+                Assert.That(Values(span.Take(form.GetMatches(address.GetAddressBytes(), span))), Is.EqualTo(expected), text);
+                if (address.AddressFamily == AddressFamily.InterNetwork)
+                {
+                    Assert.That(Values(form.GetMatchesIPv4(IPAddressBits.ToIPv4Bits(address))), Is.EqualTo(expected), text);
+                    Assert.That(Values(span.Take(form.GetMatchesIPv4(IPAddressBits.ToIPv4Bits(address), span))), Is.EqualTo(expected), text);
+                }
+                else
+                {
+                    Assert.That(Values(form.GetMatchesIPv6(IPAddressBits.ToIPv6Bits(address))), Is.EqualTo(expected), text);
+                    Assert.That(Values(span.Take(form.GetMatchesIPv6(IPAddressBits.ToIPv6Bits(address), span))), Is.EqualTo(expected), text);
+                }
+            }
+
+            Assert.Throws<ArgumentException>(() => form.GetMatches(new byte[5]));
+            Assert.Throws<ArgumentException>(() => form.GetMatchesIPv4(0x0A010203, new PrefixEntry<IPNetwork, string>[1]));
         }
     }
 
@@ -338,6 +360,8 @@ public class IPNetworkLookupTests
             Assert.That(form.TryGetMatch(mapped.GetAddressBytes(), out _, out var value) && value == "10.0.0.0/8");
             Assert.That(form.TryGetMatchIPv6(IPAddressBits.ToIPv6Bits(mapped), out _, out value) && value == "10.0.0.0/8");
             Assert.That(form.GetMatches(mapped).Select(m => m.Value), Is.EqualTo(new[] { "10.0.0.0/8" }));
+            Assert.That(Values(form.GetMatches(mapped.GetAddressBytes())), Is.EqualTo(new[] { "10.0.0.0/8" }));
+            Assert.That(Values(form.GetMatchesIPv6(IPAddressBits.ToIPv6Bits(mapped))), Is.EqualTo(new[] { "10.0.0.0/8" }));
             Assert.That(form.ContainsMatch(mapped) && form.ContainsMatch(mapped.GetAddressBytes()) && form.ContainsMatchIPv6(IPAddressBits.ToIPv6Bits(mapped)));
 
             // no IPv4 prefix holds 11.1.2.3, so neither form matches; ::/0, which contains every mapped address, never

@@ -259,7 +259,7 @@ public interface IReadOnlyIPPrefixLookup<TPrefix, TValue> : IReadOnlyCollection<
     bool TryGetMatchValue(IPAddress address, out TValue value);                          // and for spans, uint and UInt128
     bool ContainsMatch(IPAddress address);                                               // and for spans, uint and UInt128
 
-    IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(IPAddress address);           // longest first
+    IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(IPAddress address);           // longest first; and for spans, uint and UInt128
     int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination);   // 129 entries always suffice
 
     // networks: the stored prefixes around and inside one, each including the network itself
@@ -280,7 +280,9 @@ public sealed record IPLookupOptions
 }
 ```
 
-- **Addresses.** The span, `uint` and `UInt128` overloads serve callers that never hold an `IPAddress`, such as packet
+- **Addresses.** Every address lookup, `TryGetMatch`, `TryGetMatchValue`, `ContainsMatch` and `GetMatches`, takes an
+  address in four forms: an `IPAddress`, bytes in network order (`ReadOnlySpan<byte>`), and a `uint` or `UInt128` for
+  methods suffixed `IPv4` and `IPv6`. The last three serve callers that never hold an `IPAddress`, such as packet
   parsers. Scope IDs are ignored.
 - **Enumeration** returns the IPv4 prefixes, then the IPv6 prefixes, each in address order. `IPv4Count` and
   `IPv6Count` count each family without a walk; each is read on its own, so during writes they need not add up to a
@@ -475,6 +477,5 @@ differs from that proposal:
 
 - **Whether `Add` should exist** next to `TryAdd`, `AddOrUpdate` and `GetOrAdd`. It is there for familiarity with
   `Dictionary`.
-- **Further operations** suggested by the review, not yet decided: `GetMatches` from integers, and one `Batch` type for
-  every lookup. Overlap tests between two whole tables were left out: looping over the smaller
+- **Further operations** suggested by the review, not yet decided: one `Batch` type for every lookup. Overlap tests between two whole tables were left out: looping over the smaller
   table with `Overlaps` answers the same question.

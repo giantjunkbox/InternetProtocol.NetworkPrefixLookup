@@ -52,7 +52,7 @@ foreach (var match in routes.GetMatches(IPAddress.Parse("10.1.2.3")))
 | `TryGetMatch(address, out prefix, out value)` | The most specific stored network that contains an address |
 | `TryGetMatchValue(address, out value)` | The same, when only the value is needed; slightly faster |
 | `TryGetMatchIPv4(uint, …)`, `TryGetMatchIPv6(UInt128, …)`, `TryGetMatch(ReadOnlySpan<byte>, …)` | The same from an integer or bytes in network order, for callers such as packet parsers that never build an `IPAddress` |
-| `GetMatches(address)` | Every stored network that contains an address, most specific first; an overload fills a span instead |
+| `GetMatches(address)` | Every stored network that contains an address, most specific first; an overload fills a span instead. Like `TryGetMatch`, it also takes bytes, and a `uint` or `UInt128` as `GetMatchesIPv4` and `GetMatchesIPv6` |
 | `TryGetMatch(network, out prefix, out value)` | The most specific stored network that contains another network, which may be the network itself |
 | `GetMatches(network)` | Every stored network that contains another network, most specific first: which routes cover a subnet |
 | `GetSubnets(network)` | Every stored network inside another network, in address order: what is allocated inside a block. The networks are produced as you enumerate, so `GetSubnets(block).Any()` stops at the first |

@@ -190,6 +190,28 @@ internal readonly struct IPLookupReader<TPrefix, TAdapter, TValue, TForm>
     public int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6) ? Matches4(new Bits32(v4), destination) : Matches6(new Bits128(v6), destination);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(ReadOnlySpan<byte> address) =>
+        IPAddressBits.IsIPv4(address, _map, out var v4, out var v6) ? MatchList4(new Bits32(v4)) : MatchList6(new Bits128(v6));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public int GetMatches(ReadOnlySpan<byte> address, Span<PrefixEntry<TPrefix, TValue>> destination) =>
+        IPAddressBits.IsIPv4(address, _map, out var v4, out var v6) ? Matches4(new Bits32(v4), destination) : Matches6(new Bits128(v6), destination);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatchesIPv4(uint address) => MatchList4(new Bits32(address));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public int GetMatchesIPv4(uint address, Span<PrefixEntry<TPrefix, TValue>> destination) => Matches4(new Bits32(address), destination);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatchesIPv6(UInt128 address) =>
+        IPAddressBits.IsIPv4(address, _map, out var v4) ? MatchList4(new Bits32(v4)) : MatchList6(new Bits128(address));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public int GetMatchesIPv6(UInt128 address, Span<PrefixEntry<TPrefix, TValue>> destination) =>
+        IPAddressBits.IsIPv4(address, _map, out var v4) ? Matches4(new Bits32(v4), destination) : Matches6(new Bits128(address), destination);
+
     public int Count => _ipv4.Count + _ipv6.Count;
 
     public int IPv4Count => _ipv4.Count;

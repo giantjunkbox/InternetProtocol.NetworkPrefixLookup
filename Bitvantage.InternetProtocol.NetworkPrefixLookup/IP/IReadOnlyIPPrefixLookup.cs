@@ -172,6 +172,39 @@ public interface IReadOnlyIPPrefixLookup<TPrefix, TValue> : IReadOnlyCollection<
     /// <exception cref="ArgumentException">The destination is too small.</exception>
     int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination);
 
+    /// <summary>Every stored prefix that contains an address given as bytes, longest first.</summary>
+    /// <param name="address">4 bytes for IPv4 or 16 for IPv6, in network order.</param>
+    IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(ReadOnlySpan<byte> address);
+
+    /// <summary>Writes every stored prefix that contains an address given as bytes into a span, longest first.</summary>
+    /// <param name="address">4 bytes for IPv4 or 16 for IPv6, in network order.</param>
+    /// <param name="destination">Where to write the matches; 129 entries always suffice.</param>
+    /// <returns>The number of matches written.</returns>
+    /// <exception cref="ArgumentException">The destination is too small.</exception>
+    int GetMatches(ReadOnlySpan<byte> address, Span<PrefixEntry<TPrefix, TValue>> destination);
+
+    /// <summary>Every stored IPv4 prefix that contains an IPv4 address, longest first.</summary>
+    /// <param name="address">The address, with its first bit in the most significant bit: 10.1.2.3 is 0x0A010203.</param>
+    IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatchesIPv4(uint address);
+
+    /// <summary>Writes every stored IPv4 prefix that contains an IPv4 address into a span, longest first.</summary>
+    /// <param name="address">The address, with its first bit in the most significant bit: 10.1.2.3 is 0x0A010203.</param>
+    /// <param name="destination">Where to write the matches; 33 entries always suffice.</param>
+    /// <returns>The number of matches written.</returns>
+    /// <exception cref="ArgumentException">The destination is too small.</exception>
+    int GetMatchesIPv4(uint address, Span<PrefixEntry<TPrefix, TValue>> destination);
+
+    /// <summary>Every stored prefix that contains an IPv6 address, longest first.</summary>
+    /// <param name="address">The address, with its first bit in the most significant bit.</param>
+    IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatchesIPv6(UInt128 address);
+
+    /// <summary>Writes every stored prefix that contains an IPv6 address into a span, longest first.</summary>
+    /// <param name="address">The address, with its first bit in the most significant bit.</param>
+    /// <param name="destination">Where to write the matches; 129 entries always suffice.</param>
+    /// <returns>The number of matches written.</returns>
+    /// <exception cref="ArgumentException">The destination is too small.</exception>
+    int GetMatchesIPv6(UInt128 address, Span<PrefixEntry<TPrefix, TValue>> destination);
+
     /// <summary>
     ///     Every stored prefix that contains a network, the network itself included, longest first: which prefixes cover
     ///     it. The first is the one <see cref="TryGetMatch(TPrefix, out TPrefix, out TValue)" /> finds.

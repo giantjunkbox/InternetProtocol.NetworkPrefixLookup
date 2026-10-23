@@ -175,6 +175,24 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     public int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination) => _reader.GetMatches(address, destination);
 
     /// <inheritdoc />
+    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(ReadOnlySpan<byte> address) => _reader.GetMatches(address);
+
+    /// <inheritdoc />
+    public int GetMatches(ReadOnlySpan<byte> address, Span<PrefixEntry<TPrefix, TValue>> destination) => _reader.GetMatches(address, destination);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatchesIPv4(uint address) => _reader.GetMatchesIPv4(address);
+
+    /// <inheritdoc />
+    public int GetMatchesIPv4(uint address, Span<PrefixEntry<TPrefix, TValue>> destination) => _reader.GetMatchesIPv4(address, destination);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatchesIPv6(UInt128 address) => _reader.GetMatchesIPv6(address);
+
+    /// <inheritdoc />
+    public int GetMatchesIPv6(UInt128 address, Span<PrefixEntry<TPrefix, TValue>> destination) => _reader.GetMatchesIPv6(address, destination);
+
+    /// <inheritdoc />
     public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(TPrefix network) => _reader.GetMatches(network);
 
     /// <inheritdoc />
