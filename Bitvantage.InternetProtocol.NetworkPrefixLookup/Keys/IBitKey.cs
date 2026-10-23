@@ -68,4 +68,21 @@ public interface IBitKey<TSelf> where TSelf : struct, IBitKey<TSelf>
     /// <param name="key">The key.</param>
     /// <param name="count">The number of bits.</param>
     internal static virtual int GetTopBits(in TSelf key, int count) => TSelf.GetBits(key, 0, count);
+
+    /// <summary>
+    ///     Compares two keys in address order: as unsigned integers with bit 0 the most significant. Negative when
+    ///     <paramref name="a" /> comes first, zero when the keys are equal, positive when <paramref name="b" /> comes first.
+    /// </summary>
+    /// <param name="a">The first key.</param>
+    /// <param name="b">The second key.</param>
+    internal static virtual int Compare(in TSelf a, in TSelf b)
+    {
+        for (var offset = 0; offset < TSelf.Width; offset += 8)
+        {
+            var difference = TSelf.GetBits(a, offset, 8) - TSelf.GetBits(b, offset, 8);
+            if (difference != 0) return difference;
+        }
+
+        return 0;
+    }
 }

@@ -184,12 +184,24 @@ public static class TestKeys
 public sealed class ReferenceTrie<TKey> where TKey : struct, IBitKey<TKey>
 {
     private readonly Dictionary<(TKey Bits, int Length), int> _values = new();
+    private List<(TKey Bits, int Length, int Value)>? _inOrder; // built on demand, dropped by every change
+    private HashSet<(TKey Bits, int Length)>? _covering;        // likewise
 
     public int Count => _values.Count;
 
-    public bool Add(TKey bits, int length, int value) => _values.TryAdd((TKey.Truncate(bits, length), length), value);
+    public bool Add(TKey bits, int length, int value)
+    {
+        _inOrder = null;
+        _covering = null;
+        return _values.TryAdd((TKey.Truncate(bits, length), length), value);
+    }
 
-    public bool Remove(TKey bits, int length) => _values.Remove((TKey.Truncate(bits, length), length));
+    public bool Remove(TKey bits, int length)
+    {
+        _inOrder = null;
+        _covering = null;
+        return _values.Remove((TKey.Truncate(bits, length), length));
+    }
 
     public bool TryGetValue(TKey bits, int length, out int value) => _values.TryGetValue((TKey.Truncate(bits, length), length), out value);
 
@@ -203,10 +215,37 @@ public sealed class ReferenceTrie<TKey> where TKey : struct, IBitKey<TKey>
         return result;
     }
 
+    /// <summary>Every stored prefix inside the prefix (bits, length), in address order, as values: a filter over all of them.</summary>
+    public List<int> Subnets(TKey bits, int length)
+    {
+        var truncated = TKey.Truncate(bits, length);
+        var mask = TKey.MaskFor(length);
+        return InOrder().Where(p => p.Length >= length && TKey.MatchesUnderMask(p.Bits, truncated, mask)).Select(p => p.Value).ToList();
+    }
+
+    /// <summary>
+    ///     True when a stored prefix contains the prefix (bits, length) or lies inside it. Something lies inside it exactly
+    ///     when it is one of the prefixes that contain a stored prefix, which are collected once.
+    /// </summary>
+    public bool Overlaps(TKey bits, int length)
+    {
+        if (_covering == null)
+        {
+            _covering = new HashSet<(TKey, int)>();
+            foreach (var (stored, storedLength) in _values.Keys)
+                for (var l = 0; l <= storedLength; l++)
+                    _covering.Add((TKey.Truncate(stored, l), l));
+        }
+
+        return Matches(bits, length).Count > 0 || _covering.Contains((TKey.Truncate(bits, length), length));
+    }
+
     /// <summary>The stored prefixes in address order, a shorter prefix before a longer one at the same address.</summary>
     public List<(TKey Bits, int Length, int Value)> InOrder()
     {
-        var list = _values.Select(p => (p.Key.Bits, p.Key.Length, p.Value)).ToList();
+        if (_inOrder != null)
+            return _inOrder;
+        var list = _inOrder = _values.Select(p => (p.Key.Bits, p.Key.Length, p.Value)).ToList();
         list.Sort((a, b) =>
         {
             for (var offset = 0; offset < TKey.Width; offset += 8)

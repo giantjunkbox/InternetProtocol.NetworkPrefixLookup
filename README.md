@@ -54,6 +54,9 @@ foreach (var match in routes.GetMatches(IPAddress.Parse("10.1.2.3")))
 | `TryGetMatchIPv4(uint, …)`, `TryGetMatchIPv6(UInt128, …)`, `TryGetMatch(ReadOnlySpan<byte>, …)` | The same from an integer or bytes in network order, for callers such as packet parsers that never build an `IPAddress` |
 | `GetMatches(address)` | Every stored network that contains an address, most specific first; an overload fills a span instead |
 | `TryGetMatch(network, out prefix, out value)` | The most specific stored network that contains another network, which may be the network itself |
+| `GetMatches(network)` | Every stored network that contains another network, most specific first: which routes cover a subnet |
+| `GetSubnets(network)` | Every stored network inside another network, in address order: what is allocated inside a block. The networks are produced as you enumerate, so `GetSubnets(block).Any()` stops at the first |
+| `Overlaps(network)` | Whether any stored network contains another network or lies inside it, such as a new rule that collides with an existing one |
 | `TryGetValue(network, out value)`, `ContainsPrefix(network)` | Exactly this network, as a dictionary would |
 | `ContainsMatch(address)` | Whether any stored network contains an address |
 
@@ -74,8 +77,10 @@ var acl = new IPNetworkLookup<bool>(new IPLookupOptions { MapIPv4MappedAddresses
 Leave it off for addresses read from packets: there a mapped address is malformed or crafted, and treating it as IPv4
 would let it match IPv4 rules. MaxMind lookups turn mapping on by default, because MaxMind's own reader works that way.
 
-With mapping on, an IPv6 prefix inside `::ffff:0:0/96` could never match an address, so adding one throws
-`ArgumentException`; add the IPv4 prefix instead.
+With mapping on, the queries about networks follow the addresses: `::ffff:10.1.0.0/112` gets the answers of
+`10.1.0.0/16`, and a network that contains all of `::ffff:0:0/96`, such as `::/0`, contains every IPv4 network too. An
+IPv6 prefix inside `::ffff:0:0/96` could never match an address, so adding one throws `ArgumentException`; add the IPv4
+prefix instead.
 
 ## Tables that change
 

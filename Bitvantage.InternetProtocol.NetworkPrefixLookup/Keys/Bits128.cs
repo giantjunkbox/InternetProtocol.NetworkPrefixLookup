@@ -63,6 +63,9 @@ public readonly struct Bits128 : IBitKey<Bits128>, IEquatable<Bits128>
     static int IBitKey<Bits128>.GetTopBits(in Bits128 key, int count) => (int)(ulong)(key.Value >> (128 - count));
 
     /// <inheritdoc />
+    static int IBitKey<Bits128>.Compare(in Bits128 a, in Bits128 b) => a.Value.CompareTo(b.Value);
+
+    /// <inheritdoc />
     public bool Equals(Bits128 other) => Value == other.Value;
 
     /// <inheritdoc />

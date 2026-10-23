@@ -64,6 +64,9 @@ public readonly struct Bits32 : IBitKey<Bits32>, IEquatable<Bits32>
     static int IBitKey<Bits32>.GetTopBits(in Bits32 key, int count) => (int)(key.Value >> (32 - count));
 
     /// <inheritdoc />
+    static int IBitKey<Bits32>.Compare(in Bits32 a, in Bits32 b) => a.Value.CompareTo(b.Value);
+
+    /// <inheritdoc />
     public bool Equals(Bits32 other) => Value == other.Value;
 
     /// <inheritdoc />

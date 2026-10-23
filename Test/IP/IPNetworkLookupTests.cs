@@ -49,6 +49,8 @@ public class IPNetworkLookupTests
     private static string? Match(IReadOnlyIPPrefixLookup<IPNetwork, string> lookup, string address) =>
         lookup.TryGetMatch(IPAddress.Parse(address), out _, out var value) ? value : null;
 
+    private static string[] Values(IEnumerable<PrefixEntry<IPNetwork, string>> entries) => entries.Select(e => e.Value).ToArray();
+
     [Test(Description = "v2 Add_IPv4_01: nested and adjacent IPv4 prefixes")]
     public void Nested_IPv4_prefixes_give_the_longest_match()
     {
@@ -156,6 +158,92 @@ public class IPNetworkLookupTests
             Assert.That(form.TryGetValue(N("10.0.0.0/21"), out _), Is.False);
             Assert.That(form.ContainsPrefix(N("10.0.0.0/32")));
             Assert.That(form.ContainsPrefix(N("10.0.0.1/32")), Is.False);
+        }
+    }
+
+    [Test]
+    public void Network_queries_find_the_prefixes_around_and_inside_a_network()
+    {
+        var lookup = Lookup("10.0.0.0/8", "10.1.0.0/16", "10.1.2.0/24", "10.1.3.0/24", "192.168.0.0/16", "2001:db8::/32", "2001:db8:1::/48");
+        foreach (var form in Forms(lookup))
+        {
+            // the prefixes that contain a network, longest first
+            Assert.That(Values(form.GetMatches(N("10.1.2.0/24"))), Is.EqualTo(new[] { "10.1.2.0/24", "10.1.0.0/16", "10.0.0.0/8" }));
+            Assert.That(Values(form.GetMatches(N("10.1.5.0/24"))), Is.EqualTo(new[] { "10.1.0.0/16", "10.0.0.0/8" }));
+            Assert.That(form.GetMatches(N("10.0.0.0/7")), Is.Empty, "10.0.0.0/8 lies inside it, not around it");
+            Assert.That(Values(form.GetMatches(N("2001:db8:1:2::/64"))), Is.EqualTo(new[] { "2001:db8:1::/48", "2001:db8::/32" }));
+            var span = new PrefixEntry<IPNetwork, string>[129];
+            Assert.That(form.GetMatches(N("10.1.3.128/25"), span), Is.EqualTo(3));
+            Assert.That(span[0].Value, Is.EqualTo("10.1.3.0/24"));
+
+            // the prefixes inside a network, in address order
+            Assert.That(Values(form.GetSubnets(N("10.1.0.0/16"))), Is.EqualTo(new[] { "10.1.0.0/16", "10.1.2.0/24", "10.1.3.0/24" }));
+            Assert.That(Values(form.GetSubnets(N("10.1.2.0/23"))), Is.EqualTo(new[] { "10.1.2.0/24", "10.1.3.0/24" }), "the network itself need not be stored");
+            Assert.That(form.GetSubnets(N("10.1.5.0/24")), Is.Empty);
+            Assert.That(Values(form.GetSubnets(N("0.0.0.0/0"))), Is.EqualTo(new[] { "10.0.0.0/8", "10.1.0.0/16", "10.1.2.0/24", "10.1.3.0/24", "192.168.0.0/16" }));
+            Assert.That(Values(form.GetSubnets(N("2001:db8::/31"))), Is.EqualTo(new[] { "2001:db8::/32", "2001:db8:1::/48" }));
+            Assert.That(form.GetSubnets(N("10.0.0.0/8")).Any());
+
+            // whether anything lies either way
+            Assert.That(form.Overlaps(N("10.1.5.0/24")), "inside 10.1.0.0/16");
+            Assert.That(form.Overlaps(N("10.0.0.0/7")), "around 10.0.0.0/8");
+            Assert.That(form.Overlaps(N("10.1.2.0/24")), "stored itself");
+            Assert.That(form.Overlaps(N("172.16.0.0/12")), Is.False);
+            Assert.That(form.Overlaps(N("2001:db8:1:2::/64")));
+            Assert.That(form.Overlaps(N("2001:db9::/32")), Is.False);
+            Assert.That(form.Overlaps(N("0.0.0.0/0")) && form.Overlaps(N("::/0")));
+        }
+
+        Assert.That(new IPNetworkLookup<string>().Overlaps(N("::/0")), Is.False);
+    }
+
+    [Test]
+    public void Network_queries_follow_the_mapping()
+    {
+        // with mapping on, a network inside ::ffff:0:0/96 gets the answers of the IPv4 network it holds, as an address does
+        var map = new IPNetworkLookup<string>(new IPLookupOptions { MapIPv4MappedAddresses = true });
+        foreach (var text in new[] { "10.0.0.0/8", "10.1.0.0/16", "::/0", "2001:db8::/32" })
+            map.Add(N(text), text);
+        foreach (var form in Forms(map))
+        {
+            Assert.That(form.TryGetMatch(N("::ffff:10.1.2.3/128"), out _, out var value) && value == "10.1.0.0/16");
+            Assert.That(Match(form, "::ffff:10.1.2.3"), Is.EqualTo("10.1.0.0/16"), "the address agrees");
+            Assert.That(Values(form.GetMatches(N("::ffff:10.1.0.0/112"))), Is.EqualTo(new[] { "10.1.0.0/16", "10.0.0.0/8" }));
+            Assert.That(Values(form.GetSubnets(N("::ffff:10.0.0.0/104"))), Is.EqualTo(new[] { "10.0.0.0/8", "10.1.0.0/16" }));
+            Assert.That(Values(form.GetSubnets(N("::ffff:0:0/96"))), Is.EqualTo(new[] { "10.0.0.0/8", "10.1.0.0/16" }), "all of IPv4");
+            Assert.That(form.Overlaps(N("::ffff:10.1.0.0/112")));
+
+            // ::/0 contains 192.168.0.0's mapped form, but answers none of its addresses
+            Assert.That(form.Overlaps(N("::ffff:192.168.0.0/112")), Is.False);
+            Assert.That(form.TryGetMatch(N("::ffff:192.168.0.0/112"), out _, out _), Is.False);
+            Assert.That(form.GetMatches(N("::ffff:192.168.0.0/112")), Is.Empty);
+
+            // a network that contains the whole mapped range contains every IPv4 prefix too, listed first
+            Assert.That(Values(form.GetSubnets(N("::/0"))), Is.EqualTo(new[] { "10.0.0.0/8", "10.1.0.0/16", "::/0", "2001:db8::/32" }));
+            Assert.That(Values(form.GetSubnets(N("::/80"))), Is.EqualTo(new[] { "10.0.0.0/8", "10.1.0.0/16" }));
+            Assert.That(form.GetSubnets(N("::/81")), Is.Empty, "::/81 and ::ffff:0:0/96 are disjoint");
+            Assert.That(Values(form.GetMatches(N("::/80"))), Is.EqualTo(new[] { "::/0" }), "no IPv4 prefix contains it");
+
+            // exact lookups take a prefix as given
+            Assert.That(form.ContainsPrefix(N("::ffff:10.0.0.0/104")) || form.TryGetValue(N("::ffff:10.0.0.0/104"), out _), Is.False);
+        }
+
+        var ipv4Only = new IPNetworkLookup<string>(new IPLookupOptions { MapIPv4MappedAddresses = true });
+        ipv4Only.Add(N("10.0.0.0/8"), "10.0.0.0/8");
+        foreach (var form in new IReadOnlyIPPrefixLookup<IPNetwork, string>[] { ipv4Only, ipv4Only.Freeze() })
+        {
+            Assert.That(form.Overlaps(N("::/64")), "the IPv4 prefixes count");
+            Assert.That(form.Overlaps(N("2001:db8::/32")), Is.False);
+        }
+
+        // with mapping off, every network is taken as given
+        var plain = Lookup("10.0.0.0/8", "::/0");
+        foreach (var form in Forms(plain))
+        {
+            Assert.That(form.TryGetMatch(N("::ffff:10.1.2.3/128"), out _, out var value) && value == "::/0");
+            Assert.That(Values(form.GetSubnets(N("::/0"))), Is.EqualTo(new[] { "::/0" }));
+            Assert.That(form.GetSubnets(N("::ffff:10.0.0.0/104")), Is.Empty);
+            Assert.That(form.Overlaps(N("::ffff:10.0.0.0/104")), "inside ::/0");
         }
     }
 

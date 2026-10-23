@@ -82,8 +82,17 @@ internal struct BitSet256
         return (w << 6) + BitOperations.TrailingZeroCount(word);
     }
 
+    /// <summary>True when a bit is set in both sets.</summary>
+    public readonly bool Intersects(in BitSet256 other) => ((W0 & other.W0) | (W1 & other.W1) | (W2 & other.W2) | (W3 & other.W3)) != 0;
+
     /// <summary>The bits set in either set.</summary>
     public static BitSet256 Or(in BitSet256 a, in BitSet256 b) => new() { W0 = a.W0 | b.W0, W1 = a.W1 | b.W1, W2 = a.W2 | b.W2, W3 = a.W3 | b.W3 };
+
+    /// <summary>The bits set in both sets.</summary>
+    public static BitSet256 And(in BitSet256 a, in BitSet256 b) => new() { W0 = a.W0 & b.W0, W1 = a.W1 & b.W1, W2 = a.W2 & b.W2, W3 = a.W3 & b.W3 };
+
+    /// <summary>A set with all 256 bits set.</summary>
+    public static readonly BitSet256 All = new() { W0 = ulong.MaxValue, W1 = ulong.MaxValue, W2 = ulong.MaxValue, W3 = ulong.MaxValue };
 
     // RankMasks[bit * 4 + w]: the bits of word w at or below bit
     private static readonly ulong[] RankMasks = BuildRankMasks();
@@ -116,6 +125,18 @@ internal static class ArtTables
     /// <summary>Ancestors[i] holds index i and every index above it: i, i/2, i/4, ..., 1.</summary>
     public static readonly BitSet256[] Ancestors = BuildAncestors();
 
+    /// <summary>
+    ///     Descendants[i] holds index i and every index below it: the prefixes inside the stride that lie inside prefix i.
+    ///     For the queries about the prefixes inside a prefix.
+    /// </summary>
+    public static readonly BitSet256[] Descendants = BuildDescendants();
+
+    /// <summary>
+    ///     Octets[i] holds the octets that base index i covers, at which the fringes, leaves and child nodes that lie inside
+    ///     prefix i are stored. For the queries about the prefixes inside a prefix.
+    /// </summary>
+    public static readonly BitSet256[] Octets = BuildOctets();
+
     /// <summary>StartOctet[i] is the first octet that base index i covers.</summary>
     public static readonly byte[] StartOctet = BuildStartOctets();
 
@@ -139,6 +160,31 @@ internal static class ArtTables
         }
 
         return table;
+    }
+
+    private static BitSet256[] BuildDescendants()
+    {
+        // each index is a descendant of every index in its own Ancestors set
+        var table = new BitSet256[256];
+        for (var i = 1; i < 256; i++)
+            for (var j = i; j > 0; j >>= 1)
+                table[j].Set(i);
+        return table;
+    }
+
+    private static BitSet256[] BuildOctets()
+    {
+        var table = new BitSet256[256];
+        for (var i = 1; i < 256; i++)
+        {
+            var start = StartOctet(i);
+            for (var octet = start; octet < start + (256 >> IndexToLength(i)); octet++)
+                table[i].Set(octet);
+        }
+
+        return table;
+
+        static int StartOctet(int index) => (index - (1 << IndexToLength(index))) << (8 - IndexToLength(index));
     }
 
     private static BitSet256[] BuildAncestors()

@@ -48,6 +48,10 @@ Decisions made by the user:
   leaf-pushed child tables would hold more than 256 entries per prefix and more than 16 MB in all.
 - With `MapIPv4MappedAddresses` on, adding an IPv6 prefix inside `::ffff:0:0/96` throws, because no address lookup
   could find it.
+- The queries about networks are `TryGetMatch`, `GetMatches`, `GetSubnets` and `Overlaps`, with no overlap test between
+  two whole tables. With mapping on they follow the address lookups: a network inside `::ffff:0:0/96` is answered as
+  the IPv4 network it holds, and a network containing that whole range also contains every IPv4 prefix. Writes and
+  the exact lookups take a prefix as given.
 
 The public interface is described in `Documentation/Interface.md`, whose last sections record where the shipped
 interface differs from the original proposal. `Documentation/Adapter-Survey.md` explains which libraries get adapter packages.
@@ -119,7 +123,7 @@ ROUTEVIEWS_DIR=/tmp/routeviews dotnet run -c Release --project PerformanceTest
 ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 3 minutes
 ```
 
-**Test baseline:** all 56 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
+**Test baseline:** all 59 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
 text with `Environment.NewLine`, so it passes with either line ending. Keep `.gitattributes` at `text=auto`.
 
 The whole solution builds with no warnings. Do not add any.

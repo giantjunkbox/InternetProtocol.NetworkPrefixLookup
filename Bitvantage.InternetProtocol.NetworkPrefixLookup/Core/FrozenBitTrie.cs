@@ -82,8 +82,9 @@ public sealed record FrozenBitTrieOptions
 /// <remarks>
 ///     <para>
 ///         Lookups read only the tables and an array of entries in address order; there are no trie nodes. Each entry
-///         also records its length and the nearest shorter stored prefix that contains it, which answers the queries
-///         about prefixes and <see cref="GetMatches(in TKey)" />.
+///         also records its bits, its length and the nearest shorter stored prefix that contains it, which answer the
+///         queries about prefixes: the matches follow the nearest shorter prefixes, and the prefixes inside a prefix, being
+///         in address order, are one run of entries that a binary search finds.
 ///     </para>
 ///     <para>A frozen trie never changes, so any number of threads may read it.</para>
 /// </remarks>
@@ -158,6 +159,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
 
     private readonly Entry[] _entries;
     private readonly TValue[]? _values;
+    private readonly TKey[] _keys; // the bits of each entry, for GetSubnets and Overlaps
     private readonly byte[] _lengths;
     private readonly int[] _parents; // the nearest shorter stored prefix containing each entry, or -1
 
@@ -183,7 +185,7 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
         _tableBits = options.TableBits;
         Options = options;
 
-        var bits = contents.Bits;
+        var bits = _keys = contents.Bits;
         _entries = contents.Entries;
         _lengths = contents.Lengths;
         _parents = contents.Parents;
@@ -278,7 +280,8 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
     public long Bytes =>
         ArrayBytes(_root.Length, sizeof(uint)) + ArrayBytes(_tables.Length, sizeof(uint)) + ArrayBytes(_nodes.Length, Unsafe.SizeOf<CompressedNode>())
         + ArrayBytes(_answers.Length, sizeof(int)) + ArrayBytes(_entries.Length, Unsafe.SizeOf<Entry>())
-        + ArrayBytes(_values?.Length ?? 0, Unsafe.SizeOf<TValue>()) + ArrayBytes(_lengths.Length, sizeof(byte)) + ArrayBytes(_parents.Length, sizeof(int));
+        + ArrayBytes(_values?.Length ?? 0, Unsafe.SizeOf<TValue>()) + ArrayBytes(_keys.Length, Unsafe.SizeOf<TKey>())
+        + ArrayBytes(_lengths.Length, sizeof(byte)) + ArrayBytes(_parents.Length, sizeof(int));
 
     private static long ArrayBytes(int length, int elementSize) => length == 0 ? 0 : 24 + (long)length * elementSize;
 
@@ -437,19 +440,38 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(in TKey key)
+    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(in TKey key) => MatchList(Find(in key));
+
+    /// <inheritdoc />
+    public int GetMatches(in TKey key, Span<PrefixEntry<TPrefix, TValue>> destination) => WriteMatches(Find(in key), destination);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(in TKey bits, int length)
+    {
+        CheckLength(length);
+        return MatchList(FindForPrefix(in bits, length));
+    }
+
+    /// <inheritdoc />
+    public int GetMatches(in TKey bits, int length, Span<PrefixEntry<TPrefix, TValue>> destination)
+    {
+        CheckLength(length);
+        return WriteMatches(FindForPrefix(in bits, length), destination);
+    }
+
+    // the entry i and the stored prefixes that contain it, longest first
+    private List<PrefixEntry<TPrefix, TValue>> MatchList(int i)
     {
         var results = new List<PrefixEntry<TPrefix, TValue>>();
-        for (var i = Find(in key); i >= 0; i = _parents[i])
+        for (; i >= 0; i = _parents[i])
             results.Add(new PrefixEntry<TPrefix, TValue>(_entries[i].Prefix, _entries[i].Value));
         return results;
     }
 
-    /// <inheritdoc />
-    public int GetMatches(in TKey key, Span<PrefixEntry<TPrefix, TValue>> destination)
+    private int WriteMatches(int i, Span<PrefixEntry<TPrefix, TValue>> destination)
     {
         var count = 0;
-        for (var i = Find(in key); i >= 0; i = _parents[i])
+        for (; i >= 0; i = _parents[i])
         {
             if (count == destination.Length)
                 throw new ArgumentException("The destination is too small for the matches.", nameof(destination));
@@ -458,6 +480,57 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
 
         return count;
     }
+
+    /// <inheritdoc />
+    public bool Overlaps(in TKey bits, int length)
+    {
+        CheckLength(length);
+        var first = TKey.Truncate(bits, length);
+
+        // A stored prefix that contains the prefix's first address either contains the prefix or lies inside it. Failing
+        // that, a prefix inside it starts at a later address, and is the first entry at or after it.
+        if (Find(in first) >= 0)
+            return true;
+        var i = LowerBound(in first, length);
+        return i < _keys.Length && IsInside(i, in first, TKey.MaskFor(length), length);
+    }
+
+    /// <inheritdoc />
+    public IEnumerable<PrefixEntry<TPrefix, TValue>> GetSubnets(in TKey bits, int length)
+    {
+        CheckLength(length); // here rather than in the iterator, so that a bad length throws at the call
+        return Subnets(TKey.Truncate(bits, length), length);
+    }
+
+    private IEnumerable<PrefixEntry<TPrefix, TValue>> Subnets(TKey bits, int length)
+    {
+        var mask = TKey.MaskFor(length);
+        for (var i = LowerBound(in bits, length); i < _keys.Length && IsInside(i, in bits, in mask, length); i++)
+            yield return new PrefixEntry<TPrefix, TValue>(_entries[i].Prefix, _entries[i].Value);
+    }
+
+    // The first entry at or after the prefix (bits, length) in address order, where bits are truncated to length; the
+    // entries inside the prefix are the run that starts there. The prefixes that contain it and start at the same
+    // address are shorter, so they come before.
+    private int LowerBound(in TKey bits, int length)
+    {
+        var lo = 0;
+        var hi = _keys.Length;
+        while (lo < hi)
+        {
+            var mid = (int)((uint)(lo + hi) >> 1);
+            var order = TKey.Compare(in _keys[mid], in bits);
+            if (order < 0 || (order == 0 && _lengths[mid] < length))
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+
+        return lo;
+    }
+
+    // true when entry i lies inside the prefix (bits, length), whose mask is mask
+    private bool IsInside(int i, in TKey bits, in TKey mask, int length) => _lengths[i] >= length && TKey.MatchesUnderMask(in _keys[i], in bits, in mask);
 
     /// <summary>Returns the stored prefixes in address order, a shorter prefix before a longer one at the same address.</summary>
     public IEnumerator<PrefixEntry<TPrefix, TValue>> GetEnumerator()

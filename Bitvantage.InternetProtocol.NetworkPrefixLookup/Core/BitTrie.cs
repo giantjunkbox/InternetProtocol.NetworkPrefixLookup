@@ -555,7 +555,26 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(in TKey key)
+    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(in TKey key) => MatchList(in key, TKey.Width);
+
+    /// <inheritdoc />
+    public int GetMatches(in TKey key, Span<PrefixEntry<TPrefix, TValue>> destination) => WriteMatches(in key, TKey.Width, destination);
+
+    /// <inheritdoc />
+    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(in TKey bits, int length)
+    {
+        CheckLength(length);
+        return MatchList(in bits, length);
+    }
+
+    /// <inheritdoc />
+    public int GetMatches(in TKey bits, int length, Span<PrefixEntry<TPrefix, TValue>> destination)
+    {
+        CheckLength(length);
+        return WriteMatches(in bits, length, destination);
+    }
+
+    private List<PrefixEntry<TPrefix, TValue>> MatchList(in TKey bits, int length)
     {
         // The matches go straight into the list's own array. Most keys have a few, so it starts with room for four, the
         // array a list allocates on its first Add; a key with more is walked again with room for all of them.
@@ -563,7 +582,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         while (true)
         {
             CollectionsMarshal.SetCount(results, results.Capacity);
-            var count = CollectMatches(in key, CollectionsMarshal.AsSpan(results));
+            var count = CollectMatches(in bits, length, CollectionsMarshal.AsSpan(results));
             if (count <= results.Count)
             {
                 CollectionsMarshal.SetCount(results, count);
@@ -574,29 +593,29 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         }
     }
 
-    /// <inheritdoc />
-    public int GetMatches(in TKey key, Span<PrefixEntry<TPrefix, TValue>> destination)
+    private int WriteMatches(in TKey bits, int length, Span<PrefixEntry<TPrefix, TValue>> destination)
     {
-        var count = CollectMatches(in key, destination);
+        var count = CollectMatches(in bits, length, destination);
         if (count > destination.Length)
             throw new ArgumentException("The destination is too small for the matches.", nameof(destination));
         return count;
     }
 
-    // Every prefix that contains key, longest first, from a walk that no two writes overlapped: writes those that fit
-    // into destination and returns how many there are.
-    private int CollectMatches(in TKey key, Span<PrefixEntry<TPrefix, TValue>> destination)
+    // Every prefix that contains the prefix (bits, length), longest first, from a walk that no two writes overlapped:
+    // writes those that fit into destination and returns how many there are. A full-width key is a prefix of length
+    // TKey.Width.
+    private int CollectMatches(in TKey bits, int length, Span<PrefixEntry<TPrefix, TValue>> destination)
     {
         while (true)
         {
             var before = Volatile.Read(ref _changes);
-            var count = CollectMatchesOnce(in key, destination);
+            var count = CollectMatchesOnce(in bits, length, destination);
             if (Settled(before)) return count;
         }
     }
 
     // counts every match, and stores those that fit
-    private int CollectMatchesOnce(in TKey key, Span<PrefixEntry<TPrefix, TValue>> destination)
+    private int CollectMatchesOnce(in TKey bits, int length, Span<PrefixEntry<TPrefix, TValue>> destination)
     {
         var count = 0;
 
@@ -607,13 +626,17 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             count++;
         }
 
+        // down to the node in whose stride the prefix ends; for a full-width key, as far as the key leads
         var path = new NodeStack();
         var n = Root;
         var depth = 0;
         while (true)
         {
             path[depth] = n;
-            var octet = TKey.GetBits(key, depth << 3, 8);
+            if (length - (depth << 3) <= 8)
+                break;
+
+            var octet = TKey.GetBits(bits, depth << 3, 8);
             if (n.Kids.Test(octet))
             {
                 n = n.KidNodes[n.Kids.Rank(octet) - 1];
@@ -624,7 +647,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             if (n.Leaves.Test(octet))
             {
                 ref var leaf = ref n.LeafEntries[n.Leaves.Rank(octet) - 1];
-                if (TKey.MatchesUnderMask(key, leaf.Bits, leaf.Mask))
+                if (leaf.Length <= length && TKey.MatchesUnderMask(bits, leaf.Bits, leaf.Mask))
                     Emit(in leaf.Entry, destination, ref count);
             }
 
@@ -634,17 +657,115 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         for (; depth >= 0; depth--)
         {
             n = path[depth];
-            var octet = TKey.GetBits(key, depth << 3, 8);
-            if (n.Fringes.Test(octet))
+            var octet = TKey.GetBits(bits, depth << 3, 8);
+            var relative = length - (depth << 3);
+            if (relative >= 8 && n.Fringes.Test(octet))
                 Emit(in n.FringeEntries[n.Fringes.Rank(octet) - 1], destination, ref count);
 
-            // the prefixes inside the stride on the octet's path, from the longest: index, index / 2, ..., 1
-            for (var index = ArtTables.OctetToIndex(octet); index > 0; index >>= 1)
+            // the prefixes inside the stride on the prefix's path, from the longest: index, index / 2, ..., 1
+            for (var index = relative >= 8 ? ArtTables.OctetToIndex(octet) : ArtTables.PrefixToIndex(octet, relative); index > 0; index >>= 1)
                 if (n.Prefixes.Test(index))
                     Emit(in n.PrefixEntries[n.Prefixes.Rank(index) - 1], destination, ref count);
         }
 
         return count;
+    }
+
+    /// <inheritdoc />
+    public bool Overlaps(in TKey bits, int length)
+    {
+        CheckLength(length);
+        while (true)
+        {
+            var before = Volatile.Read(ref _changes);
+            var overlaps = OverlapsOnce(in bits, length);
+            if (Settled(before)) return overlaps;
+        }
+    }
+
+    // Two prefixes overlap exactly when one contains the other. On the way down to the node in whose stride the prefix
+    // ends, a prefix or fringe on its path contains it, and a leaf decides alone. In that node, a prefix on its branch of
+    // the stride contains it or lies inside it, and so does anything stored at the octets it covers.
+    private bool OverlapsOnce(in TKey bits, int length)
+    {
+        var n = Root;
+        for (var depth = 0; ; depth++)
+        {
+            var octet = TKey.GetBits(bits, depth << 3, 8);
+            var relative = length - (depth << 3);
+            if (relative < 8)
+            {
+                var index = ArtTables.PrefixToIndex(octet, relative);
+                ref var octets = ref ArtTables.Octets[index];
+                return n.Prefixes.Intersects(in ArtTables.Ancestors[index]) || n.Prefixes.Intersects(in ArtTables.Descendants[index])
+                    || n.Fringes.Intersects(in octets) || n.Leaves.Intersects(in octets) || n.Kids.Intersects(in octets);
+            }
+
+            if (n.Prefixes.Intersects(in ArtTables.Ancestors[ArtTables.OctetToIndex(octet)]) || n.Fringes.Test(octet))
+                return true;
+            if (relative == 8)
+                return n.Kids.Test(octet) || n.Leaves.Test(octet); // what lies below the octet lies inside the prefix
+
+            if (n.Kids.Test(octet))
+            {
+                n = n.KidNodes[n.Kids.Rank(octet) - 1];
+                continue;
+            }
+
+            if (!n.Leaves.Test(octet))
+                return false;
+
+            // the leaf and the prefix overlap when they agree on the shorter one's bits
+            ref var leaf = ref n.LeafEntries[n.Leaves.Rank(octet) - 1];
+            var shorter = Math.Min(leaf.Length, length);
+            return TKey.MatchesUnderMask(bits, TKey.Truncate(leaf.Bits, shorter), TKey.MaskFor(shorter));
+        }
+    }
+
+    /// <inheritdoc />
+    public IEnumerable<PrefixEntry<TPrefix, TValue>> GetSubnets(in TKey bits, int length)
+    {
+        CheckLength(length); // here rather than in the iterator, so that a bad length throws at the call
+        return Subnets(TKey.Truncate(bits, length), length);
+    }
+
+    // Walks down to the node in whose stride the prefix ends, then enumerates the part of that node the prefix covers:
+    // the prefixes on its branch of the stride, and everything at the octets it covers. A leaf on the way is the only
+    // prefix inside, if it lies inside at all.
+    private IEnumerable<PrefixEntry<TPrefix, TValue>> Subnets(TKey bits, int length)
+    {
+        var n = Root;
+        for (var depth = 0; ; depth++)
+        {
+            var octet = TKey.GetBits(bits, depth << 3, 8);
+            var relative = length - (depth << 3);
+            if (relative <= 8)
+            {
+                // a prefix that ends at the end of the stride covers its one octet, and no prefix inside the stride
+                var index = relative < 8 ? ArtTables.PrefixToIndex(octet, relative) : 0;
+                var prefixes = relative < 8 ? ArtTables.Descendants[index] : default;
+                var octets = relative < 8 ? ArtTables.Octets[index] : default;
+                if (relative == 8) octets.Set(octet);
+                foreach (var item in Items(n, depth, TKey.Truncate(bits, depth << 3), prefixes, octets))
+                    yield return new PrefixEntry<TPrefix, TValue>(item.Entry.Prefix, item.Entry.Value);
+                yield break;
+            }
+
+            if (n.Kids.Test(octet))
+            {
+                n = n.KidNodes[n.Kids.Rank(octet) - 1];
+                continue;
+            }
+
+            if (n.Leaves.Test(octet))
+            {
+                var leaf = n.LeafEntries[n.Leaves.Rank(octet) - 1];
+                if (leaf.Length >= length && TKey.MatchesUnderMask(leaf.Bits, bits, TKey.MaskFor(length)))
+                    yield return new PrefixEntry<TPrefix, TValue>(leaf.Entry.Prefix, leaf.Entry.Value);
+            }
+
+            yield break;
+        }
     }
 
     /// <summary>Returns the stored prefixes in address order, a shorter prefix before a longer one at the same address.</summary>
@@ -663,19 +784,27 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             yield return (item.Bits, item.Length, item.Entry.Prefix, item.Entry.Value);
     }
 
-    private static IEnumerable<(TKey Bits, int Length, Entry Entry)> Items(Node root)
+    private static IEnumerable<(TKey Bits, int Length, Entry Entry)> Items(Node root) => Items(root, 0, default, BitSet256.All, BitSet256.All);
+
+    // The prefixes below the node top, which lies at depth topDepth and starts with the bits topStart. In the top node,
+    // only the prefixes whose base indexes are in topPrefixes and the fringes, leaves and child nodes at the octets in
+    // topOctets count, so that GetSubnets can enumerate part of a node; everything below a child node that counts does.
+    private static IEnumerable<(TKey Bits, int Length, Entry Entry)> Items(Node top, int topDepth, TKey topStart, BitSet256 topPrefixes, BitSet256 topOctets)
     {
         // Depth-first, with the prefixes of each octet before what lies below it. Only the octets at which something
         // starts are visited: the start octets of the node's prefixes, and its fringes, leaves and kids. Testing all 256
         // octets and 8 lengths in every node made enumeration 2 to 6 times slower on the real tables, and Freeze reads
         // the trie through this walk.
         var stack = new Stack<(Node Node, int Depth, TKey Start, int Octet)>();
-        stack.Push((root, 0, default, 0));
+        stack.Push((top, topDepth, topStart, 0));
         while (stack.TryPop(out var frame))
         {
             var (n, depth, start, octet) = frame;
             var offset = depth << 3;
-            var occupied = BitSet256.Or(ArtTables.StartOctets(in n.Prefixes), BitSet256.Or(n.Fringes, BitSet256.Or(n.Leaves, n.Kids)));
+            var isTop = depth == topDepth; // only the top node lies at its depth
+            var prefixes = isTop ? BitSet256.And(n.Prefixes, topPrefixes) : n.Prefixes;
+            var occupied = BitSet256.Or(ArtTables.StartOctets(in prefixes), BitSet256.Or(n.Fringes, BitSet256.Or(n.Leaves, n.Kids)));
+            if (isTop) occupied = BitSet256.And(occupied, topOctets);
             for (octet = occupied.NextSet(octet); octet < 256; octet = occupied.NextSet(octet + 1))
             {
                 // prefixes inside the stride that start at this octet, shortest first
@@ -683,7 +812,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
                 {
                     if ((octet & ((1 << (8 - relative)) - 1)) != 0) continue;
                     var index = ArtTables.PrefixToIndex(octet, relative);
-                    if (!n.Prefixes.Test(index)) continue;
+                    if (!prefixes.Test(index)) continue;
                     var bits = relative == 0 ? start : TKey.SetBits(start, offset, relative, octet >> (8 - relative));
                     yield return (bits, offset + relative, n.PrefixEntries[n.Prefixes.Rank(index) - 1]);
                 }
@@ -707,6 +836,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             }
         }
     }
+
 
     // ---- writes ----------------------------------------------------------------------------------------------------
 

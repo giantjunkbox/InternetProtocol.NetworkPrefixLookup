@@ -95,13 +95,23 @@ public interface IReadOnlyBitTrie<TKey, TPrefix, TValue> : IReadOnlyCollection<P
     // every stored prefix that contains the key, longest first
     IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(in TKey key);
     int GetMatches(in TKey key, Span<PrefixEntry<TPrefix, TValue>> destination); // TKey.Width + 1 entries always suffice
+
+    // the stored prefixes around and inside the prefix (bits, length), each including the prefix itself
+    IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(in TKey bits, int length);     // containing it, longest first
+    int GetMatches(in TKey bits, int length, Span<PrefixEntry<TPrefix, TValue>> destination);
+    IEnumerable<PrefixEntry<TPrefix, TValue>> GetSubnets(in TKey bits, int length);       // inside it, in address order
+    bool Overlaps(in TKey bits, int length);                                              // whether either is non-empty
 }
 ```
 
 - **`out` parameters.** All measured result shapes tied, and this one keeps the node layout private. Every `Try…`
   method's `out` parameters carry `[MaybeNullWhen(false)]`, as `Dictionary.TryGetValue`'s do.
-- **Naming.** Everything named `Match` finds the longest containing prefix; `TryGetValue` and `ContainsPrefix` match
-  exactly.
+- **Naming.** Everything named `Match` finds the longest containing prefix, and `GetMatches` every containing prefix;
+  `GetSubnets` finds the prefixes inside; `TryGetValue` and `ContainsPrefix` match exactly.
+- **Around, inside, either.** Two prefixes either nest or share no address, so `GetMatches` and `GetSubnets` between them
+  find every stored prefix that shares an address with the given one, and `Overlaps` tells whether there is any, faster
+  than either and without allocating. `GetSubnets` produces its prefixes as the result is enumerated, so
+  `GetSubnets(bits, length).Any()` stops at the first; its length is checked at the call.
 - **`TryGetMatchValue`** skips the prefix object. A frozen trie answers it from a dense array of values, which is faster.
 - **Lengths** outside 0 to `TKey.Width` throw `ArgumentOutOfRangeException`. Bits after a prefix's length are ignored.
 - **Enumeration** returns entries in address order, a shorter prefix before a longer one at the same address.
@@ -195,17 +205,18 @@ public enum FrozenLayout { LeafPushed, Compressed }
   entries per prefix and more than 16 MB in all. Measured on eleven tables, compressed was both smaller and faster
   there, and the real routing tables, at 7 (IPv4) and 55 (IPv6) entries per prefix, stay leaf-pushed;
   [Architecture.md](Architecture.md#the-frozen-trie) has the table.
-- **No nodes.** A frozen trie keeps only its tables and entries. Each entry records its length and the nearest shorter
-  stored prefix that contains it, which answers `GetMatches`, `TryGetMatch` for a prefix and `TryGetValue` without the
-  nodes.
+- **No nodes.** A frozen trie keeps only its tables and entries. Each entry records its bits, its length and the nearest
+  shorter stored prefix that contains it, which answer the queries about prefixes without the nodes: `GetMatches` and
+  `TryGetMatch` follow the nearest shorter prefixes, and `GetSubnets` and `Overlaps` binary-search the entries, which
+  are in address order. The bits cost 4 bytes per IPv4 prefix and 16 per IPv6 prefix.
 - **`ValueOnlyLookups`** costs one value per prefix. Turn it off for large value types if `TryGetMatchValue` is not used.
 
 ### What readers see
 
 - **Read-write trie.** Any number of threads may read while one writes, and reads take no locks. Each lookup sees the
   table as it was at one moment: before or after any single change, never part of one. A lookup that overlaps two
-  writes looks again. Enumeration during writes is safe and sees each entry whole, but is not a snapshot of the whole
-  table.
+  writes looks again; so do `GetMatches` and `Overlaps`. Enumeration and `GetSubnets` during writes are safe and see
+  each entry whole, but are not a snapshot of the whole table.
 - **Frozen trie.** Immutable; any number of threads may read it.
 
 ## IP layer
@@ -245,13 +256,19 @@ public interface IReadOnlyIPPrefixLookup<TPrefix, TValue> : IReadOnlyCollection<
     bool TryGetMatchValue(IPAddress address, out TValue value);                          // and for spans, uint and UInt128
     bool ContainsMatch(IPAddress address);                                               // and for spans, uint and UInt128
 
-    // prefixes
-    bool TryGetMatch(TPrefix network, out TPrefix prefix, out TValue value);             // the longest stored prefix containing it
-    bool TryGetValue(TPrefix prefix, out TValue value);                                  // exactly this prefix
-    bool ContainsPrefix(TPrefix prefix);
-
     IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(IPAddress address);           // longest first
     int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination);   // 129 entries always suffice
+
+    // networks: the stored prefixes around and inside one, each including the network itself
+    bool TryGetMatch(TPrefix network, out TPrefix prefix, out TValue value);             // the longest stored prefix containing it
+    IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(TPrefix network);             // every one containing it, longest first
+    int GetMatches(TPrefix network, Span<PrefixEntry<TPrefix, TValue>> destination);
+    IEnumerable<PrefixEntry<TPrefix, TValue>> GetSubnets(TPrefix network);               // every one inside it, in address order
+    bool Overlaps(TPrefix network);                                                      // whether any shares an address with it
+
+    // exactly this prefix
+    bool TryGetValue(TPrefix prefix, out TValue value);
+    bool ContainsPrefix(TPrefix prefix);
 }
 
 public sealed record IPLookupOptions
@@ -266,9 +283,14 @@ public sealed record IPLookupOptions
 - **IPv4-mapped addresses** such as `::ffff:10.1.2.3` are looked up as given by default, which suits routing tables and
   packet classification, where a mapped address on the wire is malformed or crafted (RFC 4942, section 2.2). With
   `MapIPv4MappedAddresses` on, as for addresses from dual-mode sockets, an address lookup treats a mapped address as the
-  IPv4 address it holds, strictly: it gets exactly the answer the IPv4 address gets. Prefixes are stored and looked up
-  as given, so with mapping on, adding a prefix inside `::ffff:0:0/96` throws `ArgumentException`: no address lookup
-  could ever return it.
+  IPv4 address it holds, strictly: it gets exactly the answer the IPv4 address gets. The queries about networks follow
+  the address lookups: an IPv6 network inside `::ffff:0:0/96` gets the answers of the IPv4 network it holds, so
+  `::ffff:10.1.0.0/112` gets those of `10.1.0.0/16`, and a network that contains all of `::ffff:0:0/96`, such as `::/0`,
+  contains every IPv4 prefix too: `GetSubnets` lists them first, as enumeration does, and `Overlaps` counts them. Writes
+  and the exact lookups take a prefix as given, so with mapping on, adding a prefix inside `::ffff:0:0/96` throws
+  `ArgumentException`: no address lookup could ever return it.
+- **Overlap is not allocation.** A stored default route overlaps every network of its family, and a pool overlaps the
+  networks taken from it. To find whether anything is allocated inside a network, ask `GetSubnets(network).Any()`.
 
 ### Read-write and frozen lookups
 
@@ -412,6 +434,16 @@ vrfs[7] = new IPNetworkLookup<int>(LoadRoutes(vrf: 7));
 vrfs[7].TryGetMatchValue(destination, out var nextHop);
 ```
 
+What lies inside a block, and whether a new rule collides with an existing one:
+
+```csharp
+foreach (var (network, owner) in allocations.GetSubnets(IPNetwork.Parse("10.1.0.0/16")))
+    Console.WriteLine($"{network} {owner}");
+
+bool free = !allocations.GetSubnets(candidate).Any();   // nothing allocated inside it
+bool conflict = rules.Overlaps(newRule);                // some rule contains it or lies inside it
+```
+
 ## How the interface got here
 
 The interface was first proposed for review, before the read-write core was chosen. Where the shipped interface
@@ -426,7 +458,8 @@ differs from that proposal:
 | Frozen root | 16 or 18 bits always | Sized to the number of prefixes unless `RootBits` is given, so small and empty tables stay small |
 | Frozen layout | Leaf-pushed unless the caller chose otherwise | Chosen from the data unless the caller chooses, because leaf-pushed tables can grow to gigabytes on scattered prefixes |
 | Freezing | `Freeze(ipv4 = null, ipv6 = null)` | `Freeze(options)` for both families and `Freeze(ipv4, ipv6)` for one each: the single method let `Freeze(compressed)` compress only IPv4. Writers wait only while the prefixes are copied |
-| IPv4-mapped addresses | Not covered | `IPLookupOptions.MapIPv4MappedAddresses`, off by default and on for MaxMind lookups, with prefixes inside `::ffff:0:0/96` rejected while it is on |
+| IPv4-mapped addresses | Not covered | `IPLookupOptions.MapIPv4MappedAddresses`, off by default and on for MaxMind lookups, with prefixes inside `::ffff:0:0/96` rejected while it is on. The queries about networks follow it, so that `TryGetMatch(::ffff:10.1.2.3/128)` answers as the address `::ffff:10.1.2.3` does |
+| Queries about networks | `TryGetMatch` for a network | Also `GetMatches`, `GetSubnets` and `Overlaps` for a network, in both read-only interfaces, as Go's BART has. A frozen trie keeps each prefix's bits to answer the last two |
 | Null state | Plain `out` parameters | `[MaybeNullWhen(false)]` on every `Try…` method |
 | Address conversions | Unchecked | `IPAddressBits.ToIPv4Bits` and `ToIPv6Bits` throw for an address of the other family |
 | Shared code of the IP lookups | Not covered | First a public base class, then an internal struct each class forwards to, so that no infrastructure type is public |
@@ -437,5 +470,6 @@ differs from that proposal:
 
 - **Whether `Add` should exist** next to `TryAdd`, `AddOrUpdate` and `GetOrAdd`. It is there for familiarity with
   `Dictionary`.
-- **Further operations** suggested by the review, not yet decided: overlap tests, listing the prefixes inside or containing a prefix, per-family
-  counts, `GetMatches` from integers, and one `Batch` type for every lookup.
+- **Further operations** suggested by the review, not yet decided: per-family counts, `GetMatches` from integers, and
+  one `Batch` type for every lookup. Overlap tests between two whole tables were left out: looping over the smaller
+  table with `Overlaps` answers the same question.

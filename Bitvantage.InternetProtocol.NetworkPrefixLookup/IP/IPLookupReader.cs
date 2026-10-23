@@ -109,12 +109,59 @@ internal readonly struct IPLookupReader<TPrefix, TAdapter, TValue, TForm>
             : MatchValue6(new Bits128(address), out value);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool TryGetMatch(TPrefix network, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value)
+    public bool TryGetMatch(TPrefix network, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) =>
+        IsIPv4(network, out var v4, out var v6, out var length)
+            ? MatchPrefix4(in v4, length, out prefix, out value)
+            : MatchPrefix6(in v6, length, out prefix, out value);
+
+    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(TPrefix network) =>
+        IsIPv4(network, out var v4, out var v6, out var length) ? PrefixMatchList4(in v4, length) : PrefixMatchList6(in v6, length);
+
+    public int GetMatches(TPrefix network, Span<PrefixEntry<TPrefix, TValue>> destination) =>
+        IsIPv4(network, out var v4, out var v6, out var length) ? PrefixMatches4(in v4, length, destination) : PrefixMatches6(in v6, length, destination);
+
+    public IEnumerable<PrefixEntry<TPrefix, TValue>> GetSubnets(TPrefix network)
+    {
+        if (IsIPv4(network, out var v4, out var v6, out var length))
+            return Subnets4(in v4, length);
+
+        // a network that contains every mapped address contains, for the mapped lookups, every IPv4 prefix
+        var ipv6 = Subnets6(in v6, length);
+        return _map && IPAddressBits.ContainsIPv4Mapped(v6.Value, length) ? _ipv4.Concat(ipv6) : ipv6;
+    }
+
+    public bool Overlaps(TPrefix network)
+    {
+        if (IsIPv4(network, out var v4, out var v6, out var length))
+            return Overlaps4(in v4, length);
+        return Overlaps6(in v6, length) || (_map && _ipv4.Count > 0 && IPAddressBits.ContainsIPv4Mapped(v6.Value, length));
+    }
+
+    // Sorts a network into a family for the queries about coverage, which follow the address lookups: with mapping on,
+    // an IPv6 network inside ::ffff:0:0/96 is the IPv4 network it holds, so ::ffff:10.1.0.0/112 is 10.1.0.0/16.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool IsIPv4(TPrefix network, out Bits32 v4, out Bits128 v6, out int length)
     {
         IPAddressBits.ThrowIfNull(network);
-        return TAdapter.IsIPv4(network)
-            ? MatchPrefix4(new Bits32(TAdapter.GetIPv4Bits(network)), TAdapter.GetLength(network), out prefix, out value)
-            : MatchPrefix6(new Bits128(TAdapter.GetIPv6Bits(network)), TAdapter.GetLength(network), out prefix, out value);
+        length = TAdapter.GetLength(network);
+        if (TAdapter.IsIPv4(network))
+        {
+            v4 = new Bits32(TAdapter.GetIPv4Bits(network));
+            v6 = default;
+            return true;
+        }
+
+        var bits = TAdapter.GetIPv6Bits(network);
+        v6 = new Bits128(bits);
+        if (_map && length >= 96 && IPAddressBits.IsIPv4Mapped(bits))
+        {
+            v4 = new Bits32((uint)bits);
+            length -= 96;
+            return true;
+        }
+
+        v4 = default;
+        return false;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -236,4 +283,44 @@ internal readonly struct IPLookupReader<TPrefix, TAdapter, TValue, TForm>
     private int Matches6(in Bits128 key, Span<PrefixEntry<TPrefix, TValue>> destination) => ReadWrite
         ? Unsafe.As<BitTrie<Bits128, TPrefix, TValue>>(_ipv6).GetMatches(in key, destination)
         : Unsafe.As<FrozenBitTrie<Bits128, TPrefix, TValue>>(_ipv6).GetMatches(in key, destination);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private IReadOnlyList<PrefixEntry<TPrefix, TValue>> PrefixMatchList4(in Bits32 bits, int length) => ReadWrite
+        ? Unsafe.As<BitTrie<Bits32, TPrefix, TValue>>(_ipv4).GetMatches(in bits, length)
+        : Unsafe.As<FrozenBitTrie<Bits32, TPrefix, TValue>>(_ipv4).GetMatches(in bits, length);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private IReadOnlyList<PrefixEntry<TPrefix, TValue>> PrefixMatchList6(in Bits128 bits, int length) => ReadWrite
+        ? Unsafe.As<BitTrie<Bits128, TPrefix, TValue>>(_ipv6).GetMatches(in bits, length)
+        : Unsafe.As<FrozenBitTrie<Bits128, TPrefix, TValue>>(_ipv6).GetMatches(in bits, length);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private int PrefixMatches4(in Bits32 bits, int length, Span<PrefixEntry<TPrefix, TValue>> destination) => ReadWrite
+        ? Unsafe.As<BitTrie<Bits32, TPrefix, TValue>>(_ipv4).GetMatches(in bits, length, destination)
+        : Unsafe.As<FrozenBitTrie<Bits32, TPrefix, TValue>>(_ipv4).GetMatches(in bits, length, destination);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private int PrefixMatches6(in Bits128 bits, int length, Span<PrefixEntry<TPrefix, TValue>> destination) => ReadWrite
+        ? Unsafe.As<BitTrie<Bits128, TPrefix, TValue>>(_ipv6).GetMatches(in bits, length, destination)
+        : Unsafe.As<FrozenBitTrie<Bits128, TPrefix, TValue>>(_ipv6).GetMatches(in bits, length, destination);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private IEnumerable<PrefixEntry<TPrefix, TValue>> Subnets4(in Bits32 bits, int length) => ReadWrite
+        ? Unsafe.As<BitTrie<Bits32, TPrefix, TValue>>(_ipv4).GetSubnets(in bits, length)
+        : Unsafe.As<FrozenBitTrie<Bits32, TPrefix, TValue>>(_ipv4).GetSubnets(in bits, length);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private IEnumerable<PrefixEntry<TPrefix, TValue>> Subnets6(in Bits128 bits, int length) => ReadWrite
+        ? Unsafe.As<BitTrie<Bits128, TPrefix, TValue>>(_ipv6).GetSubnets(in bits, length)
+        : Unsafe.As<FrozenBitTrie<Bits128, TPrefix, TValue>>(_ipv6).GetSubnets(in bits, length);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool Overlaps4(in Bits32 bits, int length) => ReadWrite
+        ? Unsafe.As<BitTrie<Bits32, TPrefix, TValue>>(_ipv4).Overlaps(in bits, length)
+        : Unsafe.As<FrozenBitTrie<Bits32, TPrefix, TValue>>(_ipv4).Overlaps(in bits, length);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool Overlaps6(in Bits128 bits, int length) => ReadWrite
+        ? Unsafe.As<BitTrie<Bits128, TPrefix, TValue>>(_ipv6).Overlaps(in bits, length)
+        : Unsafe.As<FrozenBitTrie<Bits128, TPrefix, TValue>>(_ipv6).Overlaps(in bits, length);
 }

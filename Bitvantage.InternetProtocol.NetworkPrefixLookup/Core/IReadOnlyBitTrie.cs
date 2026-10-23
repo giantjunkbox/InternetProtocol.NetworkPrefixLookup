@@ -97,4 +97,40 @@ public interface IReadOnlyBitTrie<TKey, TPrefix, TValue> : IReadOnlyCollection<P
     /// <returns>The number of entries written.</returns>
     /// <exception cref="ArgumentException">The span is too small for the matches.</exception>
     int GetMatches(in TKey key, Span<PrefixEntry<TPrefix, TValue>> destination);
+
+    /// <summary>
+    ///     Every stored prefix that contains the given prefix, the prefix itself included, longest first. The first is the
+    ///     one <see cref="TryGetMatch(in TKey, int, out TPrefix, out TValue)" /> finds.
+    /// </summary>
+    /// <param name="bits">The prefix bits; bits after the length are ignored.</param>
+    /// <param name="length">The prefix length.</param>
+    IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(in TKey bits, int length);
+
+    /// <summary>Writes every stored prefix that contains the given prefix into a span, longest first.</summary>
+    /// <param name="bits">The prefix bits; bits after the length are ignored.</param>
+    /// <param name="length">The prefix length.</param>
+    /// <param name="destination">The span to fill. <c>length + 1</c> entries always suffice.</param>
+    /// <returns>The number of entries written.</returns>
+    /// <exception cref="ArgumentException">The span is too small for the matches.</exception>
+    int GetMatches(in TKey bits, int length, Span<PrefixEntry<TPrefix, TValue>> destination);
+
+    /// <summary>
+    ///     Every stored prefix that lies inside the given prefix, the prefix itself included, in address order with a shorter
+    ///     prefix before a longer one at the same address. The prefixes are produced as the result is enumerated.
+    /// </summary>
+    /// <param name="bits">The prefix bits; bits after the length are ignored.</param>
+    /// <param name="length">The prefix length; 0 enumerates every stored prefix.</param>
+    /// <remarks>
+    ///     On a read-write trie that changes while the result is enumerated, each prefix is seen whole, but the result is
+    ///     not the trie at one moment, as with enumerating the whole trie.
+    /// </remarks>
+    IEnumerable<PrefixEntry<TPrefix, TValue>> GetSubnets(in TKey bits, int length);
+
+    /// <summary>
+    ///     True when a stored prefix shares an address with the given prefix: when one contains the given prefix or lies
+    ///     inside it, which are the only ways two prefixes can overlap. Faster than either query, and allocates nothing.
+    /// </summary>
+    /// <param name="bits">The prefix bits; bits after the length are ignored.</param>
+    /// <param name="length">The prefix length.</param>
+    bool Overlaps(in TKey bits, int length);
 }

@@ -162,7 +162,9 @@ The other queries reuse the walk:
 | --- | --- |
 | `TryGetMatch(bits, length)` | As `Find`, but only prefixes no longer than `length` count, so the walk stops descending at the node that holds `length` |
 | `TryGetValue`, `ContainsPrefix` | Descend to the node of the prefix's stride and test one base index, fringe or leaf |
-| `GetMatches` | As `Find`, but collects every hit while backtracking, walking each node's base indexes `i, i/2, …, 1` |
+| `GetMatches` | As `Find`, but collects every hit while backtracking, walking each node's base indexes `i, i/2, …, 1`. Given a prefix, it stops descending at the node that holds `length`, as `TryGetMatch(bits, length)` does |
+| `Overlaps(bits, length)` | Two prefixes overlap exactly when one contains the other. On the way down to the node of the prefix's stride, a prefix or fringe on the path contains it, and a leaf decides alone. In that node, with `i` the prefix's base index, three 256-bit tests decide: the node's prefixes against `ArtTables.Ancestors[i]` and `Descendants[i]`, and its fringes, leaves and children against `ArtTables.Octets[i]`, the octets that `i` covers |
+| `GetSubnets(bits, length)` | Descends as `Overlaps` does, then enumerates that node with its prefixes limited to `Descendants[i]` and its octets to `Octets[i]`; below those octets everything counts. A leaf on the way is the only candidate |
 | Enumeration | Depth-first, in address order: at each octet the base indexes that start there, shortest first, then the fringe, the leaf and the child |
 
 ## Writes, batches and readers
@@ -216,7 +218,8 @@ new root and a new block array privately and publish both with one reference wri
   [Performance](#measured-baseline). `Version` is `_changes` halved, and must be read before the lookups it is to
   vouch for.
 - A batch is all or nothing. Readers keep seeing the published root and blocks until the commit replaces both at once.
-- Enumeration during writes sees each entry whole, but is not a snapshot of the whole trie at one instant.
+- Enumeration and `GetSubnets` during writes see each entry whole, but are not a snapshot of the whole trie at one
+  instant. `GetMatches` and `Overlaps` retry as lookups do.
 
 ### The writer lock
 
@@ -264,6 +267,7 @@ under writes. It holds no nodes:
 | --- | --- |
 | `_entries` | The prefix object and value of each prefix, in address order |
 | `_values` | A dense copy of the values, for `TryGetMatchValue`, unless `ValueOnlyLookups` is off |
+| `_keys` | Each prefix's bits, for `GetSubnets` and `Overlaps`: 4 bytes per IPv4 prefix and 16 per IPv6 prefix |
 | `_lengths` | Each prefix's length |
 | `_parents` | For each prefix, the nearest shorter stored prefix that contains it, or -1 |
 | `_root` and `_tables`, or `_root`, `_nodes` and `_answers` | The lookup tables of one of two layouts |
@@ -325,9 +329,18 @@ way. The `_parents` links come from one pass with a stack of open containing pre
 **Queries without nodes.** Every stored prefix that contains a prefix also contains its first address, so it lies on
 the parent chain from that address's longest match:
 
-- `GetMatches` follows the chain from the longest match.
+- `GetMatches` follows the chain from the longest match, and given a prefix, from the entry `TryGetMatch` finds.
 - `TryGetMatch(bits, length)` follows it to the first entry no longer than `length`.
 - `TryGetValue` and `ContainsPrefix` do the same and check that the length is equal.
+
+The prefixes inside a prefix are one run of entries, because the entries are in address order with a shorter prefix
+first: those that contain the prefix and start at its address are shorter, so they come before the run. `GetSubnets`
+finds the run's start by a binary search over `_keys` and `_lengths` and reads on while the entries lie inside.
+`Overlaps` first takes the longest match of the prefix's first address: a stored prefix that contains that address
+either contains the prefix or lies inside it. Failing that, a prefix inside it starts at a later address, and the binary
+search's first entry is it. Without `_keys` neither query has a way in, because the lookup tables hold only answers, and
+a prefix shadowed by longer ones answers no address at all. Keeping them costs 4.0 MB on the real IPv4 table and 3.7 MB
+on the real IPv6 table: 6.6% more for leaf-pushed IPv4 and 30% more for compressed IPv6, the smallest form.
 
 Freezing holds the source trie's writer lock while it copies the prefixes out, so writes wait for that part; the
 tables are built from the copy after the lock is released. Readers of the source are not affected.
@@ -369,9 +382,13 @@ slower, inside the container's drift.
   by default: the main use cases are routing tables and packet classification, where every address should be looked up
   as given and a mapped address on the wire is malformed or crafted (RFC 4942, section 2.2). Turn it on for addresses
   from dual-mode sockets. MaxMind lookups turn it on by default, because MaxMind's own reader answers mapped addresses
-  from the IPv4 networks. Prefixes are always stored and looked up as given, so with mapping on an IPv6 prefix inside
-  `::ffff:0:0/96` could never answer an address lookup; adding one throws `ArgumentException`, before anything
-  changes, so a batch it was written in still commits. The check costs one test of a flag on IPv6 lookups only.
+  from the IPv4 networks. The queries about networks, `TryGetMatch`, `GetMatches`, `GetSubnets` and `Overlaps`, follow
+  the address lookups, so that they agree with them: an IPv6 network inside `::ffff:0:0/96` becomes the IPv4 network
+  it holds, and a network that contains all of `::ffff:0:0/96` also contains every IPv4 prefix, which `GetSubnets`
+  lists first, as enumeration does, and `Overlaps` counts. Writes and the exact lookups take prefixes as given, so with
+  mapping on an IPv6 prefix inside `::ffff:0:0/96` could never answer an address lookup; adding one throws
+  `ArgumentException`, before anything changes, so a batch it was written in still commits. The check costs one test
+  of a flag on IPv6 lookups only.
 - **Batches** begin a batch on both tries. On commit each family publishes atomically, IPv4 first.
 - **Freezing** copies both families' prefixes out under both tries' writer locks, taken in the order batches take
   them, so the frozen copy is the lookup at one moment even though a reader of the read-write lookup can see one
@@ -523,6 +540,9 @@ objects rather than conversion.
 | Frozen, leaf-pushed 16/8 | 61.2 MB | 58.7 MB |
 | Frozen, compressed 18 | 40.5 MB | 12.3 MB |
 
+Frozen tables have since kept each prefix's bits, for `GetSubnets` and `Overlaps`: 4.0 MB more on real IPv4 and 3.7 MB
+more on real IPv6. See [Since the baseline](#since-the-baseline).
+
 **Shortcut blocks against the flat table** (`WriteBenchmarks` and lookups, one session, two jobs; the flat table
 was removed after this measurement):
 
@@ -667,8 +687,8 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 
 | Test class | What it checks |
 | --- | --- |
-| `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 8-, 16-, 32- and 128-bit keys (8 and 16 are test-only types; 8 has no shortcut blocks), before and after removals; canonical shape; batches commit and discard; a commit that throws, a batch ended on another thread, a batch in which a write threw; `Version`; frozen root sizes; lock-free readers during churn; lookups that overlap several writes; concurrent writers |
-| `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; IPv4-mapped addresses with mapping off and on; address conversions; writes and batches, including failed and wrong-thread batches; freezing both families at one moment; one freeze layout for both families; a reader during churn |
+| `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 8-, 16-, 32- and 128-bit keys, including `GetMatches`, `GetSubnets` and `Overlaps` at the stored prefixes, one bit shorter and longer, and at every length (8 and 16 are test-only types; 8 has no shortcut blocks), before and after removals; canonical shape; batches commit and discard; a commit that throws, a batch ended on another thread, a batch in which a write threw; `Version`; frozen root sizes; lock-free readers during churn; lookups that overlap several writes; concurrent writers |
+| `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; the queries about networks; IPv4-mapped addresses and networks with mapping off and on; address conversions; writes and batches, including failed and wrong-thread batches; freezing both families at one moment; one freeze layout for both families; a reader during churn |
 | `Adapters/AdapterTests` | Each adapter package in both forms; MaxMind databases against `Reader.Find`, at IPv4, IPv4-compatible and IPv4-mapped addresses, and a hand-built database with a record above the IPv4 networks |
 
 ## Limitations
@@ -699,7 +719,7 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
   `RootBits = 8` or use the compressed layout when many small frozen tables must be kept, such as one per VRF.
 - **Batches are atomic per address family**, not across both. A frozen copy does hold both families at one moment.
 - **IPv6 scope IDs are ignored**, so `fe80::1%7` and `fe80::1%9` are one key.
-- **Enumeration is not a snapshot** while writes run.
+- **Enumeration and `GetSubnets` are not snapshots** while writes run.
 
 The known issues of version 2, listed in [Architecture-v2.md](Architecture-v2.md#known-issues), do not apply: the code
 they describe is gone, and the tests cover `Count`, removal of absent prefixes, `Clear`, `GetOrAdd` and enumeration.

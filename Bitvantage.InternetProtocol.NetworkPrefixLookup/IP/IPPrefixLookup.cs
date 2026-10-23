@@ -168,6 +168,18 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     /// <inheritdoc />
     public int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination) => _reader.GetMatches(address, destination);
 
+    /// <inheritdoc />
+    public IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(TPrefix network) => _reader.GetMatches(network);
+
+    /// <inheritdoc />
+    public int GetMatches(TPrefix network, Span<PrefixEntry<TPrefix, TValue>> destination) => _reader.GetMatches(network, destination);
+
+    /// <inheritdoc />
+    public IEnumerable<PrefixEntry<TPrefix, TValue>> GetSubnets(TPrefix network) => _reader.GetSubnets(network);
+
+    /// <inheritdoc />
+    public bool Overlaps(TPrefix network) => _reader.Overlaps(network);
+
     /// <summary>Returns the IPv4 prefixes and then the IPv6 prefixes, each in address order.</summary>
     public IEnumerator<PrefixEntry<TPrefix, TValue>> GetEnumerator() => _reader.GetEnumerator();
 

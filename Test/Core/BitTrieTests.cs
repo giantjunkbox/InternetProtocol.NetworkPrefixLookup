@@ -89,6 +89,7 @@ public class BitTrieTests
         }
 
         // prefix queries, at the stored prefixes and at prefixes one bit longer and shorter
+        var subnetQueries = 0;
         foreach (var (bits, length) in prefixes)
             foreach (var l in new[] { length - 1, length, length + 1 })
             {
@@ -105,7 +106,39 @@ public class BitTrieTests
                     failures.Add($"TryGetValue({bits}/{l})");
                 if (trie.TryGetValue(in bits, l, out prefix, out value) != exact || (exact && (prefix != expectedValue || value != expectedValue * 7)))
                     failures.Add($"TryGetValue({bits}/{l}) with the prefix object");
+
+                var matches = trie.GetMatches(in bits, l);
+                if (!matches.Select(e => e.Prefix).SequenceEqual(expected.Select(e => e.Value)) || matches.Any(e => e.Value != e.Prefix * 7))
+                    failures.Add($"GetMatches({bits}/{l}) gave [{string.Join(", ", matches.Select(e => e.Prefix))}], expected [{string.Join(", ", expected.Select(e => e.Value))}]");
+                var count = trie.GetMatches(in bits, l, span);
+                if (!span.Take(count).Select(e => e.Prefix).SequenceEqual(expected.Select(e => e.Value)))
+                    failures.Add($"GetMatches({bits}/{l}, span)");
+                if (trie.Overlaps(in bits, l) != reference.Overlaps(bits, l))
+                    failures.Add($"Overlaps({bits}/{l}) gave {!reference.Overlaps(bits, l)}");
+                if (subnetQueries++ % 5 == 0)
+                    CheckSubnets(bits, l);
             }
+
+        // shorter prefixes, which hold more: one of every length at a sample of the probe keys, and the empty prefix
+        for (var i = 0; i < keys.Count; i += 40)
+        {
+            var (bits, l) = (keys[i], i / 40 % (TKey.Width + 1));
+            CheckSubnets(bits, l);
+            if (trie.Overlaps(in bits, l) != reference.Overlaps(bits, l))
+                failures.Add($"Overlaps({bits}/{l}) gave {!reference.Overlaps(bits, l)}");
+            if (!trie.GetMatches(in bits, l).Select(e => e.Prefix).SequenceEqual(reference.Matches(bits, l).Select(e => e.Value)))
+                failures.Add($"GetMatches({bits}/{l})");
+        }
+
+        CheckSubnets(default, 0);
+
+        void CheckSubnets(TKey bits, int l)
+        {
+            var subnets = trie.GetSubnets(in bits, l).ToList();
+            var expected = reference.Subnets(bits, l);
+            if (!subnets.Select(e => e.Prefix).SequenceEqual(expected) || subnets.Any(e => e.Value != e.Prefix * 7))
+                failures.Add($"GetSubnets({bits}/{l}) gave {subnets.Count} prefixes starting [{string.Join(", ", subnets.Take(5).Select(e => e.Prefix))}], expected {expected.Count} starting [{string.Join(", ", expected.Take(5))}]");
+        }
 
         Assert.That(trie.Count, Is.EqualTo(reference.Count), because);
         Assert.That(trie.Select(e => e.Prefix), Is.EqualTo(reference.InOrder().Select(e => e.Value)), because + ": enumeration order");
@@ -398,6 +431,22 @@ public class BitTrieTests
         trie.Add(default, 8, 8, 0);
         Assert.Throws<ArgumentException>(() => trie.GetMatches(default, new PrefixEntry<int, int>[1]));
         Assert.Throws<ArgumentException>(() => trie.Freeze().GetMatches(default, new PrefixEntry<int, int>[1]));
+        Assert.Throws<ArgumentException>(() => trie.GetMatches(default, 8, new PrefixEntry<int, int>[1]));
+        Assert.Throws<ArgumentException>(() => trie.Freeze().GetMatches(default, 8, new PrefixEntry<int, int>[1]));
+    }
+
+    [Test(Description = "A bad length throws when the query is made, not when its result is first enumerated.")]
+    public void Prefix_queries_check_the_length_at_the_call()
+    {
+        var trie = new BitTrie<Bits32, int, int>();
+        foreach (var form in new IReadOnlyBitTrie<Bits32, int, int>[] { trie, trie.Freeze() })
+            foreach (var length in new[] { -1, 33 })
+            {
+                Assert.Throws<ArgumentOutOfRangeException>(() => form.GetSubnets(default, length));
+                Assert.Throws<ArgumentOutOfRangeException>(() => form.Overlaps(default, length));
+                Assert.Throws<ArgumentOutOfRangeException>(() => form.GetMatches(default, length));
+                Assert.Throws<ArgumentOutOfRangeException>(() => form.GetMatches(default, length, new PrefixEntry<int, int>[33]));
+            }
     }
 
     [Test]

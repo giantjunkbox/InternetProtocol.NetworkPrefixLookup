@@ -32,9 +32,19 @@ public sealed record IPLookupOptions
     ///     lookups turn it on by default.
     /// </summary>
     /// <remarks>
-    ///     Only address lookups are mapped; prefixes are stored and looked up as given. With this on, adding an IPv6 prefix
-    ///     inside <c>::ffff:0:0/96</c> throws <see cref="ArgumentException" />, because no address lookup could return it:
-    ///     add the IPv4 prefix instead.
+    ///     <para>
+    ///         Address lookups are mapped, and so are the queries about which addresses a network shares with the stored
+    ///         prefixes: <c>TryGetMatch</c>, <c>GetMatches</c>, <c>GetSubnets</c> and <c>Overlaps</c> given a network. An
+    ///         IPv6 network inside <c>::ffff:0:0/96</c> gets the answers of the IPv4 network it holds, so
+    ///         <c>::ffff:10.1.0.0/112</c> gets those of <c>10.1.0.0/16</c>. An IPv6 network that contains all of
+    ///         <c>::ffff:0:0/96</c>, such as <c>::/0</c>, contains every IPv4 prefix too: <c>GetSubnets</c> returns them
+    ///         first, as enumeration does, and <c>Overlaps</c> counts them.
+    ///     </para>
+    ///     <para>
+    ///         Writes and the exact lookups, <c>TryGetValue</c> and <c>ContainsPrefix</c>, take a prefix as given. With this
+    ///         on, adding an IPv6 prefix inside <c>::ffff:0:0/96</c> throws <see cref="ArgumentException" />, because no
+    ///         address lookup could return it: add the IPv4 prefix instead.
+    ///     </para>
     /// </remarks>
     public bool MapIPv4MappedAddresses { get; init; }
 }
@@ -44,9 +54,11 @@ public sealed record IPLookupOptions
 ///     Implemented by the read-write and frozen IP lookups.
 /// </summary>
 /// <remarks>
-///     Methods named <c>Match</c> find the longest stored prefix that contains an address or prefix. <c>TryGetValue</c>
-///     and <c>ContainsPrefix</c> match a prefix exactly. Enumeration returns the IPv4 prefixes and then the IPv6
-///     prefixes, each in address order with a shorter prefix before a longer one at the same address.
+///     Methods named <c>Match</c> find the longest stored prefix that contains an address or prefix, and
+///     <c>GetMatches</c> every one, longest first. <c>GetSubnets</c> finds the stored prefixes inside a network, and
+///     <c>Overlaps</c> whether there are any either way. <c>TryGetValue</c> and <c>ContainsPrefix</c> match a prefix
+///     exactly. Enumeration returns the IPv4 prefixes and then the IPv6 prefixes, each in address order with a shorter
+///     prefix before a longer one at the same address.
 /// </remarks>
 /// <typeparam name="TPrefix">The prefix type.</typeparam>
 /// <typeparam name="TValue">The value type.</typeparam>
@@ -121,7 +133,7 @@ public interface IReadOnlyIPPrefixLookup<TPrefix, TValue> : IReadOnlyCollection<
     bool TryGetMatchValueIPv6(UInt128 address, [MaybeNullWhen(false)] out TValue value);
 
     /// <summary>Finds the longest stored prefix that contains a network, which may be the network itself.</summary>
-    /// <param name="network">The network to look up.</param>
+    /// <param name="network">The network to look up; host bits after its length are ignored.</param>
     /// <param name="prefix">The matching prefix.</param>
     /// <param name="value">Its value.</param>
     /// <returns>True when a stored prefix contains the network.</returns>
@@ -147,4 +159,42 @@ public interface IReadOnlyIPPrefixLookup<TPrefix, TValue> : IReadOnlyCollection<
     /// <returns>The number of matches written.</returns>
     /// <exception cref="ArgumentException">The destination is too small.</exception>
     int GetMatches(IPAddress address, Span<PrefixEntry<TPrefix, TValue>> destination);
+
+    /// <summary>
+    ///     Every stored prefix that contains a network, the network itself included, longest first: which prefixes cover
+    ///     it. The first is the one <see cref="TryGetMatch(TPrefix, out TPrefix, out TValue)" /> finds.
+    /// </summary>
+    /// <param name="network">The network; host bits after its length are ignored.</param>
+    IReadOnlyList<PrefixEntry<TPrefix, TValue>> GetMatches(TPrefix network);
+
+    /// <summary>Writes every stored prefix that contains a network into a span, in the order of <see cref="GetMatches(TPrefix)" />.</summary>
+    /// <param name="network">The network; host bits after its length are ignored.</param>
+    /// <param name="destination">Where to write the matches; 129 entries always suffice.</param>
+    /// <returns>The number of matches written.</returns>
+    /// <exception cref="ArgumentException">The destination is too small.</exception>
+    int GetMatches(TPrefix network, Span<PrefixEntry<TPrefix, TValue>> destination);
+
+    /// <summary>
+    ///     Every stored prefix that lies inside a network, the network itself included, in address order with a shorter
+    ///     prefix before a longer one at the same address: what is allocated inside it. The prefixes are produced as the
+    ///     result is enumerated, so <c>GetSubnets(network).Any()</c> stops at the first.
+    /// </summary>
+    /// <param name="network">The network; host bits after its length are ignored.</param>
+    /// <remarks>
+    ///     On a read-write lookup that changes while the result is enumerated, each prefix is seen whole, but the result is
+    ///     not the lookup at one moment, as with enumerating the whole lookup.
+    /// </remarks>
+    IEnumerable<PrefixEntry<TPrefix, TValue>> GetSubnets(TPrefix network);
+
+    /// <summary>
+    ///     True when a stored prefix shares an address with a network: when one contains it or lies inside it, which are
+    ///     the only ways two prefixes can overlap. Faster than <see cref="GetMatches(TPrefix)" /> or
+    ///     <see cref="GetSubnets" />, and allocates nothing.
+    /// </summary>
+    /// <param name="network">The network; host bits after its length are ignored.</param>
+    /// <remarks>
+    ///     A stored default route overlaps every network of its family. To find whether anything is allocated inside a
+    ///     network, use <c>GetSubnets(network).Any()</c> instead, since the pool the network was taken from overlaps it.
+    /// </remarks>
+    bool Overlaps(TPrefix network);
 }

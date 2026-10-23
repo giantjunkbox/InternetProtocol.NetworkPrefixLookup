@@ -96,6 +96,11 @@ public static class IPAddressBits
     // True for ::ffff:0:0/96, the IPv4-mapped IPv6 addresses.
     internal static bool IsIPv4Mapped(UInt128 bits) => (bits >> 32) == 0xFFFF;
 
+    // True when an IPv6 prefix shorter than 96 bits contains all of ::ffff:0:0/96. A UInt128 shift takes its count modulo
+    // 128, so length 0, which contains everything, cannot use the shift.
+    internal static bool ContainsIPv4Mapped(UInt128 bits, int length) =>
+        length < 96 && (length == 0 || ((bits ^ ((UInt128)0xFFFF << 32)) >> (128 - length)) == 0);
+
     // Sorts an address into a family: 4 with its bits in v4, or 6 with its bits in v6. With map set, an IPv4-mapped IPv6
     // address counts as IPv4.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
