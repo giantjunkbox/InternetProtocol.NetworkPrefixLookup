@@ -116,10 +116,4 @@ public static class NoValueLookupExtensions
     /// <returns>True when a stored prefix contains the address.</returns>
     public static bool TryGetMatch<TPrefix>(this IReadOnlyIPPrefixLookup<TPrefix, NoValue> lookup, IPAddress address, [MaybeNullWhen(false)] out TPrefix prefix) =>
         lookup.TryGetMatch(address, out prefix, out _);
-
-    /// <summary>True when a stored prefix contains the address.</summary>
-    /// <param name="lookup">The lookup.</param>
-    /// <param name="address">An IPv4 or IPv6 address.</param>
-    public static bool ContainsMatch<TPrefix, TValue>(this IReadOnlyIPPrefixLookup<TPrefix, TValue> lookup, IPAddress address) =>
-        lookup.TryGetMatchValue(address, out _);
 }

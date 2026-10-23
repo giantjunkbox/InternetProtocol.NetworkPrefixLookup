@@ -361,6 +361,10 @@ public sealed class FrozenBitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey
 
     /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool ContainsMatch(in TKey key) => Find(in key) >= 0; // reads no entry or value
+
+    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatchValue(in TKey key, [MaybeNullWhen(false)] out TValue value)
     {
         var i = Find(in key);

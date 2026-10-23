@@ -73,6 +73,21 @@ internal readonly struct IPLookupReader<TPrefix, TAdapter, TValue, TForm>
             : Match6(new Bits128(address), out prefix, out value);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool ContainsMatch(IPAddress address) =>
+        IPAddressBits.IsIPv4(address, _map, out var v4, out var v6) ? Has4(new Bits32(v4)) : Has6(new Bits128(v6));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool ContainsMatch(ReadOnlySpan<byte> address) =>
+        IPAddressBits.IsIPv4(address, _map, out var v4, out var v6) ? Has4(new Bits32(v4)) : Has6(new Bits128(v6));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool ContainsMatchIPv4(uint address) => Has4(new Bits32(address));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool ContainsMatchIPv6(UInt128 address) =>
+        IPAddressBits.IsIPv4(address, _map, out var v4) ? Has4(new Bits32(v4)) : Has6(new Bits128(address));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryGetMatchValue(IPAddress address, [MaybeNullWhen(false)] out TValue value) =>
         IPAddressBits.IsIPv4(address, _map, out var v4, out var v6)
             ? MatchValue4(new Bits32(v4), out value)
@@ -151,6 +166,16 @@ internal readonly struct IPLookupReader<TPrefix, TAdapter, TValue, TForm>
     private bool Match6(in Bits128 key, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => ReadWrite
         ? Unsafe.As<BitTrie<Bits128, TPrefix, TValue>>(_ipv6).TryGetMatch(in key, out prefix, out value)
         : Unsafe.As<FrozenBitTrie<Bits128, TPrefix, TValue>>(_ipv6).TryGetMatch(in key, out prefix, out value);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool Has4(in Bits32 key) => ReadWrite
+        ? Unsafe.As<BitTrie<Bits32, TPrefix, TValue>>(_ipv4).ContainsMatch(in key)
+        : Unsafe.As<FrozenBitTrie<Bits32, TPrefix, TValue>>(_ipv4).ContainsMatch(in key);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool Has6(in Bits128 key) => ReadWrite
+        ? Unsafe.As<BitTrie<Bits128, TPrefix, TValue>>(_ipv6).ContainsMatch(in key)
+        : Unsafe.As<FrozenBitTrie<Bits128, TPrefix, TValue>>(_ipv6).ContainsMatch(in key);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private bool MatchValue4(in Bits32 key, [MaybeNullWhen(false)] out TValue value) => ReadWrite

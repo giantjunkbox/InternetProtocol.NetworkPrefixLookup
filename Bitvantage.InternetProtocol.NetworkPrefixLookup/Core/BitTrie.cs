@@ -223,6 +223,10 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
         return true;
     }
 
+    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool ContainsMatch(in TKey key) => !Unsafe.IsNullRef(ref Find(in key)); // reads no entry
+
     // True when at most one change overlapped a lookup that began when _changes was before, so that the lookup saw the
     // trie as it was before or after that change.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

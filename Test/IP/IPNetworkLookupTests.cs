@@ -189,7 +189,14 @@ public class IPNetworkLookupTests
             Assert.That(form.TryGetMatchIPv6(IPAddressBits.ToIPv6Bits(IPAddress.Parse("2001:db8::1")), out _, out value) && value == "2001:db8::/32");
             Assert.That(form.TryGetMatchValueIPv6(IPAddressBits.ToIPv6Bits(IPAddress.Parse("2001:db8::1")), out value) && value == "2001:db8::/32");
 
+            Assert.That(form.ContainsMatch(IPAddress.Parse("10.9.9.9")) && form.ContainsMatch(new byte[] { 10, 9, 9, 9 }) && form.ContainsMatchIPv4(0x0A090909));
+            Assert.That(form.ContainsMatch(IPAddress.Parse("11.9.9.9")) || form.ContainsMatch(new byte[] { 11, 9, 9, 9 }) || form.ContainsMatchIPv4(0x0B090909), Is.False);
+            Assert.That(form.ContainsMatch(IPAddress.Parse("2001:db8::1")) && form.ContainsMatch(v6) && form.ContainsMatchIPv6(IPAddressBits.ToIPv6Bits(IPAddress.Parse("2001:db8::1"))));
+            Assert.That(form.ContainsMatchIPv6(IPAddressBits.ToIPv6Bits(IPAddress.Parse("2001:db9::1"))), Is.False);
+
             Assert.Throws<ArgumentException>(() => form.TryGetMatch(new byte[5], out _, out _));
+            Assert.Throws<ArgumentException>(() => form.ContainsMatch(new byte[5]));
+            Assert.Throws<ArgumentNullException>(() => form.ContainsMatch((IPAddress)null!));
             Assert.Throws<ArgumentNullException>(() => form.TryGetMatch((IPAddress)null!, out _, out _));
 
             var span = new PrefixEntry<IPNetwork, string>[129];
@@ -223,6 +230,7 @@ public class IPNetworkLookupTests
             Assert.That(form.TryGetMatch(mapped.GetAddressBytes(), out _, out var value) && value == "10.0.0.0/8");
             Assert.That(form.TryGetMatchIPv6(IPAddressBits.ToIPv6Bits(mapped), out _, out value) && value == "10.0.0.0/8");
             Assert.That(form.GetMatches(mapped).Select(m => m.Value), Is.EqualTo(new[] { "10.0.0.0/8" }));
+            Assert.That(form.ContainsMatch(mapped) && form.ContainsMatch(mapped.GetAddressBytes()) && form.ContainsMatchIPv6(IPAddressBits.ToIPv6Bits(mapped)));
 
             // no IPv4 prefix holds 11.1.2.3, so neither form matches; ::/0, which contains every mapped address, never
             // answers one
@@ -230,6 +238,7 @@ public class IPNetworkLookupTests
             Assert.That(Match(form, "::ffff:11.1.2.3"), Is.Null);
             Assert.That(form.TryGetMatchValue(other.GetAddressBytes(), out _), Is.False);
             Assert.That(form.TryGetMatchValueIPv6(IPAddressBits.ToIPv6Bits(other), out _), Is.False);
+            Assert.That(form.ContainsMatch(other) || form.ContainsMatch(other.GetAddressBytes()) || form.ContainsMatchIPv6(IPAddressBits.ToIPv6Bits(other)), Is.False);
             Assert.That(Match(form, "11.1.2.3"), Is.Null);
             Assert.That(Match(form, "2001:db8::1"), Is.EqualTo("::/0"), "other IPv6 addresses are unaffected");
         }

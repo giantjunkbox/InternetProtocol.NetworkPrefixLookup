@@ -28,6 +28,9 @@ Decisions made by the user:
   `Bits128` ship, and key widths are limited to 128 bits.
 - Lookup results use whichever shape is fastest. All measured shapes tied, so lookups return the prefix and value
   through `out` parameters, which keep the node layout private.
+- The read-write core follows the BART-style prototype (`Documentation/Bart-Comparison.md`): 8-bit multibit nodes,
+  copy-on-write, lock-free readers. Its known costs, slower lookups on small tables that fit in cache and garbage under
+  heavy churn, are accepted.
 - One read-write design in which every write does bounded work, with no pauses for growth or compaction. There is no
   separate real-time mode, because two nearly identical code paths are not worth keeping. A separate form is justified
   only when it is clearly faster, as the frozen form is.
@@ -45,9 +48,6 @@ Decisions made by the user:
   leaf-pushed child tables would hold more than 256 entries per prefix and more than 16 MB in all.
 - With `MapIPv4MappedAddresses` on, adding an IPv6 prefix inside `::ffff:0:0/96` throws, because no address lookup
   could find it.
-
-Choice made while building version 3 that the user has not yet reviewed: the read-write core follows the BART-style
-prototype (`Documentation/Bart-Comparison.md`).
 
 The public interface is described in `Documentation/Interface.md`, whose last sections record where the shipped
 interface differs from the original proposal. `Documentation/Adapter-Survey.md` explains which libraries get adapter packages.

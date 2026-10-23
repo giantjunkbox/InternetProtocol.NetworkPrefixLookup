@@ -77,6 +77,8 @@ public class BitTrieTests
             found = trie.TryGetMatchValue(in key, out value);
             if (found != expected.Count > 0 || (found && value != expected[0].Value * 7))
                 failures.Add($"TryGetMatchValue({key})");
+            if (trie.ContainsMatch(in key) != expected.Count > 0)
+                failures.Add($"ContainsMatch({key})");
 
             var all = trie.GetMatches(in key).Select(e => e.Prefix).ToList();
             if (!all.SequenceEqual(expected.Select(e => e.Value)))

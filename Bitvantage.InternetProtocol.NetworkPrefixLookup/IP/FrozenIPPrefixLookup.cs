@@ -79,6 +79,18 @@ public class FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefix
     public bool TryGetMatchIPv6(UInt128 address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => _reader.TryGetMatchIPv6(address, out prefix, out value);
 
     /// <inheritdoc />
+    public bool ContainsMatch(IPAddress address) => _reader.ContainsMatch(address);
+
+    /// <inheritdoc />
+    public bool ContainsMatch(ReadOnlySpan<byte> address) => _reader.ContainsMatch(address);
+
+    /// <inheritdoc />
+    public bool ContainsMatchIPv4(uint address) => _reader.ContainsMatchIPv4(address);
+
+    /// <inheritdoc />
+    public bool ContainsMatchIPv6(UInt128 address) => _reader.ContainsMatchIPv6(address);
+
+    /// <inheritdoc />
     public bool TryGetMatchValue(IPAddress address, [MaybeNullWhen(false)] out TValue value) => _reader.TryGetMatchValue(address, out value);
 
     /// <inheritdoc />

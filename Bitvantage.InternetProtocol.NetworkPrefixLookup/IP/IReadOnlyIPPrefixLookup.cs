@@ -80,6 +80,22 @@ public interface IReadOnlyIPPrefixLookup<TPrefix, TValue> : IReadOnlyCollection<
     /// <returns>True when a stored prefix contains the address.</returns>
     bool TryGetMatchIPv6(UInt128 address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value);
 
+    /// <summary>True when a stored prefix contains an address. Faster than a match that returns the prefix or value.</summary>
+    /// <param name="address">An IPv4 or IPv6 address.</param>
+    bool ContainsMatch(IPAddress address);
+
+    /// <summary>True when a stored prefix contains an address given as bytes.</summary>
+    /// <param name="address">4 bytes for IPv4 or 16 for IPv6, in network order.</param>
+    bool ContainsMatch(ReadOnlySpan<byte> address);
+
+    /// <summary>True when a stored IPv4 prefix contains an IPv4 address.</summary>
+    /// <param name="address">The address, with its first bit in the most significant bit.</param>
+    bool ContainsMatchIPv4(uint address);
+
+    /// <summary>True when a stored prefix contains an IPv6 address.</summary>
+    /// <param name="address">The address, with its first bit in the most significant bit.</param>
+    bool ContainsMatchIPv6(UInt128 address);
+
     /// <summary>Finds the value of the longest stored prefix that contains an address.</summary>
     /// <param name="address">An IPv4 or IPv6 address.</param>
     /// <param name="value">The value of the match.</param>

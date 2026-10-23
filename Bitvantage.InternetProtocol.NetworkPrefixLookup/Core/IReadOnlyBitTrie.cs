@@ -78,6 +78,10 @@ public interface IReadOnlyBitTrie<TKey, TPrefix, TValue> : IReadOnlyCollection<P
     /// <returns>True when the prefix is stored.</returns>
     bool TryGetValue(in TKey bits, int length, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value);
 
+    /// <summary>True when a stored prefix contains a full-width key. Faster than a match that returns the prefix or value.</summary>
+    /// <param name="key">The key to look up.</param>
+    bool ContainsMatch(in TKey key);
+
     /// <summary>True when exactly this prefix is stored.</summary>
     /// <param name="bits">The prefix bits.</param>
     /// <param name="length">The prefix length.</param>
