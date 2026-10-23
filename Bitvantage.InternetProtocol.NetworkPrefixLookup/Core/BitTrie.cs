@@ -224,8 +224,70 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     }
 
     /// <inheritdoc />
+    public bool ContainsMatch(in TKey key)
+    {
+        while (true)
+        {
+            var before = Volatile.Read(ref _changes);
+            var found = ContainsOnce(in key);
+            if (Settled(before)) return found;
+        }
+    }
+
+    // Whether any prefix contains the key, from one walk of the published trie. Any match will do, so unlike FindOnce the
+    // walk checks each node on the way down, stops at the first that holds a match and never climbs back. Through a
+    // shortcut block it checks the root and the depth-1 node before it reads the depth-2 node: there are few of them, so
+    // they are usually in cache, and a match there saves the reads below. Go's BART stops early the same way. In one
+    // session this took 0.64 to 0.68 of the time of the full search on the real tables, and 0.61 to 0.94 with the keys
+    // in cache: see "Since the baseline" in Architecture.md.
+    private bool ContainsOnce(in TKey key)
+    {
+        var published = Volatile.Read(ref _published);
+        var n = Volatile.Read(ref published.Root);
+        var depth = 0;
+
+        var blocks = published.Blocks;
+        if (blocks != null)
+        {
+            var first = TKey.GetTopBits(key, 8);
+            var block = blocks[first];
+            if (block != null)
+            {
+                if (Covers(n, first)) return true;
+                n = block.Depth1;
+                depth = 1;
+                var second = TKey.GetBits(key, 8, 8);
+                var depth2 = block.Depth2[second];
+                if (depth2 != null)
+                {
+                    if (Covers(n, second)) return true;
+                    n = depth2;
+                    depth = 2;
+                }
+            }
+        }
+
+        while (true)
+        {
+            var octet = TKey.GetBits(key, depth << 3, 8);
+            if (Covers(n, octet)) return true;
+            if (n.Kids.Test(octet))
+            {
+                n = n.KidNodes[n.Kids.Rank(octet) - 1];
+                depth++;
+                continue;
+            }
+
+            if (!n.Leaves.Test(octet)) return false;
+            ref var leaf = ref n.LeafEntries[n.Leaves.Rank(octet) - 1];
+            return TKey.MatchesUnderMask(key, leaf.Bits, leaf.Mask);
+        }
+    }
+
+    // whether a fringe or prefix of the node contains the key's octet, and so the key, given that the path to the node does
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool ContainsMatch(in TKey key) => !Unsafe.IsNullRef(ref Find(in key)); // reads no entry
+    private static bool Covers(Node n, int octet) =>
+        n.Fringes.Test(octet) || n.Prefixes.Intersects(in ArtTables.Ancestors[ArtTables.OctetToIndex(octet)]);
 
     // True when at most one change overlapped a lookup that began when _changes was before, so that the lookup saw the
     // trie as it was before or after that change.

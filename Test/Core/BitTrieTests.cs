@@ -720,6 +720,9 @@ public class BitTrieTests
             {
                 Interlocked.Increment(ref failures);
             }
+
+            if (expected[at] >= 0 && !trie.ContainsMatch(keys[at]))
+                Interlocked.Increment(ref failures);
         }, () =>
         {
             for (var round = 0; round < 20; round++)
@@ -733,6 +736,51 @@ public class BitTrieTests
 
         Assert.That(failures, Is.Zero);
         Assert.That(trie.ToTextTree(Format), Is.EqualTo(Build(prefixes, stable).ToTextTree(Format)));
+    }
+
+    [Test(Description = "Several readers check that each answer's prefix object and value come from the same update, while a writer updates every prefix over and over, one at a time and in batches.")]
+    public void Readers_see_each_update_whole()
+    {
+        var prefixes = TestKeys.RandomPrefixes<Bits32>(5000, 13);
+        var all = Enumerable.Range(0, prefixes.Count).ToList();
+        var reference = Reference(prefixes, all);
+        var keys = TestKeys.ProbeKeys(prefixes, 14).ToArray();
+        var expected = keys.Select(k => reference.Matches(k, 32) is { Count: > 0 } m ? m[0].Value : -1).ToArray();
+
+        // each update stores the round times the prefix count plus the index as both prefix object and value, so the two
+        // agree, and the remainder names the prefix, which never changes; round 0 is the index itself
+        var trie = new BitTrie<Bits32, int, int>(prefixes.Select((p, i) => (p.Bits, p.Length, i, i)));
+        long failures = 0, lookups = 0;
+        var positions = new int[3];
+        var random = new Random(15);
+        WithReaders(3, r =>
+        {
+            var at = positions[r] = (positions[r] + 1) % keys.Length;
+            var found = trie.TryGetMatch(keys[at], out var prefix, out var value);
+            if (found != expected[at] >= 0 || found && (prefix != value || prefix % prefixes.Count != expected[at]))
+                Interlocked.Increment(ref failures);
+            Interlocked.Increment(ref lookups);
+        }, () =>
+        {
+            for (var round = 1; round <= 20; round++)
+            {
+                var batch = round % 4 == 0 ? trie.BeginBatch() : null;
+                foreach (var i in all.OrderBy(_ => random.Next()))
+                {
+                    var stored = round * prefixes.Count + i;
+                    if (round % 2 == 0)
+                        Assert.That(trie.AddOrUpdate(prefixes[i].Bits, prefixes[i].Length, stored, stored), Is.False);
+                    else
+                        Assert.That(trie.TryUpdate(prefixes[i].Bits, prefixes[i].Length, stored, stored, stored - prefixes.Count), Is.True);
+                }
+
+                batch?.Commit();
+            }
+        });
+
+        Assert.That(failures, Is.Zero, $"{lookups:N0} lookups");
+        Assert.That(trie.Count, Is.EqualTo(prefixes.Count));
+        Assert.That(trie.ToTextTree(Format), Is.EqualTo(Build(prefixes, all).ToTextTree(Format)), "updates leave the shape alone");
     }
 
     [Test(Description = "A writer adds a covering prefix before it removes a longer one, and back again. Readers, more than there are processors so that some pause in the middle of a lookup, must find one of the two whichever writes they overlap.")]
@@ -751,7 +799,7 @@ public class BitTrieTests
         long failures = 0;
         WithReaders(readers, r =>
         {
-            if (!trie.TryGetMatchValue(key, out _) || !trie.TryGetMatch(key, 24, out _, out _) || trie.GetMatches(key, matches[r]) == 0)
+            if (!trie.TryGetMatchValue(key, out _) || !trie.ContainsMatch(key) || !trie.TryGetMatch(key, 24, out _, out _) || trie.GetMatches(key, matches[r]) == 0)
                 Interlocked.Increment(ref failures);
         }, () =>
         {

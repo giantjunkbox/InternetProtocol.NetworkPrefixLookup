@@ -6,6 +6,13 @@ with this project's design, to decide whether the project is worth doing and wha
 
 ## Summary
 
+- **Against Go's BART itself**, measured on 2026-10-23 with version 3 of this library, on the real routing tables and one
+  machine: lookups whose reads miss the cache are 1.1 to 2.6 times as fast from the read-write form and 1.5 to 4.6
+  times as fast from the frozen forms, and writes that readers can share are 2.3 to 3.2 times as fast as BART's
+  persistent writes, with a fifth to a sixth of the garbage. BART holds the tables in about 0.7 of the memory, builds
+  them 2 to 4 times as fast, and its in-place writes, which readers cannot share, are 6 to 11 times as fast as ours. It
+  also wins IPv6 lookups whose data stays in cache. See [Against Go's BART](#against-gos-bart). The rest of this
+  document records the comparisons made while version 3 was designed.
 - **Bart.NET is not better in every way.** On the real routing tables, this project's read-write design looks up
   addresses 2.7 times faster for IPv4 and 1.2 times faster for IPv6, and the frozen design 5.3 and 2.5 times faster.
   Bart.NET allocates 184 bytes on every lookup, cannot remove a prefix, does not return the matched prefix, cannot list
@@ -50,6 +57,87 @@ BART is a multibit trie with 8-bit strides, so an IPv4 lookup visits at most 4 n
 - **API.** Besides insert, delete, get and lookup: lookup by prefix with the matched prefix, subnets and supernets of a
   prefix, overlap tests against a prefix or a whole table, union, equality, clone, sorted iteration, size, text and
   JSON output.
+
+## Against Go's BART
+
+Measured on 2026-10-23 against [BART](https://github.com/gaissmai/bart) v0.30.0, its latest release, and this library as
+of this commit, on one machine: a 4-core cloud container with an Intel Xeon at 2.8 GHz, Go 1.24.7 built with
+`GOAMD64=v3` as BART recommends, and .NET 10.0.13.
+
+**Method.** A C# program writes the RouteViews tables, 1,054,037 IPv4 and 239,598 IPv6 prefixes with each prefix once,
+and the probe addresses to files. Two harnesses, one in Go and one in C#, read the same files and time plain loops:
+seven passes over a million lookups, the median per lookup, then the median of five runs that alternated between the
+two languages; the `ContainsMatch` rows come from the runs after it changed, three for IPv4 and two for IPv6. The Go
+harness is not in the repository, which stays C#. Both libraries returned the same answer for every probe.
+
+- *Cold* probes are a million different addresses, each a random address inside a randomly chosen announced prefix, so
+  most reads miss the cache, as in this library's other benchmarks.
+- *Warm* probes are BART's own: the address after the first address of each of the first 1,024 prefixes, repeated.
+  They stay in cache. The figures in BART's README use them.
+- BART takes `netip.Addr`, a value type, and stores `int32` values. The C# rows use `IPNetworkLookup<int>` and take
+  `IPAddress` objects, or `uint` and `UInt128` keys where marked.
+
+**Cold lookups**, ns per lookup, IPv4 / IPv6. `ContainsMatch` already stops at the first covering prefix, as BART's
+`Contains` does; before that change it took 63 / 170 ns.
+
+| Lookup | BART `Table` | BART `Fast` | Read-write | Frozen, leaf-pushed | Frozen, compressed |
+| --- | --- | --- | --- | --- | --- |
+| Value, from an address | 199 / 246 | 187 / 238 | **99 / 221** | **75 / 148** | **73 / 120** |
+| Value, from an integer key | | | 86 / 168 | 43 / 103 | 61 / 68 |
+| Prefix and value | 279 / 303 | 274 / 386 | **107 / 204** | **83 / 208** | |
+| Contains | 84 / 126 | 78 / 128 | **39 / 91** | | |
+
+BART's `Lite` answers `Contains` in 82 / 132 ns.
+
+**Warm lookups**, ns per lookup, IPv4 / IPv6:
+
+| Lookup | BART `Table` | BART `Fast` | Read-write | Frozen, leaf-pushed |
+| --- | --- | --- | --- | --- |
+| Value, from an address | 20.8 / 36.9 | 15.0 / **19.7** | 13.3 / 40.7 | **7.1** / 23.3 |
+| Value, from an integer key | | | 10.3 / 29.1 | 3.8 / 14.1 |
+| Prefix and value | 32.4 / 50.7 | 26.9 / 31.7 | 14.0 / 40.9 | **7.4 / 22.6** |
+| Contains | 17.2 / 26.9 | 12.1 / **15.6** | **11.9** / 28.9 | |
+
+**Memory**, MB of heap growth after building, IPv4 / IPv6:
+
+| BART `Table` | BART `Fast` | BART `Lite` | Read-write trie | Read-write, with the `IPNetwork` objects | Frozen, leaf-pushed | Frozen, compressed |
+| --- | --- | --- | --- | --- | --- | --- |
+| 24.2 / 9.9 | 31.3 / 19.4 | 18.8 / 8.0 | 31.8 / 14.3 | 74.0 / 33.5 | 68.2 / 65.1 | 46.4 / 16.5 |
+
+The frozen tables share the read-write table's `IPNetwork` objects, so their figures do not include them.
+
+**Writes**, ns per prefix, IPv4 / IPv6. Churn removes 100,000 random prefixes from the full table and adds them back,
+in random order.
+
+| Write | BART, in place | BART, persistent | This library |
+| --- | --- | --- | --- |
+| Building the table | 83 / 134 | 4,588 / 4,078 | 340 / 263 from a sequence, 252 / 396 in one batch, 543 / 625 one write at a time |
+| Churn | 422 / 480, no garbage | 10,397 / 9,285, 10.9 / 7.3 KB per write | 4,466 / 2,931, 1.8 / 1.4 KB per write |
+
+BART's `Fast` builds in 131 / 202 ns per prefix and churns in 596 / 730; `Lite` builds in 51 / 95.
+
+**What the numbers show:**
+
+- **Cold lookups, the case for full routing tables, favour this library in every row.** From addresses, the read-write
+  form is 2.0 times as fast as BART's `Table` on IPv4 and 1.1 times on IPv6; with the matched prefix, 2.6 and 1.5
+  times; for `Contains`, 2.2 and 1.4 times. The frozen forms answer from integer keys 4.6 and 3.6 times as fast as
+  `Table`, and with the matched prefix 3.4 and 1.5 times. The likely reason is the shortcut blocks, which resolve the
+  first 16 bits with one read, so a lookup waits for fewer cache misses.
+- **Warm lookups favour this library on IPv4 and BART on IPv6**, where `Fast` takes 19.7 ns against 29.1 from integer
+  keys. `Fast` keeps a 256-byte rank cache per node; the prototype tried that cache in C# and found it 4 to 18% slower,
+  in [Remedies tried](#remedies-tried). Taking an IPv6 `IPAddress` adds about 12 ns to this library's lookups when the
+  objects are in cache.
+- **BART uses less memory.** `Table` holds 0.76 and 0.69 of this library's trie, and `Lite` less still. On top of the
+  trie, `IPNetwork` keeps a heap `IPAddress` per prefix, 40 bytes for IPv4 and 80 for IPv6, which on IPv4 is more than
+  the trie itself. Go's `netip.Prefix` is a value with no object of its own.
+- **BART's in-place writes are 6 to 11 times as fast**, but nothing may read the table while they run. BART's own example
+  of concurrent use writes with `InsertPersist` and `DeletePersist` behind a mutex, and readers load the table from an
+  atomic pointer. Against those, this library's writes are 2.3 to 3.2 times as fast and leave a fifth to a sixth of the
+  garbage: a persistent write copies every node on the path, and this library copies one node and one array.
+- **BART builds 2 to 4 times as fast** with in-place inserts.
+- **This library's churn costs more than its build.** Adding in address order took 0.5 to 0.6 µs per write; random
+  churn on the full table takes 2.9 to 4.5 µs, shared between cache misses and collections that promote the copied
+  nodes, as [Limitations](Architecture.md#limitations) in Architecture.md describes.
 
 ## Measurements
 
@@ -223,7 +311,8 @@ IPv4 as fast as it can while one reader times every lookup.
   write, mostly the copied array of the changed node. At full speed that meant a collection about every 5,000 writes,
   each pausing for about 12 ms on average. At a thousand updates per second, a realistic rate for a routing table, that
   works out to roughly one collection every 5 seconds; this is extrapolated, not measured. Copying smaller pieces, such as one of a node's four arrays instead of the whole node, would cut
-  the allocation further.
+  the allocation further. Measured later in the library for updates, the one write that changes only an array, it cut
+  the allocation to 0.87 to 0.90 and saved no time; see "Since the baseline" in [Architecture.md](Architecture.md).
 
 ### Remedies tried
 
@@ -254,7 +343,7 @@ still turn the first two on for measurement. Branch-free level steps have not be
 `BartTrie` is the better read-write core for the tables this library exists for: faster lookups and builds on real
 routing tables, a quarter of the memory, bounded writes, and no compaction or growth stalls. Its two weaknesses are
 small cache-resident tables and allocation under heavy churn. The lookup remedies tried did not help; copying smaller
-pieces of a node is still untried for the allocation. The recommendation
+pieces of a node, measured later for updates, saved a tenth of the allocation and no time. The recommendation
 is to adopt it as the read-write core, with those two items as the next optimization steps and the frozen tables on
 top.
 

@@ -160,6 +160,7 @@ The other queries reuse the walk:
 | Query | How |
 | --- | --- |
 | `TryGetMatch(bits, length)` | As `Find`, but only prefixes no longer than `length` count, so the walk stops descending at the node that holds `length`. It starts from a shortcut block when the prefix is longer than 8 or 16 bits and keeps only the parent, as `FindOnce` does; a deeper backtrack walks again with the whole path |
+| `ContainsMatch` | Any match will do, so the walk checks each node on the way down and stops at the first fringe or prefix that contains the key, or decides at a leaf; it never climbs back. Through a shortcut block it checks the root and the depth-1 node, which are few and usually in cache, before it reads the depth-2 node |
 | `TryGetValue`, `ContainsPrefix` | Descend to the node of the prefix's stride and test one base index, fringe or leaf |
 | `GetMatches` | Collects on the way down to the node that holds `length`, or as far as a key leads: in each node the base indexes on the path, the ancestors of `i`, shortest first, then the fringe, and below the last node a leaf. Reversing them at the end gives longest first, so the walk keeps no path |
 | `Overlaps(bits, length)` | Two prefixes overlap exactly when one contains the other. On the way down to the node of the prefix's stride, a prefix or fringe on the path contains it, and a leaf decides alone. In that node, with `i` the prefix's base index, three 256-bit tests decide: the node's prefixes against `ArtTables.Ancestors[i]` and `Descendants[i]`, and its fringes, leaves and children against `ArtTables.Octets[i]`, the octets that `i` covers |
@@ -636,6 +637,32 @@ instead of testing 256 octets and 8 lengths in every node. Writers wait only whi
 
 The member inlines, and it stops at the walk's answer: the read-write trie reads no entry and the frozen one no value.
 
+**`ContainsMatch` stops at the first covering prefix** (one session on 2026-10-23, Intel Xeon at 2.8 GHz; bare
+`BitTrie`, one million lookups). It used to run the longest-match search to the deepest node; now it checks each node on
+the way down, as Go's BART does. Cold keys are random addresses inside announced prefixes; warm keys are BART's own 1,024
+probes, which stay in cache, repeated.
+
+| Lookup | Full search | First covering prefix | Ratio |
+| --- | --- | --- | --- |
+| Real IPv4, cold | 41.6 ms | 28.1 ms | 0.68 |
+| Real IPv4, warm | 9.2 ms | 8.6 ms | 0.94 |
+| Real IPv6, cold | 100.2 ms | 63.3 ms | 0.64 |
+| Real IPv6, warm | 27.9 ms | 17.1 ms | 0.61 |
+
+**Updates without copying the node**, measured and not kept (same session; 100,000 `AddOrUpdate` calls on prefixes
+already present in the real tables, outside a batch). An update changes none of a node's sets, so it could swap a copy of
+the one changed array into the published node with one reference write, and a reader would find entries that agree with
+the sets either way.
+
+| Updates | Copying the node | Swapping the array | Ratio |
+| --- | --- | --- | --- |
+| Real IPv4 | 292.6 ms, 180.7 MB | 272.5 ms, 162.4 MB | 0.93, allocation 0.90 |
+| Real IPv6 | 186.0 ms, 139.9 MB | 193.9 ms, 121.6 MB | 1.05, allocation 0.87 |
+
+The times are inside the noise. The node copy is about 180 bytes of the 1.2 to 1.8 KB an update allocates; the copied
+array is the rest, and an update must copy that array either way. Not worth an exception to the rule that a writer
+changes no node readers can reach.
+
 **Loading a whole table** (`RealBuildBenchmarks`, one session, the RouteViews tables with each network once): a batch of
 `TryAdd` calls against the constructor from a sequence, with the networks in address order and shuffled. The Gen0 and
 Gen1 columns are collections per thousand loads.
@@ -744,7 +771,8 @@ bits.
 
 | Idea | Expected effect | Status |
 | --- | --- | --- |
-| Copy only the array that changes, not the node and the array | Less allocation per write, fewer collections under churn | Not tried |
+| Copy only the array that changes, not the node and the array | Less allocation per write, fewer collections under churn | Measured for updates, the one write that changes no set: 0.87 to 0.90 of the allocation, time unchanged; not done; see [Since the baseline](#since-the-baseline). A write that changes a set must change it and its array at once, which would put the sets behind one more reference on every level of every lookup |
+| `ContainsMatch` stops at the first covering prefix | It ran the longest-match search, 1.35 times as long as Go's BART on the real IPv6 table | Done: 0.61 to 0.94 of the time; see [Since the baseline](#since-the-baseline) |
 | Branch-free level steps in the read-write lookup | Fewer mispredicted branches, mainly on small tables | Not tried |
 | Build a batch bottom-up from sorted input | Faster bulk loads than adding one prefix at a time to private nodes | Done, for input in any order, in the constructors: 1.3 to 3.9 times as fast, a third less allocation; see [Building from a sequence](#building-from-a-sequence) |
 | A third shortcut level for keys wider than 32 bits | Real IPv6 lookups 0.87 in one session, for 126 KB; IPv4 would lose (1.07, 49 MB) | Measured in the performance review; not done, pending a memory check on MaxMind and worst-case tables |
@@ -774,7 +802,7 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 
 | Test class | What it checks |
 | --- | --- |
-| `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 8-, 16-, 32- and 128-bit keys, including `GetMatches`, `GetSubnets` and `Overlaps` at the stored prefixes, one bit shorter and longer, and at every length (8 and 16 are test-only types; 8 has no shortcut blocks), before and after removals; canonical shape; batches commit and discard; a commit that throws, a batch ended on another thread, a batch in which a write threw; `Version`; frozen root sizes; lock-free readers during churn; lookups that overlap several writes; concurrent writers |
+| `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 8-, 16-, 32- and 128-bit keys, including `GetMatches`, `GetSubnets` and `Overlaps` at the stored prefixes, one bit shorter and longer, and at every length (8 and 16 are test-only types; 8 has no shortcut blocks), before and after removals; canonical shape; batches commit and discard; a commit that throws, a batch ended on another thread, a batch in which a write threw; `Version`; frozen root sizes; lock-free readers during churn; readers during updates, which see each update whole; lookups that overlap several writes; concurrent writers |
 | `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; the queries about networks; the counts per family; IPv4-mapped addresses and networks with mapping off and on; address conversions; writes and batches, including failed and wrong-thread batches; freezing both families at one moment; one freeze layout for both families; a reader during churn |
 | `Adapters/AdapterTests` | Each adapter package in both forms; MaxMind databases against `Reader.Find`, at IPv4, IPv4-compatible and IPv4-mapped addresses, and a hand-built database with a record above the IPv4 networks |
 
@@ -789,9 +817,14 @@ a symbol package, so a debugger can step into the source of the commit they were
 
 ## Limitations
 
-- **Garbage under heavy churn.** Copy-on-write allocates about 1.4 KB per write on the real IPv4 table, mostly the copied
-  array of the changed node. In the prototype a million writes at full speed caused 195 collections and pauses of up to
-  38 ms. At ordinary routing-table update rates this is rare; copying smaller pieces would reduce it.
+- **Garbage under heavy churn.** Copy-on-write allocates 1.4 to 1.8 KB per write on the real tables, mostly the copied
+  array of the changed node; the node itself is about 180 bytes of it. Removing and adding back 100,000 random prefixes
+  of the full real tables took 2.9 to 4.5 µs per write, against 0.4 to 0.5 µs for Go's BART changing its nodes in
+  place, which readers cannot share, and about 10 µs for its persistent writes, which they can; see
+  [Bart-Comparison.md](Bart-Comparison.md#against-gos-bart). Collections and cache misses share the cost: on IPv4 a
+  young generation large enough that it hardly collected cut 4.3 µs to 2.3, and the same writes in address order took
+  1.3 µs. In the prototype a million writes at full speed caused 195 collections and pauses of up to 38 ms. At ordinary
+  routing-table update rates this is rare.
 - **Small tables that fit in cache** look up several times slower than in the prototype's binary trie with an index,
   because a lookup walks several levels and backtracks: on the version 2 benchmark data, 154 ms per million lookups
   against 29 ms in an earlier session. Freeze such tables, with the compressed layout if their prefixes are scattered.

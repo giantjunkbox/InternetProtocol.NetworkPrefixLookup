@@ -427,8 +427,8 @@ Status after building version 3 of the library:
 1. **Bounded writes.** Done. The library's `BitTrie` follows the `BartTrie` prototype, a BART-style core with
    copy-on-write nodes; see [Bart-Comparison.md](Bart-Comparison.md#prototype-a-bart-style-read-write-core). Of the
    remedies for small tables, a rank cache per node and pruned backtracking were measured and did not help; see
-   [Remedies tried](Bart-Comparison.md#remedies-tried). Branch-free level steps and copying one of a node's arrays
-   instead of the whole node are still untried.
+   [Remedies tried](Bart-Comparison.md#remedies-tried). Branch-free level steps are still untried; copying one of a node's
+   arrays instead of the whole node, measured for updates, saved a tenth of the allocation and no time.
 2. **Core.** Done: `Core/BitTrie.cs` and `Core/FrozenBitTrie.cs`, with remove, longest match by prefix, all matches,
    exact lookups, clear, count, batches and a version number. The tests run every query against a reference for 16-,
    32-, 64-, 128- and 192-bit keys.
