@@ -89,8 +89,9 @@ interface differs from the original proposal. `Documentation/Adapter-Survey.md` 
   folder, and it targets .NET 7, which the original shipped on, as well as .NET 10.
 - `AotSmokeTest/` exercises each package once. It is in the solution and treats warnings as errors, so its build runs
   the AOT analyzers over the libraries' use, and CI publishes it with native AOT and runs it.
-- `.github/workflows/ci.yml` builds with warnings as errors, tests and packs on Linux x64 and ARM64, Windows and macOS
-  (ARM64), and publishes `AotSmokeTest` with native AOT for linux-x64 and linux-arm64.
+- `.github/workflows/ci.yml` builds with warnings as errors, tests on Linux x64 and ARM64 and on Windows, packs on
+  Linux, and publishes `AotSmokeTest` with native AOT for linux-x64 and linux-arm64. macOS is left out because no
+  macOS runner took the job on the first run.
 
 ## Build and test
 

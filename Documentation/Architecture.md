@@ -782,8 +782,9 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 report nothing. `AotSmokeTest` exercises each package once, the MaxMind loader included, and treats warnings as errors;
 published with native AOT it is a 4.9 MB executable whose checks all pass on linux-x64, and MaxMind.Db decodes the
 test database's records under native AOT too. The GitHub Actions workflow, `.github/workflows/ci.yml`, builds the
-solution with warnings as errors and runs the tests on Linux x64 and ARM64, Windows and macOS on ARM64, packs on Linux,
-and publishes and runs `AotSmokeTest` with native AOT on linux-x64 and linux-arm64. The packages carry Source Link and
+solution with warnings as errors and runs the tests on Linux x64 and ARM64 and on Windows, packs on Linux, and
+publishes and runs `AotSmokeTest` with native AOT on linux-x64 and linux-arm64; all of it passed on its first run.
+macOS is left out: no macOS runner took that job, and GitHub cancelled it after 15 minutes in the queue. The packages carry Source Link and
 a symbol package, so a debugger can step into the source of the commit they were built from.
 
 ## Limitations

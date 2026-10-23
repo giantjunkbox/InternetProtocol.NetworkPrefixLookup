@@ -14,8 +14,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # ubuntu-24.04-arm and macos-latest run on ARM64; the others on x64
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+        # ubuntu-24.04-arm runs on ARM64, the others on x64. macos-latest was left out: on the first run no macOS
+        # runner picked the job up, and GitHub cancelled it after 15 minutes in the queue
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
