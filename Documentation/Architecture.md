@@ -730,7 +730,7 @@ Set `ROUTEVIEWS_DIR` for the real-table benchmarks and memory report; without it
 | Test class | What it checks |
 | --- | --- |
 | `Core/BitTrieTests` | Every query of `BitTrie` and seven frozen layouts against an independent reference, for 8-, 16-, 32- and 128-bit keys, including `GetMatches`, `GetSubnets` and `Overlaps` at the stored prefixes, one bit shorter and longer, and at every length (8 and 16 are test-only types; 8 has no shortcut blocks), before and after removals; canonical shape; batches commit and discard; a commit that throws, a batch ended on another thread, a batch in which a write threw; `Version`; frozen root sizes; lock-free readers during churn; lookups that overlap several writes; concurrent writers |
-| `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; the queries about networks; IPv4-mapped addresses and networks with mapping off and on; address conversions; writes and batches, including failed and wrong-thread batches; freezing both families at one moment; one freeze layout for both families; a reader during churn |
+| `IP/IPNetworkLookupTests` | The v2 test scenarios as lookups; every address form; the queries about networks; the counts per family; IPv4-mapped addresses and networks with mapping off and on; address conversions; writes and batches, including failed and wrong-thread batches; freezing both families at one moment; one freeze layout for both families; a reader during churn |
 | `Adapters/AdapterTests` | Each adapter package in both forms; MaxMind databases against `Reader.Find`, at IPv4, IPv4-compatible and IPv4-mapped addresses, and a hand-built database with a record above the IPv4 networks |
 
 ## Limitations

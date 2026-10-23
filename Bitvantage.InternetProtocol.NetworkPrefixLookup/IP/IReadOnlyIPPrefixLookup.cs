@@ -64,6 +64,18 @@ public sealed record IPLookupOptions
 /// <typeparam name="TValue">The value type.</typeparam>
 public interface IReadOnlyIPPrefixLookup<TPrefix, TValue> : IReadOnlyCollection<PrefixEntry<TPrefix, TValue>>
 {
+    /// <summary>The number of stored IPv4 prefixes.</summary>
+    /// <remarks>
+    ///     Each count is read on its own, so while a read-write lookup changes, <see cref="IPv4Count" />,
+    ///     <see cref="IPv6Count" /> and <see cref="IReadOnlyCollection{T}.Count" /> read one after another need not add
+    ///     up. Changes in an uncommitted batch do not count.
+    /// </remarks>
+    int IPv4Count { get; }
+
+    /// <summary>The number of stored IPv6 prefixes.</summary>
+    /// <remarks>See <see cref="IPv4Count" />.</remarks>
+    int IPv6Count { get; }
+
     /// <summary>Finds the longest stored prefix that contains an address.</summary>
     /// <param name="address">An IPv4 or IPv6 address.</param>
     /// <param name="prefix">The matching prefix.</param>

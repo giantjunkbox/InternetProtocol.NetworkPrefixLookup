@@ -67,6 +67,12 @@ public class FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefix
     public int Count => _reader.Count;
 
     /// <inheritdoc />
+    public int IPv4Count => _reader.IPv4Count;
+
+    /// <inheritdoc />
+    public int IPv6Count => _reader.IPv6Count;
+
+    /// <inheritdoc />
     public bool TryGetMatch(IPAddress address, [MaybeNullWhen(false)] out TPrefix prefix, [MaybeNullWhen(false)] out TValue value) => _reader.TryGetMatch(address, out prefix, out value);
 
     /// <inheritdoc />

@@ -192,6 +192,10 @@ internal readonly struct IPLookupReader<TPrefix, TAdapter, TValue, TForm>
 
     public int Count => _ipv4.Count + _ipv6.Count;
 
+    public int IPv4Count => _ipv4.Count;
+
+    public int IPv6Count => _ipv6.Count;
+
     public IEnumerator<PrefixEntry<TPrefix, TValue>> GetEnumerator() => _ipv4.Concat(_ipv6).GetEnumerator();
 
     // ---- calls into the tries --------------------------------------------------------------------------------------

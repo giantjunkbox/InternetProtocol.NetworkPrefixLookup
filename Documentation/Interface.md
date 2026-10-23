@@ -248,6 +248,9 @@ public static class IPAddressBits
 ```csharp
 public interface IReadOnlyIPPrefixLookup<TPrefix, TValue> : IReadOnlyCollection<PrefixEntry<TPrefix, TValue>>
 {
+    int IPv4Count { get; }                                                               // Count is both families
+    int IPv6Count { get; }
+
     // the longest stored prefix that contains an address
     bool TryGetMatch(IPAddress address, out TPrefix prefix, out TValue value);
     bool TryGetMatch(ReadOnlySpan<byte> address, out TPrefix prefix, out TValue value); // 4 or 16 bytes, network order
@@ -279,7 +282,9 @@ public sealed record IPLookupOptions
 
 - **Addresses.** The span, `uint` and `UInt128` overloads serve callers that never hold an `IPAddress`, such as packet
   parsers. Scope IDs are ignored.
-- **Enumeration** returns the IPv4 prefixes, then the IPv6 prefixes, each in address order.
+- **Enumeration** returns the IPv4 prefixes, then the IPv6 prefixes, each in address order. `IPv4Count` and
+  `IPv6Count` count each family without a walk; each is read on its own, so during writes they need not add up to a
+  `Count` read a moment apart.
 - **IPv4-mapped addresses** such as `::ffff:10.1.2.3` are looked up as given by default, which suits routing tables and
   packet classification, where a mapped address on the wire is malformed or crafted (RFC 4942, section 2.2). With
   `MapIPv4MappedAddresses` on, as for addresses from dual-mode sockets, an address lookup treats a mapped address as the
@@ -470,6 +475,6 @@ differs from that proposal:
 
 - **Whether `Add` should exist** next to `TryAdd`, `AddOrUpdate` and `GetOrAdd`. It is there for familiarity with
   `Dictionary`.
-- **Further operations** suggested by the review, not yet decided: per-family counts, `GetMatches` from integers, and
-  one `Batch` type for every lookup. Overlap tests between two whole tables were left out: looping over the smaller
+- **Further operations** suggested by the review, not yet decided: `GetMatches` from integers, and one `Batch` type for
+  every lookup. Overlap tests between two whole tables were left out: looping over the smaller
   table with `Overlaps` answers the same question.

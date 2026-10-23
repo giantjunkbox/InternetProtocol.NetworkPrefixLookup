@@ -123,7 +123,7 @@ ROUTEVIEWS_DIR=/tmp/routeviews dotnet run -c Release --project PerformanceTest
 ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 3 minutes
 ```
 
-**Test baseline:** all 59 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
+**Test baseline:** all 60 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
 text with `Environment.NewLine`, so it passes with either line ending. Keep `.gitattributes` at `text=auto`.
 
 The whole solution builds with no warnings. Do not add any.

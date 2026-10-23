@@ -247,6 +247,26 @@ public class IPNetworkLookupTests
         }
     }
 
+    [Test]
+    public void Counts_cover_each_family()
+    {
+        var lookup = Lookup("10.0.0.0/8", "10.1.0.0/16", "192.168.0.0/16", "2001:db8::/32", "::/0");
+        foreach (var form in Forms(lookup))
+            Assert.That((form.IPv4Count, form.IPv6Count, form.Count), Is.EqualTo((3, 2, 5)));
+
+        using (var batch = lookup.BeginBatch())
+        {
+            lookup.Add(N("172.16.0.0/12"), "172.16.0.0/12");
+            lookup.Remove(N("::/0"));
+            Assert.That((lookup.IPv4Count, lookup.IPv6Count, lookup.Count), Is.EqualTo((3, 2, 5)), "an open batch does not count");
+            batch.Commit();
+        }
+
+        Assert.That((lookup.IPv4Count, lookup.IPv6Count, lookup.Count), Is.EqualTo((4, 1, 5)));
+        var empty = new IPNetworkLookup<string>().Freeze();
+        Assert.That((empty.IPv4Count, empty.IPv6Count), Is.EqualTo((0, 0)));
+    }
+
     [Test(Description = "v2 Add_IPv4_13: a set of networks without values")]
     public void Networks_without_values()
     {

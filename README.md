@@ -60,7 +60,8 @@ foreach (var match in routes.GetMatches(IPAddress.Parse("10.1.2.3")))
 | `TryGetValue(network, out value)`, `ContainsPrefix(network)` | Exactly this network, as a dictionary would |
 | `ContainsMatch(address)` | Whether any stored network contains an address |
 
-`Count` and enumeration cover both address families: the IPv4 networks, then the IPv6 ones, each in address order. The
+`Count` and enumeration cover both address families: the IPv4 networks, then the IPv6 ones, each in address order.
+`IPv4Count` and `IPv6Count` count one family each. The
 scope ID of an IPv6 address, as in `fe80::1%7`, is ignored, so link-local rules cannot be told apart by interface.
 
 ### Addresses from dual-mode sockets
