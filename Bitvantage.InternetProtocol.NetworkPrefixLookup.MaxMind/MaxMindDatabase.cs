@@ -66,7 +66,7 @@ public static class MaxMindDatabase
     };
 
     /// <summary>
-    ///     Reads every network in a database into a read-write lookup, loaded as one batch. Freeze the result for the
+    ///     Reads every network in a database into a read-write lookup, built in one pass. Freeze the result for the
     ///     fastest lookups.
     /// </summary>
     /// <param name="reader">An open reader.</param>
@@ -83,13 +83,20 @@ public static class MaxMindDatabase
     ///         file of a few hundred bytes can expand into millions of networks.
     ///     </para>
     /// </remarks>
+    /// <exception cref="ArgumentException">
+    ///     The database yields a network twice, which a well-formed one does not: its search tree reaches every network
+    ///     by one path, and the forms the loader adds for IPv4 networks lie in parts of the tree it skips.
+    /// </exception>
     public static MaxMindNetworkLookup<T> Load<T>(Reader reader, MaxMindLoadOptions? options = null) where T : class
     {
         ArgumentNullException.ThrowIfNull(reader);
         options ??= new MaxMindLoadOptions();
-        var lookup = new MaxMindNetworkLookup<T>(options.LookupOptions);
+        var map = options.LookupOptions?.MapIPv4MappedAddresses ?? true; // as MaxMindNetworkLookup's default
         var compatible = options.IncludeAliasedNetworks && reader.Metadata.IPVersion == 6;
-        using var batch = lookup.BeginBatch();
+
+        // The networks are collected, then built into the lookup in one pass, which was faster than adding them to a
+        // batch one at a time and allocated less; see "Building from a sequence" in Architecture.md.
+        var networks = new List<KeyValuePair<Network, T>>();
         foreach (var node in reader.FindAll<T>(options.Injectables, options.CacheSize))
         {
             Add(ToNetwork(node.Start, node.PrefixLength), node.Data);
@@ -98,8 +105,7 @@ public static class MaxMindDatabase
                 Add(new Network(IPAddress.Any, 0), node.Data);
         }
 
-        batch.Commit();
-        return lookup;
+        return new MaxMindNetworkLookup<T>(networks, options.LookupOptions);
 
         void Add(Network network, T data)
         {
@@ -107,12 +113,12 @@ public static class MaxMindDatabase
                 return;
             // a lookup that maps IPv4-mapped addresses refuses networks inside ::ffff:0:0/96, and answers those addresses
             // from the IPv4 networks, as the alias would
-            if (lookup.Options.MapIPv4MappedAddresses && IsMapped(network))
+            if (map && IsMapped(network))
                 return;
-            lookup.TryAdd(network, data);
+            networks.Add(KeyValuePair.Create(network, data));
             // the same network as the database stores it, so that IPv4-compatible addresses find it
             if (compatible && network.NetworkAddress.AddressFamily == AddressFamily.InterNetwork)
-                lookup.TryAdd(new Network(IPAddressBits.FromIPv6Bits(IPAddressBits.ToIPv4Bits(network.NetworkAddress)), network.PrefixLength + 96), data);
+                networks.Add(KeyValuePair.Create(new Network(IPAddressBits.FromIPv6Bits(IPAddressBits.ToIPv4Bits(network.NetworkAddress)), network.PrefixLength + 96), data));
         }
     }
 
