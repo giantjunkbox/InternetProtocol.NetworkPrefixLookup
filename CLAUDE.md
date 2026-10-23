@@ -148,6 +148,9 @@ The whole solution builds with no warnings. Do not add any.
   must produce no CS1591, CS1570 or CS1574 warnings.
 - The library projects set `IsAotCompatible`: no reflection or runtime code generation, which the trimming and AOT
   analyzers would report. They also publish Source Link and a symbol package.
+- `README.md` is technical and to the point, in plain sentences without parentheticals or other asides. It leads with
+  what the library is, a quick start and performance. It never mentions or compares with version 2; notes on upgrading
+  belong in `CHANGELOG.md`.
 - Comment tags in the code:
   - `PERF:` marks a known cost on a hot path.
   - `KNOWN ISSUE:` marks a confirmed bug that was intentionally left unchanged.
