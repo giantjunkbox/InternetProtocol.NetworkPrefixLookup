@@ -159,12 +159,12 @@ The other queries reuse the walk:
 
 | Query | How |
 | --- | --- |
-| `TryGetMatch(bits, length)` | As `Find`, but only prefixes no longer than `length` count, so the walk stops descending at the node that holds `length` |
+| `TryGetMatch(bits, length)` | As `Find`, but only prefixes no longer than `length` count, so the walk stops descending at the node that holds `length`. It starts from a shortcut block when the prefix is longer than 8 or 16 bits and keeps only the parent, as `FindOnce` does; a deeper backtrack walks again with the whole path |
 | `TryGetValue`, `ContainsPrefix` | Descend to the node of the prefix's stride and test one base index, fringe or leaf |
-| `GetMatches` | As `Find`, but collects every hit while backtracking, walking each node's base indexes `i, i/2, …, 1`. Given a prefix, it stops descending at the node that holds `length`, as `TryGetMatch(bits, length)` does |
+| `GetMatches` | Collects on the way down to the node that holds `length`, or as far as a key leads: in each node the base indexes on the path, the ancestors of `i`, shortest first, then the fringe, and below the last node a leaf. Reversing them at the end gives longest first, so the walk keeps no path |
 | `Overlaps(bits, length)` | Two prefixes overlap exactly when one contains the other. On the way down to the node of the prefix's stride, a prefix or fringe on the path contains it, and a leaf decides alone. In that node, with `i` the prefix's base index, three 256-bit tests decide: the node's prefixes against `ArtTables.Ancestors[i]` and `Descendants[i]`, and its fringes, leaves and children against `ArtTables.Octets[i]`, the octets that `i` covers |
-| `GetSubnets(bits, length)` | Descends as `Overlaps` does, then enumerates that node with its prefixes limited to `Descendants[i]` and its octets to `Octets[i]`; below those octets everything counts. A leaf on the way is the only candidate |
-| Enumeration | Depth-first, in address order: at each octet the base indexes that start there, shortest first, then the fringe, the leaf and the child |
+| `GetSubnets(bits, length)` | Descends as `Overlaps` does, then enumerates that node with its prefixes limited to `Descendants[i]` and its octets to `Octets[i]`; below those octets everything counts. A leaf on the way is the only candidate. One iterator yields the entries without computing their bits, and allocates its stack only when it goes below the first node |
+| Enumeration | `GetSubnets` with length 0: depth-first, in address order, at each octet the base indexes that start there, shortest first, then the fringe, the leaf and the child. `Freeze` reads the same walk with each prefix's bits |
 
 ## Writes, batches and readers
 
