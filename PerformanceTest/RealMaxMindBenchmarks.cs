@@ -53,9 +53,13 @@ public class RealMaxMindBenchmarks
     [GlobalSetup]
     public void Setup()
     {
-        _ = Frozen.Value;
-        _ = Addresses.Value;
-        Console.WriteLine($"// {Lookup.Value.IPv4Count:N0} IPv4 and {Lookup.Value.IPv6Count:N0} IPv6 networks");
+        // the written database must answer as MaxMind's reader does, or the numbers measure nothing
+        var mismatches = Addresses.Value.Where((_, i) => i % 10 == 0).Count(address =>
+            !Equals(Reader.Value.Find<Dictionary<string, object>>(address)?["autonomous_system_number"],
+                Frozen.Value.TryGetMatchValue(address, out var record) ? record["autonomous_system_number"] : null));
+        if (mismatches != 0)
+            throw new InvalidOperationException($"The lookup and MaxMind's reader disagree at {mismatches:N0} of 20,000 addresses.");
+        Console.WriteLine($"// {Lookup.Value.IPv4Count:N0} IPv4 and {Lookup.Value.IPv6Count:N0} IPv6 networks; the lookup agrees with the reader");
     }
 
     [Benchmark, IterationCount(10)]
