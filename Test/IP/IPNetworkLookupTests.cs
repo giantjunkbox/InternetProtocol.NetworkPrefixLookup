@@ -248,6 +248,24 @@ public class IPNetworkLookupTests
     }
 
     [Test]
+    public void A_lookup_can_be_built_from_another_lookup_or_a_query()
+    {
+        var lookup = Lookup("10.0.0.0/8", "10.1.0.0/16", "10.1.2.0/24", "192.168.0.0/16", "2001:db8::/32");
+        foreach (var form in Forms(lookup))
+        {
+            Assert.That(Values(new IPNetworkLookup<string>(form)), Is.EqualTo(Values(lookup)));
+            Assert.That(Values(new IPNetworkLookup<string>(form.GetSubnets(N("10.1.0.0/16")))), Is.EqualTo(new[] { "10.1.0.0/16", "10.1.2.0/24" }));
+        }
+
+        var mapped = new IPNetworkLookup<string>(lookup, new IPLookupOptions { MapIPv4MappedAddresses = true });
+        Assert.That(Match(mapped, "::ffff:10.1.2.3"), Is.EqualTo("10.1.2.0/24"), "the copy takes its own options");
+
+        var entry = new PrefixEntry<IPNetwork, string>(N("10.0.0.0/8"), "x");
+        Assert.Throws<ArgumentException>(() => _ = new IPNetworkLookup<string>(new[] { entry, entry }));
+        Assert.Throws<ArgumentNullException>(() => _ = new IPNetworkLookup<string>((IEnumerable<PrefixEntry<IPNetwork, string>>)null!));
+    }
+
+    [Test]
     public void Counts_cover_each_family()
     {
         var lookup = Lookup("10.0.0.0/8", "10.1.0.0/16", "192.168.0.0/16", "2001:db8::/32", "::/0");

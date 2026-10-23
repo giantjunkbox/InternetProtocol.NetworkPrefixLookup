@@ -58,6 +58,14 @@ public class NetworkPrefixLookup<TValue> : IPPrefixLookup<NetworkPrefix, Network
     {
     }
 
+    /// <summary>Creates a lookup holding the given prefixes, built in one pass: another lookup's contents, or the result of a query.</summary>
+    /// <param name="items">The prefixes and their values.</param>
+    /// <param name="options">Lookup options; by default every address is looked up as given.</param>
+    /// <exception cref="ArgumentException">A prefixe appears more than once.</exception>
+    public NetworkPrefixLookup(IEnumerable<PrefixEntry<NetworkPrefix, TValue>> items, IPLookupOptions? options = null) : base(items, options)
+    {
+    }
+
     /// <summary>
     ///     Builds a read-only copy with faster lookups. Later changes to this lookup do not affect it. Writes wait while
     ///     the prefixes are copied out, but not while the copy's tables are built; reads never wait.
@@ -104,6 +112,14 @@ public class NetworkPrefixLookup : NetworkPrefixLookup<NoValue>
     /// <exception cref="ArgumentException">A prefix appears more than once.</exception>
     public NetworkPrefixLookup(IEnumerable<NetworkPrefix> prefixes, IPLookupOptions? options = null)
         : base((prefixes ?? throw new ArgumentNullException(nameof(prefixes))).Select(p => KeyValuePair.Create(p, default(NoValue))), options)
+    {
+    }
+
+    /// <summary>Creates a set holding the given prefixes, built in one pass: another set's contents, or the result of a query.</summary>
+    /// <param name="prefixes">The prefixes.</param>
+    /// <param name="options">Lookup options; by default every address is looked up as given.</param>
+    /// <exception cref="ArgumentException">A prefix appears more than once.</exception>
+    public NetworkPrefixLookup(IEnumerable<PrefixEntry<NetworkPrefix, NoValue>> prefixes, IPLookupOptions? options = null) : base(prefixes, options)
     {
     }
 

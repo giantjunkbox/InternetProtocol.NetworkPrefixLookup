@@ -72,16 +72,54 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     ///     A prefix appears more than once, or <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> is on and a prefix lies
     ///     inside <c>::ffff:0:0/96</c>.
     /// </exception>
-    public IPPrefixLookup(IEnumerable<KeyValuePair<TPrefix, TValue>> items, IPLookupOptions? options = null) : this(options)
+    public IPPrefixLookup(IEnumerable<KeyValuePair<TPrefix, TValue>> items, IPLookupOptions? options = null) : this(options) =>
+        Load<KeyValuePair<TPrefix, TValue>, Pairs>(items);
+
+    /// <summary>
+    ///     Creates a lookup holding the given prefixes, built in one pass: another lookup's contents, or the result of a
+    ///     query such as <see cref="GetSubnets" />.
+    /// </summary>
+    /// <param name="items">The prefixes, in any order, and their values.</param>
+    /// <param name="options">Lookup options; by default every address is looked up as given.</param>
+    /// <remarks>See <see cref="IPPrefixLookup(IEnumerable{KeyValuePair{TPrefix, TValue}}, IPLookupOptions?)" />.</remarks>
+    /// <exception cref="ArgumentException">
+    ///     A prefix appears more than once, or <see cref="IPLookupOptions.MapIPv4MappedAddresses" /> is on and a prefix lies
+    ///     inside <c>::ffff:0:0/96</c>.
+    /// </exception>
+    public IPPrefixLookup(IEnumerable<PrefixEntry<TPrefix, TValue>> items, IPLookupOptions? options = null) : this(options) =>
+        Load<PrefixEntry<TPrefix, TValue>, Entries>(items);
+
+    // The two shapes of item the constructors take. The members are static, so the JIT compiles Load once for each shape
+    // with the reads inlined, instead of calling a delegate for every prefix.
+    private interface IItemShape<TItem>
+    {
+        static abstract TPrefix Prefix(in TItem item);
+        static abstract TValue Value(in TItem item);
+    }
+
+    private readonly struct Pairs : IItemShape<KeyValuePair<TPrefix, TValue>>
+    {
+        public static TPrefix Prefix(in KeyValuePair<TPrefix, TValue> item) => item.Key;
+        public static TValue Value(in KeyValuePair<TPrefix, TValue> item) => item.Value;
+    }
+
+    private readonly struct Entries : IItemShape<PrefixEntry<TPrefix, TValue>>
+    {
+        public static TPrefix Prefix(in PrefixEntry<TPrefix, TValue> item) => item.Prefix;
+        public static TValue Value(in PrefixEntry<TPrefix, TValue> item) => item.Value;
+    }
+
+    private void Load<TItem, TShape>(IEnumerable<TItem> items) where TShape : IItemShape<TItem>
     {
         ArgumentNullException.ThrowIfNull(items);
 
         // a collection can be read twice, so each family's buffer gets its exact size instead of growing by doubling
         var ipv4 = 0;
         var ipv6 = 0;
-        if (items is ICollection<KeyValuePair<TPrefix, TValue>> or IReadOnlyCollection<KeyValuePair<TPrefix, TValue>>)
-            foreach (var (prefix, _) in items)
+        if (items is ICollection<TItem> or IReadOnlyCollection<TItem>)
+            foreach (var item in items)
             {
+                var prefix = TShape.Prefix(in item);
                 IPAddressBits.ThrowIfNull(prefix);
                 if (TAdapter.IsIPv4(prefix)) ipv4++;
                 else ipv6++;
@@ -89,13 +127,14 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
 
         var v4 = new List<(Bits32 Bits, int Length, TPrefix Prefix, TValue Value)>(ipv4);
         var v6 = new List<(Bits128 Bits, int Length, TPrefix Prefix, TValue Value)>(ipv6);
-        foreach (var (prefix, value) in items)
+        foreach (var item in items)
         {
+            var prefix = TShape.Prefix(in item);
             IPAddressBits.ThrowIfNull(prefix);
             if (TAdapter.IsIPv4(prefix))
-                v4.Add((new Bits32(TAdapter.GetIPv4Bits(prefix)), TAdapter.GetLength(prefix), prefix, value));
+                v4.Add((new Bits32(TAdapter.GetIPv4Bits(prefix)), TAdapter.GetLength(prefix), prefix, TShape.Value(in item)));
             else
-                v6.Add((StoredIPv6Bits(prefix), TAdapter.GetLength(prefix), prefix, value));
+                v6.Add((StoredIPv6Bits(prefix), TAdapter.GetLength(prefix), prefix, TShape.Value(in item)));
         }
 
         _v4.Load(CollectionsMarshal.AsSpan(v4));

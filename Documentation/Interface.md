@@ -311,6 +311,7 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
 {
     public IPPrefixLookup(IPLookupOptions? options = null);
     public IPPrefixLookup(IEnumerable<KeyValuePair<TPrefix, TValue>> items, IPLookupOptions? options = null);   // one pass
+    public IPPrefixLookup(IEnumerable<PrefixEntry<TPrefix, TValue>> items, IPLookupOptions? options = null);    // another lookup, or a query's result
 
     public IPLookupOptions Options { get; }
     public long Version { get; }
@@ -470,6 +471,7 @@ differs from that proposal:
 | Frozen layout | Leaf-pushed unless the caller chose otherwise | Chosen from the data unless the caller chooses, because leaf-pushed tables can grow to gigabytes on scattered prefixes |
 | Freezing | `Freeze(ipv4 = null, ipv6 = null)` | `Freeze(options)` for both families and `Freeze(ipv4, ipv6)` for one each: the single method let `Freeze(compressed)` compress only IPv4. Writers wait only while the prefixes are copied |
 | IPv4-mapped addresses | Not covered | `IPLookupOptions.MapIPv4MappedAddresses`, off by default and on for MaxMind lookups, with prefixes inside `::ffff:0:0/96` rejected while it is on. The queries about networks follow it, so that `TryGetMatch(::ffff:10.1.2.3/128)` answers as the address `::ffff:10.1.2.3` does |
+| Entry types | `PrefixEntry` out, `KeyValuePair` in | Both in: the constructors from a sequence also take `PrefixEntry`, so `new IPNetworkLookup<int>(other)` copies a lookup and `new IPNetworkLookup<int>(other.GetSubnets(block))` part of one, while dictionaries still go in as they are. Results keep `PrefixEntry` for its `Prefix` name |
 | Queries about networks | `TryGetMatch` for a network | Also `GetMatches`, `GetSubnets` and `Overlaps` for a network, in both read-only interfaces, as Go's BART has. A frozen trie keeps each prefix's bits to answer the last two |
 | Null state | Plain `out` parameters | `[MaybeNullWhen(false)]` on every `Try…` method |
 | Address conversions | Unchecked | `IPAddressBits.ToIPv4Bits` and `ToIPv6Bits` throw for an address of the other family |

@@ -60,6 +60,14 @@ public class IPNetwork2Lookup<TValue> : IPPrefixLookup<IPNetwork2, IPNetwork2Ada
     {
     }
 
+    /// <summary>Creates a lookup holding the given prefixes, built in one pass: another lookup's contents, or the result of a query.</summary>
+    /// <param name="items">The prefixes and their values.</param>
+    /// <param name="options">Lookup options; by default every address is looked up as given.</param>
+    /// <exception cref="ArgumentException">A prefixe appears more than once.</exception>
+    public IPNetwork2Lookup(IEnumerable<PrefixEntry<IPNetwork2, TValue>> items, IPLookupOptions? options = null) : base(items, options)
+    {
+    }
+
     /// <summary>
     ///     Builds a read-only copy with faster lookups. Later changes to this lookup do not affect it. Writes wait while
     ///     the prefixes are copied out, but not while the copy's tables are built; reads never wait.

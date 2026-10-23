@@ -64,6 +64,14 @@ public class MaxMindNetworkLookup<TValue> : IPPrefixLookup<Network, MaxMindNetwo
     {
     }
 
+    /// <summary>Creates a lookup holding the given prefixes, built in one pass: another lookup's contents, or the result of a query.</summary>
+    /// <param name="items">The prefixes and their values.</param>
+    /// <param name="options">Lookup options; by default IPv4-mapped IPv6 addresses are looked up as IPv4, as MaxMind's reader does.</param>
+    /// <exception cref="ArgumentException">A prefixe appears more than once.</exception>
+    public MaxMindNetworkLookup(IEnumerable<PrefixEntry<Network, TValue>> items, IPLookupOptions? options = null) : base(items, options ?? MapMapped)
+    {
+    }
+
     /// <summary>
     ///     Builds a read-only copy with faster lookups. Later changes to this lookup do not affect it. Writes wait while
     ///     the prefixes are copied out, but not while the copy's tables are built; reads never wait.

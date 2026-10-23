@@ -44,11 +44,13 @@ public class AdapterTests
             Assert.That(form.TryGetMatch(NetworkPrefix.Parse("10.1.2.0/24"), out prefix, out _) && prefix.ToString() == "10.1.0.0/16");
             Assert.That(form.ContainsPrefix(NetworkPrefix.Parse("2001:db8::/32")));
             Assert.That(form.Count, Is.EqualTo(5));
+            Assert.That(new NetworkPrefixLookup<string>(form).Select(e => e.Value), Is.EqualTo(form.Select(e => e.Value)), "a copy");
         }
 
         var set = new NetworkPrefixLookup(new[] { NetworkPrefix.Parse("192.168.0.0/16"), NetworkPrefix.Parse("192.168.10.0/24") });
         Assert.That(set.TryAdd(NetworkPrefix.Parse("192.168.10.0/24")), Is.False);
         Assert.That(set.TryGetMatch(IPAddress.Parse("192.168.10.9"), out var match) && match.ToString() == "192.168.10.0/24");
+        Assert.That(new NetworkPrefixLookup(set).Count, Is.EqualTo(2), "a copy of a set");
         FrozenNetworkPrefixLookup frozen = set.Freeze();
         Assert.That(frozen.ContainsMatch(IPAddress.Parse("192.168.200.1")));
         Assert.That(frozen.ContainsMatch(IPAddress.Parse("192.169.0.1")), Is.False);
@@ -72,6 +74,7 @@ public class AdapterTests
             Assert.That(form.TryGetMatchValue(IPAddress.Parse("fd99::1"), out value) && value == 108);
             Assert.That(form.TryGetMatchValue(IPAddress.Parse("fe80::1"), out _), Is.False);
             Assert.That(form.TryGetMatch(IPAddress.Parse("10.200.0.1"), out var network, out _) && network.ToString() == "10.128.0.0/9");
+            Assert.That(new IPNetwork2Lookup<int>(form).Select(e => e.Value), Is.EqualTo(form.Select(e => e.Value)), "a copy");
         }
 
         Assert.That(lookup.Remove(IPNetwork2.Parse("10.128.0.0/9")));
@@ -148,6 +151,8 @@ public class AdapterTests
         Assert.That(lean.Count, Is.LessThanOrEqualTo(full.Count));
         Assert.That(lean.Options.MapIPv4MappedAddresses, "MaxMind lookups map by default");
         Assert.That(new MaxMindNetworkLookup<string>().Options.MapIPv4MappedAddresses);
+        var copy = new MaxMindNetworkLookup<Dictionary<string, object>>(lean.Freeze());
+        Assert.That(copy.Options.MapIPv4MappedAddresses && copy.Count == lean.Count, "a copy maps by default too");
         Assert.That(new IPNetworkLookup<string>().Options.MapIPv4MappedAddresses, Is.False, "other lookups do not");
 
         var failures = new List<string>();
