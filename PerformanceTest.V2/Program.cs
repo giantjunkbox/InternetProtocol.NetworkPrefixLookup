@@ -47,11 +47,12 @@ public static class Program
         foreach (var name in ComparisonData.Names)
         {
             var data = ComparisonData.Get(name);
+            var prefixes = ComparisonBenchmarks.Prefixes(data);
             var before = ComparisonData.HeapBytes();
             var sw = Stopwatch.StartNew();
             var lookup = new NetworkPrefixLookup<int>();
-            for (var i = 0; i < data.Prefixes.Length; i++)
-                lookup.TryAdd(data.Prefixes[i], data.Values[i]);
+            for (var i = 0; i < prefixes.Length; i++)
+                lookup.TryAdd(prefixes[i], data.Values[i]);
             var seconds = sw.Elapsed.TotalSeconds;
             var held = ComparisonData.HeapBytes() - before;
 
@@ -75,20 +76,25 @@ public class ComparisonBenchmarks
     public static IEnumerable<string> Names => ComparisonData.Names;
 
     private ComparisonData.Table _data = null!;
+    private NetworkPrefix[] _prefixes = null!;
     private NetworkPrefixLookup<int> _lookup = null!;
+
+    /// <summary>A table's prefixes as the NetworkPrefix objects version 2 takes; version 3 makes IPNetwork values.</summary>
+    public static NetworkPrefix[] Prefixes(ComparisonData.Table data) => data.Prefixes.Select(p => new NetworkPrefix(p.Address, p.Length)).ToArray();
 
     [GlobalSetup]
     public void Setup()
     {
         _data = ComparisonData.Get(Table);
+        _prefixes = Prefixes(_data);
         _lookup = Build();
     }
 
     private NetworkPrefixLookup<int> Build()
     {
         var lookup = new NetworkPrefixLookup<int>();
-        for (var i = 0; i < _data.Prefixes.Length; i++)
-            lookup.TryAdd(_data.Prefixes[i], _data.Values[i]);
+        for (var i = 0; i < _prefixes.Length; i++)
+            lookup.TryAdd(_prefixes[i], _data.Values[i]);
         return lookup;
     }
 

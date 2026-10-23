@@ -31,7 +31,6 @@ contains a given prefix, and look prefixes up exactly.
 | Package | Contents | Depends on |
 | --- | --- | --- |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup` | The keys, the core tries, the IP layer, and `IPNetworkLookup` for `System.Net.IPNetwork` | Nothing |
-| `….NetworkPrefixLookup.NetworkPrefix` | `NetworkPrefixLookup<TValue>` and the value-less `NetworkPrefixLookup` | `Bitvantage.InternetProtocol.NetworkPrefix` |
 | `….NetworkPrefixLookup.IPNetwork2` | `IPNetwork2Lookup<TValue>` | `IPNetwork2` |
 | `….NetworkPrefixLookup.MaxMind` | `MaxMindNetworkLookup<TValue>` and `MaxMindDatabase.Load` | `MaxMind.Db` |
 
@@ -62,7 +61,7 @@ The read-only members of `IPPrefixLookup` and `FrozenIPPrefixLookup` are written
 | Keys | `IBitKey<TSelf>`, `Bits32` and `Bits128` | Bit arithmetic for one fixed width |
 
 The core stores a *prefix object* and a *value* with each prefix. The prefix object is whatever the caller wants back
-from a lookup: the IP layer stores the caller's `IPNetwork` or `NetworkPrefix`. Routing tables and the core
+from a lookup: the IP layer stores the caller's `IPNetwork`, `IPNetwork2` or MaxMind `Network`. Routing tables and the core
 never create prefix objects, so diagnostics take a formatter for bits and lengths instead.
 
 Both forms of every layer implement one read-only interface, `IReadOnlyBitTrie` in the core and
@@ -403,9 +402,10 @@ slower, inside the container's drift.
 
 Each package defines an adapter struct and a read-write and frozen class pair. Two need more than that:
 
-- **NetworkPrefix** adds the value-less `NetworkPrefixLookup`, deriving from `NetworkPrefixLookup<NoValue>`.
-  `NoValueLookupExtensions` in the core adds `TryAdd(prefix)`, `Add(prefix)` and `TryGetMatch(address, out prefix)` for
-  any value-less lookup. `ContainsMatch` is a member of both read-only interfaces.
+- **Sets without values** need no package: `NoValueLookupExtensions` in the core adds `TryAdd(prefix)`, `Add(prefix)`
+  and `TryGetMatch(address, out prefix)` to any lookup whose values are `NoValue`, such as `IPNetworkLookup<NoValue>`.
+  `ContainsMatch` is a member of both read-only interfaces. A `NetworkPrefix` package once kept version 2's value-less
+  `NetworkPrefixLookup`; it was dropped with `NetworkPrefix` itself.
 - **MaxMind** adds `MaxMindDatabase.Load<T>`, which reads every network through `Reader.FindAll<T>` into one batch.
   MaxMind's IPv6 databases keep the IPv4 networks under `::/96`, which `FindAll` reports as IPv4, and point
   `::ffff:0:0/96`, `2001::/32` and `2002::/16` at them, so a full walk returns every IPv4 network four times. The loader
@@ -444,8 +444,13 @@ All numbers come from a 4-core cloud container (Intel Xeon, 2.8 GHz) on .NET 10.
 2026-10-19 and 20. Lookups allocate nothing in either form. Timings in this container drift by about 10% between
 sessions, so compare ratios within a table rather than times across tables.
 
+The random-table and comparison benchmarks below stored version 2's `NetworkPrefix` objects, through an adapter
+package that has since been dropped. They now store `System.Net.IPNetwork` values, which are 8 bytes larger per entry
+than a reference: the random table's read-write trie reports 9.4 MB instead of 8.6 MB.
+
 **Against the original library.** `PerformanceTest.V2` runs the library as it was before the redesign, at commit
-`b512201`, on the same tables as `ComparisonBenchmarks`: `NetworkPrefix` prefixes with `int` values in both, and
+`b512201`, on the same tables as `ComparisonBenchmarks`: `NetworkPrefix` prefixes with `int` values in both, through
+the adapter package of the time, and
 1,000,000 lookups from `IPAddress` objects. The small tables are every 1,054th prefix of the real IPv4 table and every
 240th of the real IPv6 table. The original ran on .NET 7, as it shipped, and on .NET 10; version 3 runs on .NET 10.
 The three sessions ran back to back on 2026-10-20.

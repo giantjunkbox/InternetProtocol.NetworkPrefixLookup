@@ -19,7 +19,7 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>A 32-bit key, such as an IPv4 address.</summary>
 public readonly struct Bits32 : IBitKey<Bits32>, IEquatable<Bits32>

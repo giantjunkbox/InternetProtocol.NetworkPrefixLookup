@@ -19,7 +19,7 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>A 128-bit key, such as an IPv6 address.</summary>
 public readonly struct Bits128 : IBitKey<Bits128>, IEquatable<Bits128>

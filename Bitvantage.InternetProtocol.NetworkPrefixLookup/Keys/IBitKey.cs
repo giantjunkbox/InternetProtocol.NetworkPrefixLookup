@@ -16,7 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>
 ///     The key types of the tries: <see cref="Bits32" /> and <see cref="Bits128" />. A key is a fixed-width bit string,

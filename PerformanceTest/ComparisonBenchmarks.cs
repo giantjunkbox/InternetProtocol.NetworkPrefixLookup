@@ -16,8 +16,9 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+using System.Net;
 using BenchmarkDotNet.Attributes;
-using Bitvantage.InternetProtocol;
+using Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 namespace PerformanceTest;
 
@@ -35,23 +36,28 @@ public class ComparisonBenchmarks
     public static IEnumerable<string> Names => ComparisonData.Names;
 
     private ComparisonData.Table _data = null!;
-    private NetworkPrefixLookup<int> _lookup = null!;
-    private FrozenNetworkPrefixLookup<int> _frozen = null!;
+    private IPNetwork[] _networks = null!;
+    private IPNetworkLookup<int> _lookup = null!;
+    private FrozenIPNetworkLookup<int> _frozen = null!;
+
+    /// <summary>A table's prefixes as <see cref="IPNetwork" /> values; version 2 makes its own NetworkPrefix objects.</summary>
+    public static IPNetwork[] Networks(ComparisonData.Table data) => data.Prefixes.Select(p => new IPNetwork(p.Address, p.Length)).ToArray();
 
     [GlobalSetup]
     public void Setup()
     {
         _data = ComparisonData.Get(Table);
+        _networks = Networks(_data);
         _lookup = Build(batch: true);
         _frozen = _lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
     }
 
-    private NetworkPrefixLookup<int> Build(bool batch)
+    private IPNetworkLookup<int> Build(bool batch)
     {
-        var lookup = new NetworkPrefixLookup<int>();
+        var lookup = new IPNetworkLookup<int>();
         var b = batch ? lookup.BeginBatch() : null;
-        for (var i = 0; i < _data.Prefixes.Length; i++)
-            lookup.TryAdd(_data.Prefixes[i], _data.Values[i]);
+        for (var i = 0; i < _networks.Length; i++)
+            lookup.TryAdd(_networks[i], _data.Values[i]);
         b?.Commit();
         return lookup;
     }
@@ -62,7 +68,7 @@ public class ComparisonBenchmarks
         var lookup = _lookup;
         long sum = 0;
         foreach (var address in _data.Addresses)
-            sum += lookup.TryGetMatch(address, out var prefix, out var value) ? prefix.Length + value : -1;
+            sum += lookup.TryGetMatch(address, out var prefix, out var value) ? prefix.PrefixLength + value : -1;
         return sum;
     }
 
@@ -72,7 +78,7 @@ public class ComparisonBenchmarks
         var lookup = _frozen;
         long sum = 0;
         foreach (var address in _data.Addresses)
-            sum += lookup.TryGetMatch(address, out var prefix, out var value) ? prefix.Length + value : -1;
+            sum += lookup.TryGetMatch(address, out var prefix, out var value) ? prefix.PrefixLength + value : -1;
         return sum;
     }
 

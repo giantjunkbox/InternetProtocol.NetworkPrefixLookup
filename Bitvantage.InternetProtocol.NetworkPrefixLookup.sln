@@ -27,8 +27,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Media", "Media", "{3996B0E4
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Bitvantage.InternetProtocol.NetworkPrefixLookup", "Bitvantage.InternetProtocol.NetworkPrefixLookup\Bitvantage.InternetProtocol.NetworkPrefixLookup.csproj", "{88AB1863-76C1-4E1C-BAEF-241748913A55}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix", "Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix\Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix.csproj", "{30A78A9F-3F14-48DD-B827-5A8C81D2F1A8}"
-EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Bitvantage.InternetProtocol.NetworkPrefixLookup.IPNetwork2", "Bitvantage.InternetProtocol.NetworkPrefixLookup.IPNetwork2\Bitvantage.InternetProtocol.NetworkPrefixLookup.IPNetwork2.csproj", "{BED7FCD1-8428-45E7-A4C2-321B3A8DB089}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Bitvantage.InternetProtocol.NetworkPrefixLookup.MaxMind", "Bitvantage.InternetProtocol.NetworkPrefixLookup.MaxMind\Bitvantage.InternetProtocol.NetworkPrefixLookup.MaxMind.csproj", "{8FB1BDCF-B7BA-4649-BFD3-EB9F4C6A2F88}"
@@ -51,10 +49,6 @@ Global
 		{88AB1863-76C1-4E1C-BAEF-241748913A55}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{88AB1863-76C1-4E1C-BAEF-241748913A55}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{88AB1863-76C1-4E1C-BAEF-241748913A55}.Release|Any CPU.Build.0 = Release|Any CPU
-		{30A78A9F-3F14-48DD-B827-5A8C81D2F1A8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{30A78A9F-3F14-48DD-B827-5A8C81D2F1A8}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{30A78A9F-3F14-48DD-B827-5A8C81D2F1A8}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{30A78A9F-3F14-48DD-B827-5A8C81D2F1A8}.Release|Any CPU.Build.0 = Release|Any CPU
 		{BED7FCD1-8428-45E7-A4C2-321B3A8DB089}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{BED7FCD1-8428-45E7-A4C2-321B3A8DB089}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{BED7FCD1-8428-45E7-A4C2-321B3A8DB089}.Release|Any CPU.ActiveCfg = Release|Any CPU

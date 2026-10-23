@@ -16,7 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>
 ///     A set of changes that readers see all at once, or not at all, started by <c>BeginBatch</c> on a

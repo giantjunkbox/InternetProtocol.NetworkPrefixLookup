@@ -16,7 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-using Bitvantage.InternetProtocol;
+using Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 namespace Test.Core;
 

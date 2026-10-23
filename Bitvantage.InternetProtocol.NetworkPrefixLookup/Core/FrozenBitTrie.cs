@@ -22,7 +22,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Diagnostics.CodeAnalysis;
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>The layout of a <see cref="FrozenBitTrie{TKey,TPrefix,TValue}" />'s lookup tables.</summary>
 public enum FrozenLayout

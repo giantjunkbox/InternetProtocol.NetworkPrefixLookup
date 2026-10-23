@@ -18,7 +18,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>
 ///     Read-only access to a set of prefixes over keys of type <typeparamref name="TKey" />, each with a prefix object and

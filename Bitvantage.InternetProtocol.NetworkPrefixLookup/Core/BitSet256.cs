@@ -20,7 +20,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>A fixed set of 256 bits, with rank and highest-common-bit operations.</summary>
 [StructLayout(LayoutKind.Sequential)]

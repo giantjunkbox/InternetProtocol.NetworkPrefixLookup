@@ -19,7 +19,7 @@
 using System.Net;
 using System.Net.Sockets;
 using BenchmarkDotNet.Attributes;
-using Bitvantage.InternetProtocol;
+using Bitvantage.InternetProtocol.NetworkPrefixLookup;
 using MaxMind.Db;
 
 namespace PerformanceTest;

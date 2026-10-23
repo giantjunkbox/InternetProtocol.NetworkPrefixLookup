@@ -36,8 +36,9 @@ that take strings, or has fewer than 70,000 downloads.
 ## Recommended packages
 
 Two of the three are built in version 3, as `Bitvantage.InternetProtocol.NetworkPrefixLookup.IPNetwork2` and
-`….MaxMind`, beside `….NetworkPrefix` for this project's own prefix type. The `IPAddressRange` package was built and
-then dropped with range support, which the owner left to a separate library.
+`….MaxMind`. A `….NetworkPrefix` package for Bitvantage's own prefix type was built and then dropped, because
+`NetworkPrefix` is being retired in favor of `System.Net.IPNetwork`. The `IPAddressRange` package was built and then
+dropped with range support, which the owner left to a separate library.
 
 ### IPNetwork2
 

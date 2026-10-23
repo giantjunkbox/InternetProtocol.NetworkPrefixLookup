@@ -18,8 +18,13 @@ Decisions made by the user:
 
 - Target .NET 10 only.
 - Backward compatibility with the v2 public API is not required.
-- The core ships as a package with no dependency on `Bitvantage.InternetProtocol.NetworkPrefix`.
-- The `NetworkPrefix` adapter ships as a separate package.
+- The core ships as a package with no dependencies.
+- No `NetworkPrefix` adapter: `Bitvantage.InternetProtocol.NetworkPrefix` is being retired, because
+  `System.Net.IPNetwork` covers what it did and a separate extension class fills the gaps. The adapter packages are
+  `IPNetwork2` and `MaxMind`.
+- Every type of every package is in the namespace `Bitvantage.InternetProtocol.NetworkPrefixLookup`, the core package's
+  name, apart from Bitvantage's other `Bitvantage.InternetProtocol` libraries. No type may be named
+  `NetworkPrefixLookup`, which would clash with the namespace.
 - The core is constrained on a purpose-built key interface, `IBitKey<TSelf>`. Key widths are fixed at compile time;
   widths chosen at run time are not supported.
 - No custom key types: `IBitKey<TSelf>`'s members are internal, so only `Bits32`, `Bits128` and the test project's keys,
@@ -66,7 +71,7 @@ interface differs from the original proposal. `Documentation/Adapter-Survey.md` 
     `WriteBatch`, `PrefixEntry`, `NoValue`.
   - `IP/`: the adapter interface, `IPAddressBits`, `IPPrefixLookup` and its frozen form, the internal `IPLookupReader`
     they share, and `IPNetworkLookup` for `System.Net.IPNetwork`.
-- `Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix/`, `.IPNetwork2/`, `.MaxMind/`: the adapter packages,
+- `Bitvantage.InternetProtocol.NetworkPrefixLookup.IPNetwork2/` and `.MaxMind/`: the adapter packages,
   each an adapter struct and a read-write and frozen class pair. The MaxMind package also has `MaxMindDatabase.Load`.
 - The read-only members of the read-write and frozen IP lookups are written once, in the internal struct
   `IPLookupReader`, and each public class forwards to it in one line. A marker type argument, `ReadWriteForm` or
@@ -123,7 +128,7 @@ ROUTEVIEWS_DIR=/tmp/routeviews dotnet run -c Release --project PerformanceTest
 ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 3 minutes
 ```
 
-**Test baseline:** all 62 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
+**Test baseline:** all 61 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
 text with `Environment.NewLine`, so it passes with either line ending. Keep `.gitattributes` at `text=auto`.
 
 The whole solution builds with no warnings. Do not add any.

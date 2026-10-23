@@ -19,7 +19,7 @@
 using System.Diagnostics;
 using System.Net;
 using BenchmarkDotNet.Running;
-using Bitvantage.InternetProtocol;
+using Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 namespace PerformanceTest;
 
@@ -55,11 +55,12 @@ public static class Program
         foreach (var name in ComparisonData.Names)
         {
             var data = ComparisonData.Get(name);
+            var networks = ComparisonBenchmarks.Networks(data);
             var before = ComparisonData.HeapBytes();
             var sw = Stopwatch.StartNew();
-            var lookup = new NetworkPrefixLookup<int>();
-            for (var i = 0; i < data.Prefixes.Length; i++)
-                lookup.TryAdd(data.Prefixes[i], data.Values[i]);
+            var lookup = new IPNetworkLookup<int>();
+            for (var i = 0; i < networks.Length; i++)
+                lookup.TryAdd(networks[i], data.Values[i]);
             var seconds = sw.Elapsed.TotalSeconds;
             var held = ComparisonData.HeapBytes() - before;
             var frozen = lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
@@ -95,11 +96,11 @@ public static class Program
 
         var random = RandomTableBenchmarks.CreateNetworks();
         var addresses = RandomTableBenchmarks.CreateAddresses();
-        var randomLookup = new NetworkPrefixLookup<string>(random.Select(n => KeyValuePair.Create(n, string.Empty)));
+        var randomLookup = new IPNetworkLookup<string>(random.Select(n => KeyValuePair.Create(n, string.Empty)));
         var frozenRandom = randomLookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
         Console.WriteLine($"random table, {randomLookup.Count:N0} prefixes: read-write {randomLookup.GetStatistics().IPv4.Bytes / 1048576.0:F1} MB, " +
                           $"frozen leaf-pushed {frozenRandom.Bytes / 1048576.0:F1} MB, frozen compressed {randomLookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed }).Bytes / 1048576.0:F1} MB");
-        foreach (var (name, lookup) in new (string, IReadOnlyIPPrefixLookup<NetworkPrefix, string>)[] { ("read-write", randomLookup), ("frozen", frozenRandom) })
+        foreach (var (name, lookup) in new (string, IReadOnlyIPPrefixLookup<IPNetwork, string>)[] { ("read-write", randomLookup), ("frozen", frozenRandom) })
         {
             lookup.TryGetMatch(addresses[0], out _, out _);
             var allocated = GC.GetAllocatedBytesForCurrentThread();

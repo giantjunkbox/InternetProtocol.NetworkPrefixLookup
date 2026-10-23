@@ -21,7 +21,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>
 ///     Converts addresses to and from integers whose most significant bit is the address's first bit, without allocating.

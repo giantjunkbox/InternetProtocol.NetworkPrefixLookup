@@ -18,7 +18,7 @@
 
 using System.Net;
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>
 ///     Teaches <see cref="IPPrefixLookup{TPrefix,TAdapter,TValue}" /> to read a prefix type: its address family, network

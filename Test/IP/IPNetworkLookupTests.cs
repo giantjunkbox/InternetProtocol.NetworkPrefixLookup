@@ -18,7 +18,7 @@
 
 using System.Net;
 using System.Net.Sockets;
-using Bitvantage.InternetProtocol;
+using Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 namespace Test.IP;
 

@@ -20,7 +20,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Diagnostics.CodeAnalysis;
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>Reads <see cref="IPNetwork" /> for the IP lookups.</summary>
 public readonly struct IPNetworkAdapter : IIPPrefixAdapter<IPNetwork>

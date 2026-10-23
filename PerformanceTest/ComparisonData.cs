@@ -17,14 +17,15 @@
 */
 
 using System.Net;
-using Bitvantage.InternetProtocol;
 
 namespace PerformanceTest;
 
 /// <summary>
-///     The tables for comparing version 3 with version 2, as <see cref="NetworkPrefix" /> objects so that both versions
-///     store the same type. Compiled into PerformanceTest and into PerformanceTest.V2, which runs the same benchmarks
-///     against version 2 in its own process, because the two library versions have the same assembly name.
+///     The tables for comparing version 3 with version 2, each prefix as an address with its host bits clear and a
+///     length, from which version 3 makes IPNetwork values and version 2 NetworkPrefix objects. Compiled into
+///     PerformanceTest and into PerformanceTest.V2, which runs the same benchmarks against version 2 in its own process,
+///     because the two library versions have the same assembly name; it uses neither library, and builds for .NET 7,
+///     which has no IPNetwork.
 /// </summary>
 /// <remarks>
 ///     Each table has 1,000,000 lookup addresses. For the RouteViews tables these are random addresses inside randomly
@@ -33,7 +34,7 @@ namespace PerformanceTest;
 /// </remarks>
 public static class ComparisonData
 {
-    public sealed record Table(NetworkPrefix[] Prefixes, int[] Values, IPAddress[] Addresses);
+    public sealed record Table((IPAddress Address, int Length)[] Prefixes, int[] Values, IPAddress[] Addresses);
 
     private static readonly Lazy<Table> RealIPv4 = new(() => Load("rv2", 32));
     private static readonly Lazy<Table> RealIPv6 = new(() => Load("rv6", 128));
@@ -87,13 +88,13 @@ public static class ComparisonData
     private static Table Load(string kind, int width)
     {
         var seen = new HashSet<(UInt128, int)>();
-        var prefixes = new List<NetworkPrefix>();
+        var prefixes = new List<(IPAddress Address, int Length)>();
         var values = new List<int>();
         var bits = new List<UInt128>();
         foreach (var (value, length, asn) in ReadRouteViews(kind, width).Rows)
         {
             if (!seen.Add((value, length))) continue; // the IPv6 table lists a few prefixes twice
-            prefixes.Add(new NetworkPrefix(ToAddress(value, width), length));
+            prefixes.Add((ToAddress(value, width), length));
             values.Add(asn);
             bits.Add(value);
         }
@@ -110,7 +111,7 @@ public static class ComparisonData
     }
 
     // random addresses inside randomly chosen prefixes of the table
-    private static IPAddress[] Addresses(List<NetworkPrefix> prefixes, List<UInt128> bits, int width)
+    private static IPAddress[] Addresses(List<(IPAddress Address, int Length)> prefixes, List<UInt128> bits, int width)
     {
         var random = new Random(42);
         var addresses = new IPAddress[1_000_000];
@@ -127,15 +128,17 @@ public static class ComparisonData
         return addresses;
     }
 
-    // version 2's benchmark data: 100,000 random IPv4 prefixes from seed 11, made distinct, and random addresses from seed 12
+    // version 2's benchmark data: 100,000 random IPv4 prefixes from seed 11, made distinct, and random addresses from seed
+    // 12. Version 2 made NetworkPrefix objects, which clear the bits after the length, so the bits are cleared here.
     private static Table Random()
     {
         var random = new Random(11);
-        var prefixes = new List<NetworkPrefix>();
+        var prefixes = new List<(IPAddress Address, int Length)>();
         for (var i = 0; i < 100_000; i++)
         {
             var address = new IPAddress(BitConverter.GetBytes(random.NextInt64(0, 0xff_ff_ff_ffL + 1)).Take(4).ToArray());
-            prefixes.Add(new NetworkPrefix(address, (ushort)Math.Cbrt(random.Next(0, 33 * 33 * 33))));
+            var length = (int)Math.Cbrt(random.Next(0, 33 * 33 * 33));
+            prefixes.Add((ToAddress(ToBits(address, 32) & Mask(length, 32), 32), length));
         }
 
         var distinct = prefixes.Distinct().ToArray();

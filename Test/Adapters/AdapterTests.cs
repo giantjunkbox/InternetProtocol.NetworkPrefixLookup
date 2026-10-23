@@ -19,7 +19,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
-using Bitvantage.InternetProtocol;
+using Bitvantage.InternetProtocol.NetworkPrefixLookup;
 using MaxMind.Db;
 
 namespace Test.Adapters;
@@ -27,35 +27,6 @@ namespace Test.Adapters;
 /// <summary>Tests for the adapter packages: each reads its library's type correctly, in both families and both forms.</summary>
 public class AdapterTests
 {
-    [Test]
-    public void NetworkPrefix_lookups()
-    {
-        var lookup = new NetworkPrefixLookup<string>();
-        foreach (var prefix in new[] { "10.0.0.0/8", "10.1.0.0/16", "2001:db8::/32", "2001:db8:1::/48", "0.0.0.0/0" })
-            lookup.Add(NetworkPrefix.Parse(prefix), prefix);
-
-        foreach (IReadOnlyIPPrefixLookup<NetworkPrefix, string> form in new IReadOnlyIPPrefixLookup<NetworkPrefix, string>[] { lookup, lookup.Freeze() })
-        {
-            Assert.That(form.TryGetMatchValue(IPAddress.Parse("10.1.2.3"), out var value) && value == "10.1.0.0/16");
-            Assert.That(form.TryGetMatchValue(IPAddress.Parse("10.2.2.3"), out value) && value == "10.0.0.0/8");
-            Assert.That(form.TryGetMatchValue(IPAddress.Parse("11.0.0.1"), out value) && value == "0.0.0.0/0");
-            Assert.That(form.TryGetMatchValue(IPAddress.Parse("2001:db8:1::5"), out value) && value == "2001:db8:1::/48");
-            Assert.That(form.TryGetMatch(IPAddress.Parse("2001:db8:2::5"), out var prefix, out _) && prefix.ToString() == "2001:db8::/32");
-            Assert.That(form.TryGetMatch(NetworkPrefix.Parse("10.1.2.0/24"), out prefix, out _) && prefix.ToString() == "10.1.0.0/16");
-            Assert.That(form.ContainsPrefix(NetworkPrefix.Parse("2001:db8::/32")));
-            Assert.That(form.Count, Is.EqualTo(5));
-            Assert.That(new NetworkPrefixLookup<string>(form).Select(e => e.Value), Is.EqualTo(form.Select(e => e.Value)), "a copy");
-        }
-
-        var set = new NetworkPrefixLookup(new[] { NetworkPrefix.Parse("192.168.0.0/16"), NetworkPrefix.Parse("192.168.10.0/24") });
-        Assert.That(set.TryAdd(NetworkPrefix.Parse("192.168.10.0/24")), Is.False);
-        Assert.That(set.TryGetMatch(IPAddress.Parse("192.168.10.9"), out var match) && match.ToString() == "192.168.10.0/24");
-        Assert.That(new NetworkPrefixLookup(set).Count, Is.EqualTo(2), "a copy of a set");
-        FrozenNetworkPrefixLookup frozen = set.Freeze();
-        Assert.That(frozen.ContainsMatch(IPAddress.Parse("192.168.200.1")));
-        Assert.That(frozen.ContainsMatch(IPAddress.Parse("192.169.0.1")), Is.False);
-    }
-
     [Test]
     public void IPNetwork2_lookups()
     {

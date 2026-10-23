@@ -20,7 +20,7 @@ using System.Net;
 using System.Net.Sockets;
 using MaxMind.Db;
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>Options for <see cref="MaxMindDatabase.Load{T}(Reader,MaxMindLoadOptions?)" />.</summary>
 public sealed record MaxMindLoadOptions

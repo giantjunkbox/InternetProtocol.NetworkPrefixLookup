@@ -22,7 +22,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Diagnostics.CodeAnalysis;
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>
 ///     A read-write set of prefixes over keys of type <typeparamref name="TKey" />, each stored with a prefix object and a

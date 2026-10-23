@@ -20,7 +20,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Runtime.CompilerServices;
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 // The two forms of an IP lookup, as type arguments of IPLookupReader.
 internal readonly struct ReadWriteForm

@@ -30,11 +30,12 @@ clearly faster, as the frozen form is.
 | Package | Contents | Depends on |
 | --- | --- | --- |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup` | Keys, core, IP layer, `IPNetworkLookup` for `System.Net.IPNetwork` | Nothing |
-| `….NetworkPrefixLookup.NetworkPrefix` | `NetworkPrefixLookup<TValue>` and the value-less `NetworkPrefixLookup` | `Bitvantage.InternetProtocol.NetworkPrefix` |
 | `….NetworkPrefixLookup.IPNetwork2` | `IPNetwork2Lookup<TValue>` | `IPNetwork2` |
 | `….NetworkPrefixLookup.MaxMind` | `MaxMindNetworkLookup<TValue>` and `MaxMindDatabase.Load` | `MaxMind.Db` |
 
-All packages target .NET 10 and are at version 3.0.0. Everything is in the `Bitvantage.InternetProtocol` namespace.
+All packages target .NET 10 and are at version 3.0.0. Every type of every package is in the
+`Bitvantage.InternetProtocol.NetworkPrefixLookup` namespace, so one `using` covers them, apart from the rest of
+Bitvantage's `Bitvantage.InternetProtocol` libraries.
 
 ## Keys
 
@@ -361,7 +362,6 @@ redeclares `Freeze` with `new` to return its own frozen class:
 | Package | Read-write | Frozen | Adapter |
 | --- | --- | --- | --- |
 | Core package | `IPNetworkLookup<TValue>` | `FrozenIPNetworkLookup<TValue>` | `IPNetworkAdapter` for `System.Net.IPNetwork` |
-| `NetworkPrefix` | `NetworkPrefixLookup<TValue>`, `NetworkPrefixLookup` | `FrozenNetworkPrefixLookup<TValue>`, `FrozenNetworkPrefixLookup` | `NetworkPrefixAdapter` |
 | `IPNetwork2` | `IPNetwork2Lookup<TValue>` | `FrozenIPNetwork2Lookup<TValue>` | `IPNetwork2Adapter` for `System.Net.IPNetwork2` |
 | `MaxMind` | `MaxMindNetworkLookup<TValue>` | `FrozenMaxMindNetworkLookup<TValue>` | `MaxMindNetworkAdapter` for `MaxMind.Db.Network` |
 
@@ -372,8 +372,7 @@ redeclares `Freeze` with `new` to return its own frozen class:
 `NoValue` is an empty struct for sets of prefixes. `NoValueLookupExtensions` adds `TryAdd(prefix)` and `Add(prefix)`
 to any read-write lookup whose value type is `NoValue`, and `TryGetMatch(address, out prefix)` to any read-only one.
 `ContainsMatch`, the question a set is usually asked, is a member of both read-only interfaces: it stops at the
-answer and reads no entry or value, so it is faster than a match. The `NetworkPrefix` package's value-less
-`NetworkPrefixLookup` keeps the version 2 class name.
+answer and reads no entry or value, so it is faster than a match. A set of networks is an `IPNetworkLookup<NoValue>`.
 
 ### MaxMind databases
 
@@ -472,6 +471,8 @@ differs from that proposal:
 | Freezing | `Freeze(ipv4 = null, ipv6 = null)` | `Freeze(options)` for both families and `Freeze(ipv4, ipv6)` for one each: the single method let `Freeze(compressed)` compress only IPv4. Writers wait only while the prefixes are copied |
 | IPv4-mapped addresses | Not covered | `IPLookupOptions.MapIPv4MappedAddresses`, off by default and on for MaxMind lookups, with prefixes inside `::ffff:0:0/96` rejected while it is on. The queries about networks follow it, so that `TryGetMatch(::ffff:10.1.2.3/128)` answers as the address `::ffff:10.1.2.3` does |
 | Entry types | `PrefixEntry` out, `KeyValuePair` in | Both in: the constructors from a sequence also take `PrefixEntry`, so `new IPNetworkLookup<int>(other)` copies a lookup and `new IPNetworkLookup<int>(other.GetSubnets(block))` part of one, while dictionaries still go in as they are. Results keep `PrefixEntry` for its `Prefix` name |
+| Namespace | Not stated; version 2 and the first builds used `Bitvantage.InternetProtocol` | `Bitvantage.InternetProtocol.NetworkPrefixLookup`, the core package's name, for every package. The shared namespace let one `using` cover the `NetworkPrefix` type and the lookups; with that package gone, the package's own name keeps generic names such as `BitTrie`, `PrefixEntry` and `WriteBatch` apart from Bitvantage's other `Bitvantage.InternetProtocol` libraries. It became possible once no class was named `NetworkPrefixLookup` |
+| `NetworkPrefix` adapter | A package with `NetworkPrefixLookup<TValue>` | Built, then dropped: `NetworkPrefix` is being retired, since `System.Net.IPNetwork` covers what it did and a separate extension class fills the gaps |
 | Batches | Not covered | One `WriteBatch` class that every lookup's `BeginBatch` returns. A nested `Batch` class in each lookup came first; it was replaced so that a batch kept in a field or passed to a helper is a `WriteBatch` rather than an `IPPrefixLookup<IPNetwork, IPNetworkAdapter, int>.Batch` |
 | Queries about networks | `TryGetMatch` for a network | Also `GetMatches`, `GetSubnets` and `Overlaps` for a network, in both read-only interfaces, as Go's BART has. A frozen trie keeps each prefix's bits to answer the last two |
 | Null state | Plain `out` parameters | `[MaybeNullWhen(false)]` on every `Try…` method |

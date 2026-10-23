@@ -18,7 +18,7 @@
 
 using System.Net;
 using BenchmarkDotNet.Attributes;
-using Bitvantage.InternetProtocol;
+using Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 namespace PerformanceTest;
 
@@ -29,15 +29,15 @@ namespace PerformanceTest;
 [MemoryDiagnoser]
 public class RandomTableBenchmarks
 {
-    private static readonly List<NetworkPrefix> Networks = CreateNetworks();
+    private static readonly List<IPNetwork> Networks = CreateNetworks();
     private static readonly List<IPAddress> Addresses = CreateAddresses();
     private static readonly uint[] AddressBits = Addresses.Select(IPAddressBits.ToIPv4Bits).ToArray();
-    private static readonly NetworkPrefixLookup<string> Lookup = new(Networks.Select(n => KeyValuePair.Create(n, string.Empty)));
-    private static readonly FrozenNetworkPrefixLookup<string> Frozen = Lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
-    private static readonly FrozenNetworkPrefixLookup<string> FrozenCompressed = Lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });
+    private static readonly IPNetworkLookup<string> Lookup = new(Networks.Select(n => KeyValuePair.Create(n, string.Empty)));
+    private static readonly FrozenIPNetworkLookup<string> Frozen = Lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
+    private static readonly FrozenIPNetworkLookup<string> FrozenCompressed = Lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed });
 
     // v2: 100,000 prefixes taken from the random sequence, then made distinct
-    public static List<NetworkPrefix> CreateNetworks() => RandomPrefixes(11).Take(100_000).Distinct().ToList();
+    public static List<IPNetwork> CreateNetworks() => RandomPrefixes(11).Take(100_000).Distinct().ToList();
 
     public static List<IPAddress> CreateAddresses() => RandomAddresses(12).Take(1_000_000).ToList();
 
@@ -92,7 +92,7 @@ public class RandomTableBenchmarks
     [Benchmark, IterationCount(30)]
     public object Add_100K()
     {
-        var lookup = new NetworkPrefixLookup<string?>();
+        var lookup = new IPNetworkLookup<string?>();
         foreach (var network in Networks)
             lookup.TryAdd(network, default);
         return lookup;
@@ -101,7 +101,7 @@ public class RandomTableBenchmarks
     [Benchmark, IterationCount(30)]
     public object Add_100K_Batch()
     {
-        var lookup = new NetworkPrefixLookup<string?>();
+        var lookup = new IPNetworkLookup<string?>();
         using var batch = lookup.BeginBatch();
         foreach (var network in Networks)
             lookup.TryAdd(network, default);
@@ -112,14 +112,16 @@ public class RandomTableBenchmarks
     [Benchmark, IterationCount(30)]
     public object Freeze_100K() => Lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
 
-    private static IEnumerable<NetworkPrefix> RandomPrefixes(int seed)
+    // v2 made NetworkPrefix objects, which clear the bits after the length; IPNetwork requires them clear
+    private static IEnumerable<IPNetwork> RandomPrefixes(int seed)
     {
         var random = new Random(seed);
         while (true)
         {
             var addressBytes = BitConverter.GetBytes(random.NextInt64(0, 0xff_ff_ff_ffL + 1)).Take(4).ToArray();
-            var length = (ushort)Math.Cbrt(random.Next(0, 33 * 33 * 33));
-            yield return new NetworkPrefix(new IPAddress(addressBytes), length);
+            var length = (int)Math.Cbrt(random.Next(0, 33 * 33 * 33));
+            var bits = IPAddressBits.ToIPv4Bits(new IPAddress(addressBytes)) & (length == 0 ? 0 : uint.MaxValue << (32 - length));
+            yield return new IPNetwork(IPAddressBits.FromIPv4Bits(bits), length);
         }
     }
 

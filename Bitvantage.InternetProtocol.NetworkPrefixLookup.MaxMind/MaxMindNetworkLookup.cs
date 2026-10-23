@@ -19,7 +19,7 @@
 using System.Net.Sockets;
 using MaxMind.Db;
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>Reads <see cref="Network" /> for the IP lookups.</summary>
 public readonly struct MaxMindNetworkAdapter : IIPPrefixAdapter<Network>

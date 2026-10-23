@@ -20,7 +20,7 @@ using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Net;
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>
 ///     A read-only set of IPv4 and IPv6 prefixes with faster lookups than

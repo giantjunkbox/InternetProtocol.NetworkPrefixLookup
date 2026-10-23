@@ -19,7 +19,7 @@
 using System.Net;
 using System.Diagnostics.CodeAnalysis;
 
-namespace Bitvantage.InternetProtocol;
+namespace Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 /// <summary>Options for the IP lookups.</summary>
 public sealed record IPLookupOptions

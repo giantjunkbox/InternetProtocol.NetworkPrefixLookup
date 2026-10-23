@@ -18,7 +18,7 @@
 
 using System.Diagnostics;
 using System.Net;
-using Bitvantage.InternetProtocol;
+using Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 namespace PerformanceTest;
 

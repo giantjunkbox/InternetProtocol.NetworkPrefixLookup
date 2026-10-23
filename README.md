@@ -8,8 +8,8 @@ contains it, and its value. Suited to routing tables, packet classification, acc
   table as it was at one moment, never part of a write, and every write does a bounded amount of work, so there are no
   pauses for growth or compaction.
 - **Frozen tables** for data that is loaded once and then only read, with lookups up to 1.8 times as fast again.
-- **Your network type**: `System.Net.IPNetwork` is built in, and small packages add `NetworkPrefix`, `IPNetwork2` and
-  MaxMind databases.
+- **Your network type**: `System.Net.IPNetwork` is built in, and small packages add `IPNetwork2` and MaxMind
+  databases.
 - **No dependencies** in the core package. Targets .NET 10.
 
 ## Packages
@@ -17,7 +17,6 @@ contains it, and its value. Suited to routing tables, packet classification, acc
 | Package | For |
 | --- | --- |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup` | `System.Net.IPNetwork`, prefixes of your own types, and keys other than IP addresses |
-| `Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix` | `Bitvantage.InternetProtocol.NetworkPrefix`, with the class names of version 2 |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup.IPNetwork2` | `System.Net.IPNetwork2` from the IPNetwork2 package |
 | `Bitvantage.InternetProtocol.NetworkPrefixLookup.MaxMind` | `MaxMind.Db` networks, and loading a whole GeoIP2 or GeoLite2 database |
 
@@ -29,7 +28,7 @@ dotnet add package Bitvantage.InternetProtocol.NetworkPrefixLookup
 
 ```csharp
 using System.Net;
-using Bitvantage.InternetProtocol;
+using Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 var routes = new IPNetworkLookup<int>();
 routes.Add(IPNetwork.Parse("10.0.0.0/8"), 64512);
@@ -154,7 +153,7 @@ var small = routes.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compr
 ## MaxMind databases
 
 ```csharp
-using Bitvantage.InternetProtocol;
+using Bitvantage.InternetProtocol.NetworkPrefixLookup;
 using MaxMind.Db;
 
 var countries = MaxMindDatabase.Load<Dictionary<string, object>>("GeoLite2-Country.mmdb").Freeze();
@@ -213,7 +212,7 @@ For context such as a VRF, use one lookup per VRF rather than a wider key. An em
 ## Performance
 
 One million lookups from `IPAddress` objects in a 4-core cloud container, against version 2 as it shipped on .NET 7,
-with `NetworkPrefix` prefixes in both. Version 3 allocates nothing per lookup; version 2 allocated 64 to 104 bytes. The
+with version 2's `NetworkPrefix` prefixes in both. Version 3 allocates nothing per lookup; version 2 allocated 64 to 104 bytes. The
 real tables are the CAIDA RouteViews tables of September 2025; the small ones are 1,000 prefixes sampled from them.
 
 | Table | Version 2 | Version 3 | Version 3, frozen |
@@ -254,11 +253,13 @@ Version 3 is a new design with a new interface.
 
 | Version 2 | Version 3 |
 | --- | --- |
-| `NetworkPrefixLookup<TValue>`, `NetworkPrefixLookup` | Same names, in the `….NetworkPrefixLookup.NetworkPrefix` package |
+| `using Bitvantage.InternetProtocol;` | `using Bitvantage.InternetProtocol.NetworkPrefixLookup;` |
+| `NetworkPrefixLookup<TValue>` with `NetworkPrefix` | `IPNetworkLookup<TValue>` with `System.Net.IPNetwork`, which covers what `NetworkPrefix` did |
+| `NetworkPrefixLookup`, without values | `IPNetworkLookup<NoValue>` |
 | `ConcurrenceNetworkPrefixLookup` | Not needed: readers take no locks, and writes are serialized internally |
 | `GetMatch(address)`, returning an item | `TryGetMatch(address, out prefix, out value)` |
 | `GetMatches` | `GetMatches`, returning `PrefixEntry` records |
-| `TryRemove` | `Remove` |
+| `TryRemove` | `Remove`; version 3's `TryRemove` removes a prefix only when its value is the one given |
 | `ToTextTree(IPVersion)`, `ToDotSvgTree` | `ToTextTree(AddressFamily)`, `ToDotTree(AddressFamily)`; render DOT with Graphviz |
 
 ## License

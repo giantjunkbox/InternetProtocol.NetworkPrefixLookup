@@ -17,7 +17,7 @@
 */
 
 using System.Reflection;
-using Bitvantage.InternetProtocol;
+using Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 namespace Test.Core;
 

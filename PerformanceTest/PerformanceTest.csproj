@@ -15,7 +15,6 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\Bitvantage.InternetProtocol.NetworkPrefixLookup\Bitvantage.InternetProtocol.NetworkPrefixLookup.csproj" />
-		<ProjectReference Include="..\Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix\Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix.csproj" />
 		<ProjectReference Include="..\Bitvantage.InternetProtocol.NetworkPrefixLookup.MaxMind\Bitvantage.InternetProtocol.NetworkPrefixLookup.MaxMind.csproj" />
 	</ItemGroup>
 

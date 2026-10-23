@@ -17,7 +17,7 @@
 */
 
 using BenchmarkDotNet.Attributes;
-using Bitvantage.InternetProtocol;
+using Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 namespace PerformanceTest;
 
@@ -27,16 +27,16 @@ public class FrozenRootBenchmarks
     [Params(64, 256, 1000, 4000)]
     public int Prefixes;
 
-    private FrozenNetworkPrefixLookup<string> _fullRoot = null!;
-    private FrozenNetworkPrefixLookup<string> _sizedRoot = null!;
-    private FrozenNetworkPrefixLookup<string> _compressedFullRoot = null!;
-    private FrozenNetworkPrefixLookup<string> _compressedSizedRoot = null!;
+    private FrozenIPNetworkLookup<string> _fullRoot = null!;
+    private FrozenIPNetworkLookup<string> _sizedRoot = null!;
+    private FrozenIPNetworkLookup<string> _compressedFullRoot = null!;
+    private FrozenIPNetworkLookup<string> _compressedSizedRoot = null!;
     private uint[] _keys = null!;
 
     [GlobalSetup]
     public void Setup()
     {
-        var lookup = new NetworkPrefixLookup<string>(RandomTableBenchmarks.CreateNetworks().Take(Prefixes).Select(n => KeyValuePair.Create(n, string.Empty)));
+        var lookup = new IPNetworkLookup<string>(RandomTableBenchmarks.CreateNetworks().Take(Prefixes).Select(n => KeyValuePair.Create(n, string.Empty)));
         _fullRoot = lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed, RootBits = 16 });
         _sizedRoot = lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.LeafPushed });
         _compressedFullRoot = lookup.Freeze(new FrozenBitTrieOptions { Layout = FrozenLayout.Compressed, RootBits = 18 });
@@ -46,7 +46,7 @@ public class FrozenRootBenchmarks
                           $"compressed {_compressedFullRoot.Bytes:N0} full, {_compressedSizedRoot.Bytes:N0} sized");
     }
 
-    private static int Count(FrozenNetworkPrefixLookup<string> lookup, uint[] keys)
+    private static int Count(FrozenIPNetworkLookup<string> lookup, uint[] keys)
     {
         var found = 0;
         foreach (var key in keys)

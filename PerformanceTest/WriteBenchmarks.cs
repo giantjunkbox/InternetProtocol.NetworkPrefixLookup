@@ -18,7 +18,7 @@
 
 using System.Net;
 using BenchmarkDotNet.Attributes;
-using Bitvantage.InternetProtocol;
+using Bitvantage.InternetProtocol.NetworkPrefixLookup;
 
 namespace PerformanceTest;
 
