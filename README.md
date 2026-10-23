@@ -86,7 +86,13 @@ prefix instead.
 
 Writes follow dictionary rules: `TryAdd`, `Add`, `AddOrUpdate`, `GetOrAdd`, `Remove` and `Clear`. As in
 `ConcurrentDictionary`, `TryUpdate` and `TryRemove` change a prefix only when its value is the one you expect, checked
-and written under the writer lock, so another thread's write cannot land in between.
+and written under the writer lock, so another thread's write cannot land in between. `Add` throws for a prefix that is
+already present, and lets a collection initializer fill a lookup:
+
+```csharp
+var routes = new IPNetworkLookup<int> { { IPNetwork.Parse("10.0.0.0/8"), 64512 }, { IPNetwork.Parse("10.1.0.0/16"), 64513 } };
+var blocked = new IPNetworkLookup<NoValue> { IPNetwork.Parse("192.0.2.0/24"), IPNetwork.Parse("2001:db8::/32") };
+```
 
 - **Reads never wait.** Any number of threads can look up while writes happen. Lookups take no locks, and each sees the
   table as it was at one moment: before or after every write, never in between.

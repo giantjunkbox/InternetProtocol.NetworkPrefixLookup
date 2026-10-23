@@ -282,6 +282,18 @@ public class IPNetworkLookupTests
         Assert.DoesNotThrow(() => batches[1].Dispose(), "disposing after a commit does nothing");
     }
 
+    [Test(Description = "Add is what lets a collection initializer fill a lookup, with values or, through the NoValue extension, without.")]
+    public void Collection_initializers_fill_a_lookup()
+    {
+        var routes = new IPNetworkLookup<int> { { N("10.0.0.0/8"), 64512 }, { N("2001:db8::/32"), 64513 } };
+        Assert.That(routes.TryGetMatchValue(IPAddress.Parse("10.1.2.3"), out var asn) && asn == 64512);
+        Assert.That(routes.TryGetMatchValue(IPAddress.Parse("2001:db8::1"), out asn) && asn == 64513);
+
+        var blocked = new IPNetworkLookup<NoValue> { N("192.0.2.0/24"), N("2001:db8::/32") };
+        Assert.That(blocked.ContainsMatch(IPAddress.Parse("192.0.2.7")) && blocked.Count == 2);
+        Assert.Throws<ArgumentException>(() => _ = new IPNetworkLookup<NoValue> { N("192.0.2.0/24"), N("192.0.2.0/24") }, "a duplicate throws, as Add does");
+    }
+
     [Test]
     public void Counts_cover_each_family()
     {

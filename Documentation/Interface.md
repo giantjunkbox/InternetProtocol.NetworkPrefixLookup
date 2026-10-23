@@ -347,6 +347,9 @@ public readonly record struct IPLookupStatistics(BitTrieStatistics IPv4, BitTrie
 ```
 
 - **Null prefixes** are rejected with `ArgumentNullException`, without boxing struct prefixes.
+- **`Add`** throws when the prefix is already present, as `Dictionary.Add` does, where `TryAdd` returns false. It stays
+  for that, and because it lets a collection initializer fill a lookup: `new IPNetworkLookup<int> { { network, 64512 } }`,
+  or `new IPNetworkLookup<NoValue> { network }` through the `Add(prefix)` of `NoValueLookupExtensions`.
 - **Batches** begin a batch on both families. On commit each family publishes atomically, IPv4 first, so a reader can
   see the new IPv4 prefixes a moment before the new IPv6 ones. If either half's writes failed, nothing is published.
 - **Freezing** copies both families under both writer locks, so a frozen copy is the lookup at one moment.
@@ -483,7 +486,6 @@ differs from that proposal:
 
 ## Open questions
 
-- **Whether `Add` should exist** next to `TryAdd`, `AddOrUpdate` and `GetOrAdd`. It is there for familiarity with
-  `Dictionary`.
-- **Overlap tests between two whole tables** were left out: looping over the smaller table with `Overlaps` answers the
-  same question.
+None. The last were settled on 2026-10-23: `Add` stays next to `TryAdd`, for `Dictionary`'s behaviour and for
+collection initializers, and there is no overlap test between two whole tables, since looping over the smaller table
+with `Overlaps` answers the same question.
