@@ -597,6 +597,18 @@ instead of testing 256 octets and 8 lengths in every node. Writers wait only whi
 | Writers wait during a freeze | the whole freeze | 69 ms | the whole freeze | 24 ms |
 | One batch, unchanged | 172.0 ms | 174.7 ms | 40.6 ms | 42.0 ms |
 
+**`ContainsMatch`** against the extension method it replaced, which called `TryGetMatchValue` through the interface
+(one session, a million lookups from `IPAddress` objects, frozen tables leaf-pushed):
+
+| Lookup | Extension | `ContainsMatch` | Ratio |
+| --- | --- | --- | --- |
+| Real IPv4, read-write | 107.0 ms | 76.4 ms | 0.72 |
+| Real IPv4, frozen | 41.9 ms | 26.4 ms | 0.64 |
+| Real IPv6, read-write | 217.5 ms | 177.4 ms | 0.83 |
+| Real IPv6, frozen | 120.8 ms | 99.6 ms | 0.85 |
+
+The member inlines, and it stops at the walk's answer: the read-write trie reads no entry and the frozen one no value.
+
 **Loading a whole table** (`RealBuildBenchmarks`, one session, the RouteViews tables with each network once): a batch of
 `TryAdd` calls against the constructor from a sequence, with the networks in address order and shuffled. The Gen0 and
 Gen1 columns are collections per thousand loads.
