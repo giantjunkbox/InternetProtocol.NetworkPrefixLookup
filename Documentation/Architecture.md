@@ -643,6 +643,46 @@ Gen1 columns are collections per thousand loads.
 **Against the prototype.** Back to back, `BitTrie` alone took 142 to 154 ms per million real IPv4 lookups and the
 prototype `BartTrie` 147 to 156 ms. On IPv6 the library took 341 ms and the prototype 331 ms.
 
+**Queries about networks** (`RealNetworkQueryBenchmarks`, 2026-10-23, one session of 15 iterations per case in a noisy
+container, with standard deviations of 6 to 12%). Each family has 100,000 networks, each an announced prefix made up to
+8 bits shorter or longer, so that some hold announced prefixes and some lie inside them. The table gives the time and
+the allocation per query, through the interface; the frozen tables are leaf-pushed, as the default picks for both.
+
+| Query | Real IPv4, read-write | Real IPv4, frozen | Real IPv6, read-write | Real IPv6, frozen |
+| --- | --- | --- | --- | --- |
+| `TryGetMatch(network)`, for comparison | 143 ns | 140 ns | 290 ns | 209 ns |
+| `Overlaps` | 61 ns | 44 ns | 136 ns | 150 ns |
+| `GetMatches(network)`, as a list | 333 ns, 153 B | 298 ns, 118 B | 480 ns, 154 B | 405 ns, 127 B |
+| `GetSubnets(network).Any()` | 465 ns, 357 B | 370 ns, 88 B | 498 ns, 446 B | 334 ns, 128 B |
+| `GetSubnets(network)`, enumerated to the end | 3.6 µs | 0.98 µs | 1.8 µs | 0.48 µs |
+
+`Overlaps` is the cheapest query, because it stops at the first sign of overlap and reads no entry. On the read-write
+trie `TryGetMatch(network)` and `GetMatches(network)` still keep the whole path in a `NodeStack`, whose stores cost the
+write barriers that the address lookup shed, and they start at the root instead of a shortcut block; `Overlaps` keeps
+only the current node. On the read-write trie `GetSubnets` allocates its two iterators and the enumeration's stack.
+
+**`GetMatches` by key and enumeration**, which now share their code with the queries about networks: the code before,
+kept as a copy for one session, against the code after, on the read-write trie of each real table (`GetMatches` into a
+span at 200,000 keys; enumeration of the whole trie):
+
+| | Real IPv4 | Real IPv6 |
+| --- | --- | --- |
+| `GetMatches` by key | 57.3 ms before, 53.5 ms after: 0.93 | 59.5 ms, 62.9 ms: 1.07 |
+| Enumeration | 38.6 ms, 39.9 ms: 1.04 | 12.6 ms, 13.2 ms: 1.05 |
+
+The `GetMatches` ratios point in opposite directions, inside one standard deviation (0.09 and 0.13). Enumeration's are
+also inside it (0.08), but both are higher, so the check for the top node on every frame of the walk may cost a few
+percent. Each enumeration allocates 176 to 192 bytes more, for the larger iterator.
+
+**Memory held by the frozen tables** (`--memory`, the commit before against this one): they now keep each prefix's
+bits.
+
+| Form | Real IPv4, before | After | Real IPv6, before | After |
+| --- | --- | --- | --- | --- |
+| Read-write, unchanged | 30.4 MB | 30.4 MB | 13.6 MB | 13.6 MB |
+| Frozen, leaf-pushed 16/8 | 61.0 MB | 65.0 MB | 58.4 MB | 62.1 MB |
+| Frozen, compressed 18 | 40.2 MB | 44.2 MB | 12.1 MB | 15.7 MB |
+
 ### Where the time goes
 
 - A read-write lookup reads one shortcut block, then for each node below depth 2 tests a bit and ranks it with
@@ -666,6 +706,8 @@ prototype `BartTrie` 147 to 156 ms. On IPv6 the library took 341 ms and the prot
 | Lookups without the node stack, the parent in a local | 0.85 to 0.93 of the time on every table | Done; see [Since the baseline](#since-the-baseline) |
 | Enumeration over set bits only; freeze copies under the lock and builds after | Enumeration 2 to 6 times faster, freezing 1.5 to 3 times, writers wait 69 ms instead of 153 ms on real IPv4 | Done; see [Since the baseline](#since-the-baseline) |
 | `GetMatches(IPAddress)` into a stack buffer instead of a list | Less garbage | Measured: 1.45 to 1.7 times slower; not done |
+| `TryGetMatch` and `GetMatches` for a network without the node stack, from the shortcut blocks | They take 2.1 to 5.5 times as long as `Overlaps` on the read-write trie | Not tried |
+| `GetSubnets` on the read-write trie without its own iterator and stack when the network ends in one node | Less than its 357 to 446 bytes per call | Not tried |
 | Lookups without bounds checks | | Measured: no difference; not done |
 | Choose the frozen layout from the data | Leaf-pushed for clustered tables, compressed for scattered ones | Done; see [The frozen trie](#the-frozen-trie) |
 | A 24-bit root for frozen IPv4 tables | Already possible with `RootBits = 24`: 0.37 of the read-write time in the prototype, at about twice the memory | Option exists |
