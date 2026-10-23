@@ -5,7 +5,7 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
-		<RootNamespace>Bitvantage.InternetProtocol</RootNamespace>
+		<RootNamespace>Bitvantage.InternetProtocol.NetworkPrefixLookup</RootNamespace>
 		<Title>Bitvantage.InternetProtocol.NetworkPrefixLookup</Title>
 		<PackageProjectUrl>https://github.com/Bitvantage/InternetProtocol.NetworkPrefixLookup</PackageProjectUrl>
 		<PackageIcon>icon.png</PackageIcon>
@@ -19,6 +19,20 @@
 		<Description>High-performance longest-prefix-match lookups for IP networks and other fixed-width bit-string keys, with no dependencies</Description>
 		<Copyright>Copyright © Michael Crino 2024</Copyright>
 		<RepositoryUrl>https://github.com/Bitvantage/InternetProtocol.NetworkPrefixLookup.git</RepositoryUrl>
+	</PropertyGroup>
+
+	<!-- Trimming and native AOT: the analyzers check that the library needs no reflection or runtime code generation -->
+	<PropertyGroup>
+		<IsAotCompatible>true</IsAotCompatible>
+	</PropertyGroup>
+
+	<!-- Source Link, which the SDK includes, and a symbol package, so that a debugger can step into the published source -->
+	<PropertyGroup>
+		<PublishRepositoryUrl>true</PublishRepositoryUrl>
+		<EmbedUntrackedSources>true</EmbedUntrackedSources>
+		<IncludeSymbols>true</IncludeSymbols>
+		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+		<ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
 	</PropertyGroup>
 
 	<ItemGroup>
