@@ -117,6 +117,10 @@ public interface IReadOnlyBitTrie<TKey, TPrefix, TValue> : IReadOnlyCollection<P
 - **Enumeration** returns entries in address order, a shorter prefix before a longer one at the same address.
 - **Allocation.** Lookups allocate nothing, except the list form of `GetMatches`; the span form writes into the
   caller's span.
+- **A span that is too small** throws `ArgumentException`, as `Span.CopyTo` does. `TKey.Width + 1` entries always
+  suffice, 33 for IPv4 and 129 for IPv6, so a caller who passes that many never sees it. A `TryGetMatches` that returns
+  false instead was considered and left out: it would double or reshape every span form for a case that only misuse
+  reaches.
 - **The prefix object** is whatever the caller stores with a prefix and wants back from lookups. The core never creates
   one, so the diagnostics below take a formatter for bits and lengths instead.
 
