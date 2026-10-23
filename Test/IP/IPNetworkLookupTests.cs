@@ -265,6 +265,23 @@ public class IPNetworkLookupTests
         Assert.Throws<ArgumentNullException>(() => _ = new IPNetworkLookup<string>((IEnumerable<PrefixEntry<IPNetwork, string>>)null!));
     }
 
+    [Test(Description = "Every lookup's BeginBatch returns WriteBatch, so a batch can be kept in a field or passed to a helper without naming the lookup's type.")]
+    public void Every_lookup_returns_one_batch_type()
+    {
+        var lookup = new IPNetworkLookup<string>();
+        var trie = new BitTrie<Bits32, int, int>();
+        var batches = new List<WriteBatch> { lookup.BeginBatch(), trie.BeginBatch() };
+        lookup.Add(N("10.0.0.0/8"), "kept");
+        trie.Add(new Bits32(0x0A000000), 8, 0, 0);
+        Assert.That(lookup.Count + trie.Count, Is.Zero, "nothing is published before the commit");
+
+        foreach (var batch in batches)
+            batch.Commit();
+        Assert.That(lookup.Count + trie.Count, Is.EqualTo(2));
+        Assert.Throws<ObjectDisposedException>(() => batches[0].Commit());
+        Assert.DoesNotThrow(() => batches[1].Dispose(), "disposing after a commit does nothing");
+    }
+
     [Test]
     public void Counts_cover_each_family()
     {

@@ -47,14 +47,14 @@ namespace Bitvantage.InternetProtocol;
 ///     </para>
 ///     <para>
 ///         <b>Batches.</b> Changes made after <see cref="BeginBatch" /> build privately and stay invisible to readers
-///         until <see cref="Batch.Commit" /> publishes them with one reference write. Disposing an uncommitted batch
+///         until <see cref="WriteBatch.Commit" /> publishes them with one reference write. Disposing an uncommitted batch
 ///         discards them.
 ///     </para>
 /// </remarks>
 /// <typeparam name="TKey">The key type, whose width must be a multiple of 8 from 8 to 128 bits.</typeparam>
 /// <typeparam name="TPrefix">The type of the prefix object stored with each prefix.</typeparam>
 /// <typeparam name="TValue">The type of the value stored with each prefix.</typeparam>
-public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPrefix, TValue>
+public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPrefix, TValue>, IBatchOwner
     where TKey : struct, IBitKey<TKey>
 {
     private struct Entry
@@ -1021,7 +1021,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
     /// <summary>
     ///     Starts a batch: the following changes build privately and stay invisible to readers until
-    ///     <see cref="Batch.Commit" />. Disposing the batch without committing it discards them.
+    ///     <see cref="WriteBatch.Commit" />. Disposing the batch without committing it discards them.
     /// </summary>
     /// <remarks>
     ///     The batch holds the trie's writer lock until it is committed or disposed, so other threads' writes wait. The
@@ -1029,7 +1029,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     ///     <c>await</c>; ending it on another thread throws and leaves it open.
     /// </remarks>
     /// <exception cref="InvalidOperationException">A batch is already in progress.</exception>
-    public Batch BeginBatch()
+    public WriteBatch BeginBatch()
     {
         _lock.Enter();
         if (_batch)
@@ -1040,58 +1040,13 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
         _stamp++;
         _batch = true;
-        return new Batch(this);
-    }
-
-    /// <summary>A set of changes that readers see all at once, or not at all. See <see cref="BeginBatch" />.</summary>
-    public sealed class Batch : IDisposable
-    {
-        private BitTrie<TKey, TPrefix, TValue>? _trie;
-
-        internal Batch(BitTrie<TKey, TPrefix, TValue> trie) => _trie = trie;
-
-        /// <summary>Publishes every change in the batch with one reference write.</summary>
-        /// <remarks>
-        ///     If a write in the batch threw, or publishing runs out of memory, nothing is published, the batch ends as if
-        ///     disposed, and Commit throws.
-        /// </remarks>
-        /// <exception cref="ObjectDisposedException">The batch was already committed or disposed.</exception>
-        /// <exception cref="InvalidOperationException">
-        ///     The batch was ended on a thread other than the one that started it, which leaves it open; or a write in the
-        ///     batch threw, and the batch was discarded.
-        /// </exception>
-        public void Commit()
-        {
-            var trie = _trie ?? throw new ObjectDisposedException(nameof(Batch));
-            trie.CheckBatchThread();
-            _trie = null;
-            trie.EndBatch(commit: true);
-        }
-
-        /// <summary>Discards the batch's changes unless it was committed.</summary>
-        /// <exception cref="InvalidOperationException">
-        ///     The batch was ended on a thread other than the one that started it, which leaves it open.
-        /// </exception>
-        public void Dispose()
-        {
-            var trie = _trie;
-            if (trie == null) return;
-            trie.CheckBatchThread();
-            _trie = null;
-            trie.EndBatch(commit: false);
-        }
-
-        // for the IP lookups, which end two batches and must check both before ending either
-        internal void CheckThread() => _trie?.CheckBatchThread();
-
-        // true when a write in this batch threw, so that committing it will discard it and throw
-        internal bool Failed => _trie is { _batchFailed: true };
+        return new WriteBatch(this);
     }
 
     // The writer lock belongs to the thread that took it, and only that thread can release it. Ending a batch elsewhere,
     // as after an await, would publish without the lock and then fail to release it, so it is refused before anything
     // changes. The batch stays open until its own thread ends it.
-    private void CheckBatchThread()
+    void IBatchOwner.CheckBatchThread()
     {
         if (!_lock.IsHeldByCurrentThread)
             throw new InvalidOperationException(
@@ -1100,7 +1055,7 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
 
     // A commit that throws, which only running out of memory can make it do, discards the batch like Dispose: either
     // way the trie leaves batch mode and releases the lock.
-    private void EndBatch(bool commit)
+    void IBatchOwner.EndBatch(bool commit)
     {
         var published = false;
         try
@@ -1138,6 +1093,8 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
             _lock.Exit();
         }
     }
+
+    bool IBatchOwner.BatchFailed => _batchFailed;
 
     private enum SetResult { Added, Updated, Present }
 

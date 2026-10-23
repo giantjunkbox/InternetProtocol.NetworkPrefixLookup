@@ -143,15 +143,15 @@ public sealed class BitTrie<TKey, TPrefix, TValue> : IReadOnlyBitTrie<TKey, TPre
     public bool TryRemove(in TKey bits, int length, TValue expectedValue);
     public void Clear();
 
-    public Batch BeginBatch();
+    public WriteBatch BeginBatch();
     public long Version { get; }
     public FrozenBitTrie<TKey, TPrefix, TValue> Freeze(FrozenBitTrieOptions? options = null);
     public BitTrieStatistics GetStatistics();
     public string ToTextTree(Func<TKey, int, string> format);
     public string ToDotTree(Func<TKey, int, string> format);
-
-    public sealed class Batch : IDisposable { public void Commit(); public void Dispose(); }
 }
+
+public sealed class WriteBatch : IDisposable { public void Commit(); public void Dispose(); }   // returned by every lookup
 
 public readonly record struct BitTrieStatistics(int Prefixes, int Nodes, long Bytes);
 ```
@@ -326,7 +326,7 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     public bool TryRemove(TPrefix prefix, TValue expectedValue);
     public void Clear();
 
-    public Batch BeginBatch();
+    public WriteBatch BeginBatch();
     public FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> Freeze(FrozenBitTrieOptions? options = null);   // both families
     public FrozenIPPrefixLookup<TPrefix, TAdapter, TValue> Freeze(FrozenBitTrieOptions ipv4, FrozenBitTrieOptions ipv6);
     public IPLookupStatistics GetStatistics();
@@ -472,6 +472,7 @@ differs from that proposal:
 | Freezing | `Freeze(ipv4 = null, ipv6 = null)` | `Freeze(options)` for both families and `Freeze(ipv4, ipv6)` for one each: the single method let `Freeze(compressed)` compress only IPv4. Writers wait only while the prefixes are copied |
 | IPv4-mapped addresses | Not covered | `IPLookupOptions.MapIPv4MappedAddresses`, off by default and on for MaxMind lookups, with prefixes inside `::ffff:0:0/96` rejected while it is on. The queries about networks follow it, so that `TryGetMatch(::ffff:10.1.2.3/128)` answers as the address `::ffff:10.1.2.3` does |
 | Entry types | `PrefixEntry` out, `KeyValuePair` in | Both in: the constructors from a sequence also take `PrefixEntry`, so `new IPNetworkLookup<int>(other)` copies a lookup and `new IPNetworkLookup<int>(other.GetSubnets(block))` part of one, while dictionaries still go in as they are. Results keep `PrefixEntry` for its `Prefix` name |
+| Batches | Not covered | One `WriteBatch` class that every lookup's `BeginBatch` returns. A nested `Batch` class in each lookup came first; it was replaced so that a batch kept in a field or passed to a helper is a `WriteBatch` rather than an `IPPrefixLookup<IPNetwork, IPNetworkAdapter, int>.Batch` |
 | Queries about networks | `TryGetMatch` for a network | Also `GetMatches`, `GetSubnets` and `Overlaps` for a network, in both read-only interfaces, as Go's BART has. A frozen trie keeps each prefix's bits to answer the last two |
 | Null state | Plain `out` parameters | `[MaybeNullWhen(false)]` on every `Try…` method |
 | Address conversions | Unchecked | `IPAddressBits.ToIPv4Bits` and `ToIPv6Bits` throw for an address of the other family |
@@ -483,5 +484,5 @@ differs from that proposal:
 
 - **Whether `Add` should exist** next to `TryAdd`, `AddOrUpdate` and `GetOrAdd`. It is there for familiarity with
   `Dictionary`.
-- **Further operations** suggested by the review, not yet decided: one `Batch` type for every lookup. Overlap tests between two whole tables were left out: looping over the smaller
-  table with `Overlaps` answers the same question.
+- **Overlap tests between two whole tables** were left out: looping over the smaller table with `Overlaps` answers the
+  same question.

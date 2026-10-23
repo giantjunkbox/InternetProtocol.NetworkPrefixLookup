@@ -63,7 +63,7 @@ interface differs from the original proposal. `Documentation/Adapter-Survey.md` 
 - `Bitvantage.InternetProtocol.NetworkPrefixLookup/`: the core package.
   - `Keys/`: `IBitKey<TSelf>`, `Bits32` and `Bits128`.
   - `Core/`: `BitTrie` (the read-write trie), `FrozenBitTrie`, `IReadOnlyBitTrie`, `BitSet256` with the ART tables,
-    `PrefixEntry`, `NoValue`.
+    `WriteBatch`, `PrefixEntry`, `NoValue`.
   - `IP/`: the adapter interface, `IPAddressBits`, `IPPrefixLookup` and its frozen form, the internal `IPLookupReader`
     they share, and `IPNetworkLookup` for `System.Net.IPNetwork`.
 - `Bitvantage.InternetProtocol.NetworkPrefixLookup.NetworkPrefix/`, `.IPNetwork2/`, `.MaxMind/`: the adapter packages,
@@ -123,7 +123,7 @@ ROUTEVIEWS_DIR=/tmp/routeviews dotnet run -c Release --project PerformanceTest
 ROUTEVIEWS_DIR=/tmp/routeviews dotnet test Prototypes/GenericTrie.Tests -c Release   # about 3 minutes
 ```
 
-**Test baseline:** all 61 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
+**Test baseline:** all 62 tests pass. The one test that asserts exact `ToTextTree` output builds its expected
 text with `Environment.NewLine`, so it passes with either line ending. Keep `.gitattributes` at `text=auto`.
 
 The whole solution builds with no warnings. Do not add any.

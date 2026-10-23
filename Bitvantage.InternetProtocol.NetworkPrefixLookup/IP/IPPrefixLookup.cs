@@ -390,7 +390,7 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
 
     /// <summary>
     ///     Starts a batch: the following changes build privately and stay invisible to readers until
-    ///     <see cref="Batch.Commit" />. Disposing the batch without committing it discards them.
+    ///     <see cref="WriteBatch.Commit" />. Disposing the batch without committing it discards them.
     /// </summary>
     /// <remarks>
     ///     Each address family publishes its changes with one reference write when the batch commits, IPv4 first; a reader
@@ -399,12 +399,12 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
     ///     and cannot span an <c>await</c>.
     /// </remarks>
     /// <exception cref="InvalidOperationException">A batch is already in progress.</exception>
-    public Batch BeginBatch()
+    public WriteBatch BeginBatch()
     {
         var v4 = _v4.BeginBatch();
         try
         {
-            return new Batch(v4, _v6.BeginBatch());
+            return new WriteBatch(new FamilyBatches(v4, _v6.BeginBatch()));
         }
         catch
         {
@@ -413,69 +413,51 @@ public class IPPrefixLookup<TPrefix, TAdapter, TValue> : IReadOnlyIPPrefixLookup
         }
     }
 
-    /// <summary>A set of changes that readers see all at once, or not at all. See <see cref="BeginBatch" />.</summary>
-    public sealed class Batch : IDisposable
+    // An IP lookup's batch: one batch on each family's trie. Both are checked before either ends, and IPv4 commits first.
+    private sealed class FamilyBatches(WriteBatch v4, WriteBatch v6) : IBatchOwner
     {
-        private readonly BitTrie<Bits32, TPrefix, TValue>.Batch _v4;
-        private readonly BitTrie<Bits128, TPrefix, TValue>.Batch _v6;
-
-        internal Batch(BitTrie<Bits32, TPrefix, TValue>.Batch v4, BitTrie<Bits128, TPrefix, TValue>.Batch v6)
+        public void CheckBatchThread()
         {
-            _v4 = v4;
-            _v6 = v6;
+            v4.CheckThread();
+            v6.CheckThread();
         }
 
-        /// <summary>Publishes every change in the batch, one reference write per address family.</summary>
-        /// <remarks>
-        ///     If a write in the batch threw, nothing is published, the batch is discarded and Commit throws. Otherwise only
-        ///     running out of memory can make it throw: if the IPv4 changes fail, nothing is published; if the IPv6 changes
-        ///     fail, the IPv4 changes stay published. Either way the batch ends.
-        /// </remarks>
-        /// <exception cref="ObjectDisposedException">The batch was already committed or disposed.</exception>
-        /// <exception cref="InvalidOperationException">
-        ///     The batch was ended on a thread other than the one that started it, which leaves it open; or a write in the
-        ///     batch threw, and the batch was discarded.
-        /// </exception>
-        public void Commit()
+        public bool BatchFailed => v4.Failed || v6.Failed;
+
+        public void EndBatch(bool commit)
         {
-            _v4.CheckThread();
-            _v6.CheckThread();
-            if (_v4.Failed || _v6.Failed)
+            if (commit && BatchFailed)
             {
-                Dispose();
+                EndBatch(commit: false);
                 throw new InvalidOperationException("A write in the batch threw, so the batch was discarded.");
+            }
+
+            if (!commit)
+            {
+                try
+                {
+                    v6.Dispose();
+                }
+                finally
+                {
+                    v4.Dispose();
+                }
+
+                return;
             }
 
             try
             {
-                _v4.Commit();
+                v4.Commit();
             }
             catch
             {
                 // nothing is published yet, so the IPv6 changes go too
-                _v6.Dispose();
+                v6.Dispose();
                 throw;
             }
 
-            _v6.Commit();
-        }
-
-        /// <summary>Discards the batch's changes unless it was committed.</summary>
-        /// <exception cref="InvalidOperationException">
-        ///     The batch was ended on a thread other than the one that started it, which leaves it open.
-        /// </exception>
-        public void Dispose()
-        {
-            _v4.CheckThread();
-            _v6.CheckThread();
-            try
-            {
-                _v6.Dispose();
-            }
-            finally
-            {
-                _v4.Dispose();
-            }
+            v6.Commit();
         }
     }
 
