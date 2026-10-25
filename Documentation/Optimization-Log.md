@@ -150,6 +150,7 @@ bits, so no key ever matches it. A missing child simply points at it, and each s
 | `BitTrie`, 2026-10-22: IPv6 addresses read through the private field instead of `TryWriteBytes` | Identical, 12 to 14 ms per million | Reaching the `IPAddress` object costs most of it either way |
 | `BitTrie`, 2026-10-22: typed trie fields in the IP layer's reader instead of `IReadOnlyBitTrie` and `Unsafe.As` | Identical JIT output | `Unsafe.As` emits nothing |
 | 2026-10-24: the prefixes compiled with `Expression.Compile` into a `Func<uint, int>` for the longest match, either a balanced tree of comparisons against interval starts or nested octet switches, on samples of the real IPv4 table | Slower than the frozen leaf-pushed table at every size: 14.6 against 4.6 ns per lookup for 10 prefixes, 115 against 5.5 for 1,000, 3,189 against 19.5 for the full table with switches and 72,561 with the tree. Compiling the full table took 9 to 21 s and up to 2.7 GB. Interpreted, as native AOT would run it, 212 to 472 ns and 184 bytes per lookup | Even fully optimized, the generated code is a chain of branches that random addresses mispredict, where the table answers with two or three loads. From about 1,000 prefixes the JIT compiles the method with MinOpts, which keeps every temporary on the stack and zeroes the frame on every call: 3.9 KB at 1,000 prefixes, 32 KB at 10,000, megabytes for the full table. It would also need `RequiresDynamicCode` and a recompile for every change |
+| 2026-10-25: a frozen path-compressed binary trie packed into arrays, the structure of version 2 and of the design's binary trie with integer child indexes and the prefixes and values kept in separate arrays: 16-byte nodes in depth-first order, 12-byte nodes with an implicit left child, and 8-byte bit-packed nodes, each with and without a 16- or 20-bit start index | Slower than both frozen layouts on every table, 2.8 GHz Xeon with 33 MiB L3. Real IPv4: the fastest variant, 8-byte nodes with a 20-bit index in 24.2 MB, took 427 ns cold and 29 ns warm, against 91 and 4.4 for leaf-pushed in 29.2 MB and 118 and 5.4 for compressed in 7.4 MB. Real IPv6: 2.9 times leaf-pushed cold and 14 times warm. On 1,000 IPv4 prefixes, all in cache: 28 ns against 6.4. Smaller than leaf-pushed, 16 MB with 8-byte nodes, but twice the compressed layout. All variants matched `BitTrie` on every key | Binary branching: a lookup passes 23 nodes on real IPv4 and 28 on IPv6, still 7.6 and 19 after a 16-bit index, each a dependent load, bit test and compare of about 9 ns even from L1; see [Depth of a binary trie on real tables](#depth-of-a-binary-trie-on-real-tables). Packing shrinks the bytes, not the steps: depth-first order keeps only the left child adjacent, so 8-byte nodes touched as many lines as 16-byte ones. The compressed layout is already a packed array of index-linked nodes with the entries outside, and decides 6 bits per step instead of 1 |
 
 ## Small tables
 
@@ -202,6 +203,25 @@ Real data changes the picture in two ways:
   against 1.05 for random data. IPv6 is worse: only 66 distinct values occur in the first 16 bits, so a 16-bit index
   leaves tens of thousands of prefixes behind single entries. Lookups still visited 18.9 nodes with a 16-bit index and
   15.6 nodes with a 20-bit index.
+
+### Depth of a binary trie on real tables
+
+Version 2's README said the depth is "generally in the single digits". Measured on 2026-10-25 with the packed frozen trie in
+[What did not help](#what-did-not-help), which has version 2's shape, one node per stored prefix and one per branch
+point: the nodes a lookup visits from the root, over 1,000,000 random addresses inside randomly chosen prefixes.
+
+| Table | Nodes | Average per lookup | Fewest | Within 8 nodes | Within 16 nodes |
+| --- | --- | --- | --- | --- | --- |
+| Real IPv4, 1,054,037 prefixes | 1,928,038 | 23.2 | 9 | 0.0% | 0.7% |
+| Real IPv6, 239,598 prefixes | 451,316 | 27.8 | 4 | 0.0% | 0.5% |
+| Every 1,054th real IPv4 prefix, 1,001 | 2,001 | 11.6 | 8 | 0.7% | 100% |
+| Every 240th real IPv6 prefix, 999 | 1,998 | 15.4 | 3 | 0.5% | 71.1% |
+
+Path compression removes only runs without branching. A lookup passes a node wherever the table holds prefixes on both
+sides of a bit, and near the top of a full table nearly every bit is such a point: about log2 of the prefix count, 20 for
+a million prefixes, before the paths thin out toward their prefixes. Three or four levels would need a table of about 8
+to 16 prefixes. On real tables only a multibit trie gets there: with 8 bits per node and the shortcut blocks, a real
+IPv4 lookup reads one block and then about one node.
 
 ## Multi-level index
 
